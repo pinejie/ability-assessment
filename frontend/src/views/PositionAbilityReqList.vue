@@ -74,6 +74,7 @@
       >
         <el-form-item label="岗位" prop="jobTitleId">
           <LazySearchTreeSelect
+            ref="treeSelectRef"
             v-model="formData.jobTitleId"
             :load="loadJobTitleTree"
             :search="searchJobTitles"
@@ -299,6 +300,7 @@ const elementCount = computed(() => {
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const formRef = ref<FormInstance>()
+const treeSelectRef = ref()
 
 const formData = reactive({
   id: 0,
@@ -399,6 +401,7 @@ const resetForm = () => {
   formData.elementId = undefined
   formData.description = ''
   formRef.value?.resetFields()
+  treeSelectRef.value?.reset()  // 重置岗位浏览框
 }
 
 onMounted(() => {

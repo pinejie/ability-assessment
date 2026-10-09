@@ -16,6 +16,7 @@
               class="input-inner"
               @input="handleInput"
               @focus="handleFocus"
+              @blur="handleBlur"
             />
             <span v-if="showSelectedLabel" class="selected-label" :class="{ 'is-dimmed': isDimmed }">
               {{ selectedLabel }}
@@ -27,7 +28,7 @@
         </div>
       </template>
 
-      <div class="tree-container" @click.stop>
+      <div class="tree-container">
         <el-tree
           :key="treeKey"
           ref="treeRef"
@@ -213,11 +214,34 @@ const handleNodeClick = (data: TreeNode) => {
   searchKeyword.value = ''
 }
 
-// 聚焦
+// 聚焦：进入搜索模式
 const handleFocus = () => {
-  if (isSearchMode.value) return
-  searchKeyword.value = ''
+  searchKeyword.value = ''  // 清空，准备输入
+  // 触发根节点加载（如果还没加载）
+  if (treeData.value.length === 0 && !isSearchMode.value) {
+    loadRootNodes()
+  }
 }
+
+// 失去焦点：退出搜索模式
+const handleBlur = () => {
+  searchKeyword.value = ''  // 清空搜索关键字
+  isSearchMode.value = false  // 退出搜索模式
+  // 弹窗会通过 trigger="click" 自动关闭
+}
+
+// 重置组件状态（供父组件调用）
+const reset = () => {
+  searchKeyword.value = ''
+  treeData.value = []
+  isSearchMode.value = false
+  treeKey.value++  // 强制重新渲染，清除旧 DOM
+}
+
+// 暴露方法给父组件
+defineExpose({
+  reset
+})
 </script>
 
 <style scoped>

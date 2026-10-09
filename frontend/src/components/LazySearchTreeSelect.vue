@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 
 interface TreeNode {
@@ -77,6 +77,8 @@ interface Props {
   }
   placeholder?: string
   width?: number
+  // 初始显示的文本（用于编辑场景：树还没加载到选中节点那一层时，先用这个文本占位）
+  initialLabel?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -89,7 +91,8 @@ const props = withDefaults(defineProps<Props>(), {
     children: 'children'
   }),
   placeholder: '请选择',
-  width: 300
+  width: 300,
+  initialLabel: ''
 })
 
 const emit = defineEmits<{
@@ -105,6 +108,8 @@ const inputRef = ref<HTMLInputElement>()
 const treeRef = ref()
 const isSearchMode = ref(false)
 const treeKey = ref(0) // 用于强制 el-tree 重新渲染
+// 缓存最近一次用户选中的节点数据（用于 tree 还没加载到那一层时也能显示文本）
+const cachedSelectedNode = ref<TreeNode | null>(null)
 
 // 字段名
 const labelKey = computed(() => props.fieldNames.label || 'label')
@@ -128,10 +133,35 @@ const currentPlaceholder = computed(() => {
 })
 
 const selectedLabel = computed(() => {
-  if (!props.modelValue || !treeRef.value) return ''
-  const node = treeRef.value.getNode(props.modelValue)
-  return node ? node.data[labelKey.value] : ''
+  if (!props.modelValue) return ''
+
+  // 优先级 1：从 tree 中拿（树已经加载到该节点时可用）
+  if (treeRef.value) {
+    const node = treeRef.value.getNode(props.modelValue)
+    if (node) return node.data[labelKey.value]
+  }
+
+  // 优先级 2：从缓存中拿（用户本次会话中选过的节点）
+  if (
+    cachedSelectedNode.value &&
+    cachedSelectedNode.value[valueKey.value] === props.modelValue
+  ) {
+    return cachedSelectedNode.value[labelKey.value]
+  }
+
+  // 优先级 3：父组件传入的初始文本（编辑场景，树还没加载到该节点）
+  return props.initialLabel || ''
 })
+
+// modelValue 被清空时，同步清掉缓存，避免下次显示旧值
+watch(
+  () => props.modelValue,
+  (newVal) => {
+    if (!newVal) {
+      cachedSelectedNode.value = null
+    }
+  }
+)
 
 const treeProps = computed(() => ({
   label: labelKey.value,
@@ -207,6 +237,10 @@ const handleNodeClick = (data: TreeNode) => {
   }
 
   const value = data[valueKey.value]
+
+  // 缓存当前选中的节点数据（供 selectedLabel 回退使用）
+  cachedSelectedNode.value = { ...data }
+
   emit('update:modelValue', value)
   emit('change', value, data)
 
@@ -217,10 +251,7 @@ const handleNodeClick = (data: TreeNode) => {
 // 聚焦：进入搜索模式
 const handleFocus = () => {
   searchKeyword.value = ''  // 清空，准备输入
-  // 触发根节点加载（如果还没加载）
-  if (treeData.value.length === 0 && !isSearchMode.value) {
-    loadRootNodes()
-  }
+  // lazy 模式下 el-tree 挂载时会自动加载根节点，不需要手动触发
 }
 
 // 失去焦点：退出搜索模式
@@ -236,6 +267,7 @@ const reset = () => {
   treeData.value = []
   isSearchMode.value = false
   treeKey.value++  // 强制重新渲染，清除旧 DOM
+  cachedSelectedNode.value = null
 }
 
 // 暴露方法给父组件

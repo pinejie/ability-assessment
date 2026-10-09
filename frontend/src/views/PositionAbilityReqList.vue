@@ -64,6 +64,7 @@
       :title="dialogTitle"
       width="560px"
       class="form-dialog"
+      destroy-on-close
     >
       <el-form
         ref="formRef"
@@ -73,21 +74,19 @@
         class="form-content"
       >
         <el-form-item label="岗位" prop="jobTitleId">
-          <LazySearchTreeSelect
-            ref="treeSelectRef"
+          <el-tree-select
             v-model="formData.jobTitleId"
-            :load="loadJobTitleTree"
-            :search="searchJobTitles"
-            :field-names="{
-              label: 'name',
-              value: 'id',
-              children: 'children',
-              disabled: (data) => data.type !== 'title'
-            }"
+            :data="jobTitleTreeData"
+            :props="jobTitleTreeProps"
+            node-key="id"
+            :default-expand-all="!!formData.jobTitleId"
             placeholder="请选择或搜索岗位"
-            :width="400"
+            style="width: 100%"
+            check-strictly
+            filterable
+            :filter-node-method="filterJobTitleNode"
           >
-            <template #node="{ data }">
+            <template #default="{ data }">
               <span class="tree-node">
                 <el-icon v-if="data.type === 'group'" style="color: #8B5CF6; margin-right: 4px;">
                   <Collection />
@@ -101,7 +100,7 @@
                 <span>{{ data.name }}</span>
               </span>
             </template>
-          </LazySearchTreeSelect>
+          </el-tree-select>
           <div class="form-tip">从泛微系统岗位表中选择（只能选择岗位，支持搜索）</div>
         </el-form-item>
         <el-form-item label="能力要素" prop="elementId">
@@ -143,13 +142,6 @@ import { listAbilityElements } from '@/api/abilityElement'
 import type { PositionAbilityReqVO } from '@/types/positionAbilityReq'
 import type { AbilityElementVO } from '@/types/abilityElement'
 import request from '@/utils/request'
-import LazySearchTreeSelect from '@/components/LazySearchTreeSelect.vue'
-
-interface JobGroup {
-  id: number
-  jobgroupremark: string
-  hasChildren?: boolean
-}
 
 interface TreeNode {
   id: number | string
@@ -162,129 +154,73 @@ interface TreeNode {
 
 const reqList = ref<PositionAbilityReqVO[]>([])
 const elementList = ref<AbilityElementVO[]>([])
-const jobGroupList = ref<JobGroup[]>([])
 
-// 搜索岗位（返回完整层级树）
-const searchJobTitles = async (keyword: string): Promise<any[]> => {
-  try {
-    const searchResults = await request.get(`/search/job-titles?keyword=${encodeURIComponent(keyword)}`)
+// 岗位树数据（一次性加载全部）
+const jobTitleTreeData = ref<TreeNode[]>([])
 
-    // 构建 group -> activity -> title 层级结构
-    const groupMap = new Map<number, TreeNode>()
-    const activityMap = new Map<string, TreeNode>()
-    const rootGroups: TreeNode[] = []
-
-    searchResults.forEach((item: any) => {
-      const groupId = item.jobgroupid
-      const activityId = item.jobactivityid
-
-      // 创建 group 节点
-      if (!groupMap.has(groupId)) {
-        const groupNode: TreeNode = {
-          id: groupId,
-          name: item.groupName,
-          type: 'group',
-          children: []
-        }
-        groupMap.set(groupId, groupNode)
-        rootGroups.push(groupNode)
-      }
-
-      // 创建 activity 节点
-      const activityKey = `${groupId}-${activityId}`
-      if (!activityMap.has(activityKey)) {
-        const activityNode: TreeNode = {
-          id: activityId,
-          name: item.activityName,
-          type: 'activity',
-          children: []
-        }
-        activityMap.set(activityKey, activityNode)
-        const groupNode = groupMap.get(groupId)!
-        groupNode.children = groupNode.children || []
-        groupNode.children.push(activityNode)
-      }
-
-      // 创建 title 节点
-      const titleNode: TreeNode = {
-        id: item.id,
-        name: item.jobtitlemark,
-        type: 'title'
-      }
-
-      const activityNode = activityMap.get(activityKey)!
-      activityNode.children = activityNode.children || []
-      activityNode.children.push(titleNode)
-    })
-
-    return rootGroups
-  } catch (error) {
-    console.error('搜索岗位失败:', error)
-    return []
-  }
+// 岗位树配置
+const jobTitleTreeProps = {
+  label: 'name',
+  value: 'id',
+  children: 'children',
+  disabled: (data: TreeNode) => data.type !== 'title'
 }
 
-// 懒加载岗位树（新接口：返回 Promise）
-const loadJobTitleTree = async (node: any): Promise<TreeNode[]> => {
-  if (node === null) {
-    // 加载根节点：岗位类别
-    try {
-      const response = await request.get('/job-groups')
-      jobGroupList.value = response
-      return response.map((group: any) => {
-        const hasChildren = group.hasChildren === true || group.hasChildren === 'true'
+// 客户端过滤岗位节点
+const filterJobTitleNode = (value: string, data: TreeNode) => {
+  if (!value) return true
+  return data.name.toLowerCase().includes(value.toLowerCase())
+}
+
+// 一次性加载全部岗位树
+const loadAllJobTitles = async () => {
+  try {
+    // 1. 加载所有岗位类别
+    const groups: any[] = await request.get('/job-groups')
+
+    // 2. 并发加载每个类别下的职务
+    const groupWithActivities = await Promise.all(
+      groups.map(async (group: any) => {
+        const activities: any[] = await request.get(`/job-activities/by-group?groupId=${group.id}`)
         return {
           id: group.id,
           name: group.jobgroupremark,
           type: 'group' as const,
-          hasChildren,
-          // 只有明确有子节点时才设置占位数据
-          children: hasChildren ? [{ __placeholder: true }] : undefined
+          children: activities.map((activity: any) => ({
+            id: activity.id,
+            name: activity.jobactivitymark,
+            type: 'activity' as const,
+            children: [] as TreeNode[],
+            // 先占位，下面再并发加载岗位
+            _activityRef: activity
+          }))
         }
       })
-    } catch (error) {
-      console.error('加载岗位类别失败:', error)
-      return []
-    }
-  } else if (node.type === 'group') {
-    // 加载第二层：职务
-    try {
-      const response = await request.get(`/job-activities/by-group?groupId=${node.id}`)
-      return response.map((activity: any) => {
-        const hasChildren = activity.hasChildren === true || activity.hasChildren === 'true'
-        return {
-          id: activity.id,
-          name: activity.jobactivitymark,
-          type: 'activity' as const,
-          hasChildren,
-          children: hasChildren ? [{ __placeholder: true }] : undefined
-        }
-      })
-    } catch (error) {
-      console.error('加载职务列表失败:', error)
-      return []
-    }
-  } else if (node.type === 'activity') {
-    // 加载第三层：岗位
-    try {
-      const response = await request.get(`/job-titles/by-activity?activityId=${node.id}`)
-      return response.map((title: any) => {
-        const hasChildren = title.hasChildren === true || title.hasChildren === 'true'
-        return {
+    )
+
+    // 3. 并发加载每个职务下的岗位
+    const allActivities = groupWithActivities.flatMap(g =>
+      g.children!.map(c => ({ activityNode: c, activityRef: c._activityRef }))
+    )
+
+    await Promise.all(
+      allActivities.map(async ({ activityNode, activityRef }) => {
+        const titles: any[] = await request.get(`/job-titles/by-activity?activityId=${activityRef.id}`)
+        activityNode.children = titles.map((title: any) => ({
           id: title.id,
           name: title.jobtitlemark,
-          type: 'title' as const,
-          hasChildren,
-          // 岗位通常是叶子节点，但保留扩展性
-          children: hasChildren ? [{ __placeholder: true }] : undefined
-        }
+          type: 'title' as const
+        }))
+        // 清理临时引用
+        delete (activityNode as any)._activityRef
       })
-    } catch (error) {
-      console.error('加载岗位列表失败:', error)
-      return []
-    }
+    )
+
+    jobTitleTreeData.value = groupWithActivities
+  } catch (error) {
+    console.error('加载岗位树失败:', error)
+    jobTitleTreeData.value = []
   }
-  return []
 }
 
 const jobTitleCount = computed(() => {
@@ -300,7 +236,6 @@ const elementCount = computed(() => {
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const formRef = ref<FormInstance>()
-const treeSelectRef = ref()
 
 const formData = reactive({
   id: 0,
@@ -401,12 +336,12 @@ const resetForm = () => {
   formData.elementId = undefined
   formData.description = ''
   formRef.value?.resetFields()
-  treeSelectRef.value?.reset()  // 重置岗位浏览框
 }
 
 onMounted(() => {
   loadData()
   loadElementList()
+  loadAllJobTitles()  // 一次性加载全部岗位树
 })
 </script>
 

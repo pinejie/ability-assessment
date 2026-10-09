@@ -64,6 +64,7 @@
       :title="dialogTitle"
       width="560px"
       class="form-dialog"
+      destroy-on-close
     >
       <el-form
         ref="formRef"
@@ -74,13 +75,18 @@
       >
         <el-form-item label="部门" prop="departmentId">
           <el-tree-select
+            ref="treeSelectRef"
             v-model="formData.departmentId"
             :data="deptTreeData"
             :props="deptTreeProps"
+            node-key="id"
+            :default-expand-all="!!formData.departmentId"
             placeholder="请选择部门"
             style="width: 100%"
+            popper-class="fixed-width-tree-dropdown"
             check-strictly
             filterable
+            @visible-change="handleDeptTreeDropdownVisibleChange"
           >
             <template #default="{ data }">
               <span class="tree-node">
@@ -236,6 +242,7 @@ const elementCount = computed(() => {
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const formRef = ref<FormInstance>()
+const treeSelectRef = ref<any>()
 
 const formData = reactive({
   id: 0,
@@ -243,6 +250,54 @@ const formData = reactive({
   elementId: undefined as number | undefined,
   description: '',
 })
+
+// 编辑模式下，打开下拉框时自动滚动到已选中的部门节点
+// 因为 popper 在点击时才渲染，所以监听 visible-change 事件
+const handleDeptTreeDropdownVisibleChange = (isVisible: boolean) => {
+  if (!isVisible || !formData.departmentId) return
+
+  // popper 已打开，DOM 已经渲染，轮询等待元素有实际尺寸
+  const tryScroll = (retries: number) => {
+    if (retries <= 0) return
+
+    const treeSelect = treeSelectRef.value
+    if (!treeSelect) return
+    const tree = treeSelect.treeRef
+    if (!tree) return
+
+    const node = tree.getNode(formData.departmentId!)
+    if (!node) return
+
+    const nodeElement = tree.$el?.querySelector(`.el-tree-node[data-key="${node.key}"]`) as HTMLElement
+    if (!nodeElement) return
+
+    const scrollContainer = tree.$el as HTMLElement
+    if (!scrollContainer) return
+
+    // 检查元素是否已渲染（有实际尺寸）
+    const rect = nodeElement.getBoundingClientRect()
+    if (rect.height === 0) {
+      // 还没渲染完，200ms 后重试
+      setTimeout(() => tryScroll(retries - 1), 200)
+      return
+    }
+
+    // 元素已渲染，执行滚动
+    const containerRect = scrollContainer.getBoundingClientRect()
+    const nodeRelativeTop = rect.top - containerRect.top
+    const containerHeight = scrollContainer.clientHeight
+    const nodeHeight = nodeElement.offsetHeight
+    const scrollTop = nodeRelativeTop - (containerHeight / 2) + (nodeHeight / 2)
+
+    scrollContainer.scrollTo({
+      top: scrollContainer.scrollTop + scrollTop,
+      behavior: 'smooth'
+    })
+  }
+
+  // 最多重试 5 次（1秒内）
+  setTimeout(() => tryScroll(5), 100)
+}
 
 const formRules: FormRules = {
   departmentId: [
@@ -517,5 +572,17 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+</style>
+
+<!-- 下拉框被 teleport 到 body，必须用非 scoped 样式 -->
+<style>
+.fixed-width-tree-dropdown {
+  width: 400px !important;
+  max-width: 90vw !important;
+}
+.fixed-width-tree-dropdown .el-tree {
+  max-height: 300px;
+  overflow-y: auto;
 }
 </style>

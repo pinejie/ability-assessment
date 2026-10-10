@@ -93,7 +93,8 @@
       :title="dialogTitle"
       width="700px"
       class="form-dialog"
-      top="5vh"
+      top="8vh"
+      :close-on-click-modal="false"
       destroy-on-close
     >
       <el-form
@@ -898,6 +899,26 @@ onMounted(() => {
   justify-content: flex-end;
   padding: 16px 0;
 }
+
+.form-dialog :deep(.el-dialog) {
+  height: 84vh !important;
+  max-height: 84vh !important;
+  display: flex;
+  flex-direction: column;
+  margin: 8vh auto !important;
+}
+
+.form-dialog :deep(.el-dialog__body) {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.form-dialog :deep(.el-dialog__footer) {
+  padding: 16px 20px;
+  border-top: 1px solid #E5E6EB;
+}
 </style>
 
 <!-- 下拉框被 teleport 到 body，必须用非 scoped 样式 -->
@@ -909,5 +930,25 @@ onMounted(() => {
 .fixed-width-tree-dropdown .el-tree {
   max-height: 300px;
   overflow-y: auto;
+}
+
+.form-dialog .el-dialog {
+  height: 84vh !important;
+  max-height: 84vh !important;
+  display: flex;
+  flex-direction: column;
+  margin: 8vh auto !important;
+}
+
+.form-dialog .el-dialog__body {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.form-dialog .el-dialog__footer {
+  padding: 16px 20px;
+  border-top: 1px solid #E5E6EB;
 }
 </style>

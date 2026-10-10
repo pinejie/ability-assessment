@@ -59,6 +59,10 @@ public class AbilityElementServiceImpl
             throw new BusinessException("能力要素不存在");
         }
 
+        // 保存原始值（BeanUtils.copyProperties 会用 null 覆盖未传的字段）
+        Long originalCategoryId = element.getCategoryId();
+        Integer originalStatus = element.getStatus();
+
         // 如果修改了类别，检查类别是否存在
         if (dto.getCategoryId() != null) {
             AbilityCategory category = abilityCategoryService.getById(dto.getCategoryId());
@@ -67,9 +71,24 @@ public class AbilityElementServiceImpl
             }
         }
 
+        // 检测状态变化：从停用变为启用
+        boolean isEnabling = originalStatus != null && originalStatus == 0
+                && dto.getStatus() != null && dto.getStatus() == 1;
+
         BeanUtils.copyProperties(dto, element, "id");
         updateById(element);
         log.info("更新能力要素成功，ID: {}", element.getId());
+
+        // 启用要素时，如果所属类别处于停用状态，自动启用类别
+        if (isEnabling && originalCategoryId != null) {
+            AbilityCategory category = abilityCategoryService.getById(originalCategoryId);
+            if (category != null && category.getStatus() != null && category.getStatus() == 0) {
+                category.setStatus(1);
+                abilityCategoryService.updateById(category);
+                log.info("启用能力要素时自动启用所属类别，要素ID: {}, 类别ID: {}",
+                        element.getId(), originalCategoryId);
+            }
+        }
     }
 
     @Override

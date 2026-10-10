@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -272,6 +273,31 @@ public class EcologyDataController {
         } catch (Exception e) {
             log.error("查询人员列表失败", e);
             return Result.success(new PageResult<>(List.of(), 0L, pageNum, pageSize));
+        }
+    }
+
+    @Operation(summary = "根据ID查询人员")
+    @GetMapping("/resources/{id}")
+    public Result<Map<String, Object>> getResourceById(@PathVariable Long id) {
+        try {
+            String sql = "SELECT r.id, r.lastname, " +
+                         "r.departmentid as departmentid, " +
+                         "r.jobtitle as jobtitle, " +
+                         "d.departmentmark as departmentName, " +
+                         "d.subcompanyid1, " +
+                         "s.subcompanyname as companyName " +
+                         "FROM HrmResource r " +
+                         "LEFT JOIN HrmDepartment d ON r.departmentid = d.id " +
+                         "LEFT JOIN HrmSubCompany s ON d.subcompanyid1 = s.id " +
+                         "WHERE r.id = ? AND ISNULL(r.status, -1) IN (0, 1, 2, 3)";
+            List<Map<String, Object>> results = jdbcTemplate.queryForList(sql, id);
+            if (results.isEmpty()) {
+                return Result.success(null);
+            }
+            return Result.success(results.get(0));
+        } catch (Exception e) {
+            log.error("查询人员信息失败", e);
+            return Result.success(null);
         }
     }
 

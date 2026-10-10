@@ -253,7 +253,7 @@ const handleClickOutside = (e: MouseEvent) => {
 // 监听 modelValue 变化，更新显示
 watch(
   () => props.modelValue,
-  (newVal) => {
+  async (newVal) => {
     if (!newVal) {
       searchKeyword.value = ''
       return
@@ -262,6 +262,16 @@ watch(
     const recent = recentResources.value.find(r => r.id === newVal)
     if (recent) {
       searchKeyword.value = recent.lastname
+    } else {
+      // 如果不在最近记录中，通过 API 查询
+      try {
+        const results = await request.get(`/resources/${newVal}`)
+        if (results && results.lastname) {
+          searchKeyword.value = results.lastname
+        }
+      } catch (error) {
+        console.error('查询人员信息失败:', error)
+      }
     }
   },
   { immediate: true }

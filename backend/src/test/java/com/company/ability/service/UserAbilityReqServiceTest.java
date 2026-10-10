@@ -1,5 +1,7 @@
 package com.company.ability.service;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.UserAbilityReqCreateDTO;
 import com.company.ability.dto.UserAbilityReqUpdateDTO;
 import com.company.ability.dto.AbilityElementLevelCreateDTO;
@@ -93,9 +95,9 @@ class UserAbilityReqServiceTest {
 
         // Assert
         assertNotNull(id);
-        List<UserAbilityReqVO> list = userAbilityReqService.listUserAbilityReqsByResourceId(1001L);
-        assertEquals(1, list.size());
-        UserAbilityReqVO vo = list.get(0);
+        PageResult<UserAbilityReqVO> result = userAbilityReqService.pageUserAbilityReqsByResourceId(1001L, new PageRequest());
+        assertEquals(1, result.getList().size());
+        UserAbilityReqVO vo = result.getList().get(0);
         assertEquals(1001L, vo.getResourceId());
         assertEquals(elementId, vo.getElementId());
         assertEquals(levelId, vo.getLevelId());
@@ -118,7 +120,7 @@ class UserAbilityReqServiceTest {
         createDTO.setElementConfigs(configs);
 
         Long id = userAbilityReqService.createUserAbilityReq(createDTO);
-        Long reqId = userAbilityReqService.listUserAbilityReqsByResourceId(1001L).get(0).getId();
+        Long reqId = userAbilityReqService.pageUserAbilityReqsByResourceId(1001L, new PageRequest()).getList().get(0).getId();
 
         UserAbilityReqUpdateDTO updateDTO = new UserAbilityReqUpdateDTO();
         updateDTO.setId(reqId);
@@ -148,7 +150,7 @@ class UserAbilityReqServiceTest {
         createDTO.setElementConfigs(configs);
 
         userAbilityReqService.createUserAbilityReq(createDTO);
-        Long reqId = userAbilityReqService.listUserAbilityReqsByResourceId(1001L).get(0).getId();
+        Long reqId = userAbilityReqService.pageUserAbilityReqsByResourceId(1001L, new PageRequest()).getList().get(0).getId();
 
         // Act
         userAbilityReqService.deleteUserAbilityReq(reqId);
@@ -180,8 +182,8 @@ class UserAbilityReqServiceTest {
         userAbilityReqService.deleteUserAbilityReqsByResourceId(1001L);
 
         // Assert
-        List<UserAbilityReqVO> list = userAbilityReqService.listUserAbilityReqsByResourceId(1001L);
-        assertEquals(0, list.size());
+        PageResult<UserAbilityReqVO> result = userAbilityReqService.pageUserAbilityReqsByResourceId(1001L, new PageRequest());
+        assertEquals(0, result.getList().size());
     }
 
     @Test
@@ -204,10 +206,10 @@ class UserAbilityReqServiceTest {
         }
 
         // Act
-        List<UserAbilityReqVO> list = userAbilityReqService.listAllUserAbilityReqs();
+        PageResult<UserAbilityReqVO> result = userAbilityReqService.pageUserAbilityReqs(new PageRequest());
 
         // Assert
-        assertEquals(3, list.size());
+        assertEquals(3, result.getList().size());
     }
 
     @Test
@@ -231,10 +233,10 @@ class UserAbilityReqServiceTest {
         }
 
         // Act
-        List<UserAbilityReqVO> list = userAbilityReqService.listUserAbilityReqsByResourceId(1001L);
+        PageResult<UserAbilityReqVO> result = userAbilityReqService.pageUserAbilityReqsByResourceId(1001L, new PageRequest());
 
         // Assert
-        assertEquals(2, list.size());
+        assertEquals(2, result.getList().size());
     }
 
     @Test

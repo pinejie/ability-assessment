@@ -2,6 +2,8 @@ package com.company.ability.service;
 
 import com.company.ability.dto.AbilityCategoryCreateDTO;
 import com.company.ability.dto.AbilityCategoryUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityCategory;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.vo.AbilityCategoryVO;
@@ -12,8 +14,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -96,8 +96,8 @@ class AbilityCategoryServiceTest {
     }
 
     @Test
-    @DisplayName("应该查询所有能力类别")
-    void shouldListAllCategories() {
+    @DisplayName("应该分页查询能力类别")
+    void shouldPageCategories() {
         // Arrange
         for (int i = 1; i <= 3; i++) {
             AbilityCategoryCreateDTO dto = new AbilityCategoryCreateDTO();
@@ -106,10 +106,14 @@ class AbilityCategoryServiceTest {
         }
 
         // Act
-        List<AbilityCategoryVO> list = abilityCategoryService.listAllCategories();
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(1);
+        pageRequest.setPageSize(10);
+        PageResult<AbilityCategoryVO> result = abilityCategoryService.pageCategories(pageRequest);
 
         // Assert
-        assertEquals(3, list.size());
+        assertEquals(3, result.getList().size());
+        assertEquals(3L, result.getTotal());
     }
 
     @Test

@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.company.ability.dto.ScoreWeightCreateDTO;
 import com.company.ability.dto.ScoreWeightUpdateDTO;
 import com.company.ability.entity.ScoreWeight;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.vo.ScoreWeightVO;
 
 import java.util.List;
@@ -34,12 +36,12 @@ public interface ScoreWeightService extends IService<ScoreWeight> {
     ScoreWeightVO getScoreWeightById(Long id);
 
     /**
-     * 查询所有评分权重配置
+     * 分页查询评分权重配置
      */
-    List<ScoreWeightVO> listAllScoreWeights();
+    PageResult<ScoreWeightVO> pageScoreWeights(PageRequest pageRequest);
 
     /**
-     * 根据分公司ID查询权重配置列表
+     * 根据分公司ID分页查询权重配置列表
      */
-    List<ScoreWeightVO> listScoreWeightsByCompanyId(Long companyId);
+    PageResult<ScoreWeightVO> pageScoreWeightsByCompanyId(Long companyId, PageRequest pageRequest);
 }

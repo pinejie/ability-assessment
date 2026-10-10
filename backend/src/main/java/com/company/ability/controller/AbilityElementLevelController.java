@@ -2,6 +2,8 @@ package com.company.ability.controller;
 
 import com.company.ability.dto.AbilityElementLevelCreateDTO;
 import com.company.ability.dto.AbilityElementLevelUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
 import com.company.ability.service.AbilityElementLevelService;
 import com.company.ability.vo.AbilityElementLevelVO;
@@ -10,8 +12,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * 能力要素等级控制器
@@ -52,10 +52,16 @@ public class AbilityElementLevelController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "根据能力要素ID查询等级列表")
+    @Operation(summary = "根据能力要素ID分页查询等级列表")
     @GetMapping("/element/{elementId}")
-    public Result<List<AbilityElementLevelVO>> listLevelsByElementId(@PathVariable Long elementId) {
-        List<AbilityElementLevelVO> list = abilityElementLevelService.listLevelsByElementId(elementId);
-        return Result.success(list);
+    public Result<PageResult<AbilityElementLevelVO>> pageLevelsByElementId(
+            @PathVariable Long elementId,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<AbilityElementLevelVO> result = abilityElementLevelService.pageLevelsByElementId(elementId, pageRequest);
+        return Result.success(result);
     }
 }

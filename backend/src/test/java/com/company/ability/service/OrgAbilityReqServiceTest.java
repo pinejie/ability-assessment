@@ -1,5 +1,7 @@
 package com.company.ability.service;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.OrgAbilityReqCreateDTO;
 import com.company.ability.dto.OrgAbilityReqUpdateDTO;
 import com.company.ability.exception.BusinessException;
@@ -127,10 +129,10 @@ class OrgAbilityReqServiceTest {
         }
 
         // Act
-        List<OrgAbilityReqVO> list = orgAbilityReqService.listAllOrgAbilityReqs();
+        PageResult<OrgAbilityReqVO> result = orgAbilityReqService.pageOrgAbilityReqs(new PageRequest());
 
         // Assert
-        assertEquals(3, list.size());
+        assertEquals(3, result.getList().size());
     }
 
     @Test
@@ -145,10 +147,10 @@ class OrgAbilityReqServiceTest {
         }
 
         // Act
-        List<OrgAbilityReqVO> list = orgAbilityReqService.listOrgAbilityReqsByDepartmentId(100L);
+        PageResult<OrgAbilityReqVO> result = orgAbilityReqService.pageOrgAbilityReqsByDepartmentId(100L, new PageRequest());
 
         // Assert
-        assertEquals(2, list.size());
+        assertEquals(2, result.getList().size());
     }
 
     @Test

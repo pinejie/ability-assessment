@@ -1,5 +1,6 @@
 import request from '@/utils/request'
 import type { ScoreWeightVO, ScoreWeightCreateDTO, ScoreWeightUpdateDTO } from '@/types/scoreWeight'
+import type { PageResult } from '@/types/common'
 
 /**
  * 创建评分权重配置
@@ -30,15 +31,15 @@ export const getScoreWeightById = (id: number): Promise<ScoreWeightVO> => {
 }
 
 /**
- * 查询所有评分权重配置
+ * 分页查询所有评分权重配置
  */
-export const listScoreWeights = (): Promise<ScoreWeightVO[]> => {
-  return request.get('/score-weights')
+export const pageScoreWeights = (pageNum = 1, pageSize = 10): Promise<PageResult<ScoreWeightVO>> => {
+  return request.get('/score-weights', { params: { pageNum, pageSize } })
 }
 
 /**
- * 根据分公司ID查询权重配置列表
+ * 根据分公司ID分页查询权重配置列表
  */
-export const listScoreWeightsByCompanyId = (companyId: number): Promise<ScoreWeightVO[]> => {
-  return request.get(`/score-weights/company/${companyId}`)
+export const pageScoreWeightsByCompanyId = (companyId: number, pageNum = 1, pageSize = 10): Promise<PageResult<ScoreWeightVO>> => {
+  return request.get(`/score-weights/company/${companyId}`, { params: { pageNum, pageSize } })
 }

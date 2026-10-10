@@ -1,9 +1,12 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.company.ability.dto.AbilityElementLevelCreateDTO;
 import com.company.ability.dto.AbilityElementLevelUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityElementLevel;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.mapper.AbilityElementLevelMapper;
@@ -81,17 +84,20 @@ public class AbilityElementLevelServiceImpl extends ServiceImpl<AbilityElementLe
     }
 
     @Override
-    public List<AbilityElementLevelVO> listLevelsByElementId(Long elementId) {
+    public PageResult<AbilityElementLevelVO> pageLevelsByElementId(Long elementId, PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<AbilityElementLevel> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
         LambdaQueryWrapper<AbilityElementLevel> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AbilityElementLevel::getElementId, elementId)
                .orderByAsc(AbilityElementLevel::getLevel);
-        List<AbilityElementLevel> levels = this.list(wrapper);
-        return levels.stream()
+        Page<AbilityElementLevel> result = this.page(page, wrapper);
+        List<AbilityElementLevelVO> voList = result.getRecords().stream()
                 .map(level -> {
                     AbilityElementLevelVO vo = new AbilityElementLevelVO();
                     BeanUtils.copyProperties(level, vo);
                     return vo;
                 })
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 }

@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.company.ability.dto.AbilityElementCreateDTO;
 import com.company.ability.dto.AbilityElementUpdateDTO;
 import com.company.ability.entity.AbilityElement;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.vo.AbilityElementVO;
 
 import java.util.List;
@@ -34,12 +36,12 @@ public interface AbilityElementService extends IService<AbilityElement> {
     AbilityElementVO getElementById(Long id);
 
     /**
-     * 查询所有能力要素
+     * 分页查询能力要素
      */
-    List<AbilityElementVO> listAllElements();
+    PageResult<AbilityElementVO> pageElements(PageRequest pageRequest);
 
     /**
-     * 根据类别ID查询要素列表
+     * 根据类别ID分页查询要素列表
      */
-    List<AbilityElementVO> listElementsByCategoryId(Long categoryId);
+    PageResult<AbilityElementVO> pageElementsByCategoryId(Long categoryId, PageRequest pageRequest);
 }

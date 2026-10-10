@@ -3,10 +3,10 @@ package com.company.ability.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.company.ability.dto.AbilityCategoryCreateDTO;
 import com.company.ability.dto.AbilityCategoryUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityCategory;
 import com.company.ability.vo.AbilityCategoryVO;
-
-import java.util.List;
 
 /**
  * 能力类别服务接口
@@ -34,7 +34,7 @@ public interface AbilityCategoryService extends IService<AbilityCategory> {
     AbilityCategoryVO getCategoryById(Long id);
 
     /**
-     * 查询所有能力类别
+     * 分页查询能力类别
      */
-    List<AbilityCategoryVO> listAllCategories();
+    PageResult<AbilityCategoryVO> pageCategories(PageRequest pageRequest);
 }

@@ -2,6 +2,8 @@ package com.company.ability.service;
 
 import com.company.ability.dto.AbilityElementCreateDTO;
 import com.company.ability.dto.AbilityElementUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.vo.AbilityElementVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -122,10 +124,14 @@ class AbilityElementServiceTest {
         }
 
         // Act
-        List<AbilityElementVO> list = abilityElementService.listAllElements();
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(1);
+        pageRequest.setPageSize(10);
+        PageResult<AbilityElementVO> result = abilityElementService.pageElements(pageRequest);
 
         // Assert
-        assertEquals(3, list.size());
+        assertEquals(3, result.getList().size());
+        assertEquals(3L, result.getTotal());
     }
 
     @Test
@@ -140,10 +146,13 @@ class AbilityElementServiceTest {
         }
 
         // Act
-        List<AbilityElementVO> list = abilityElementService.listElementsByCategoryId(categoryId);
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(1);
+        pageRequest.setPageSize(10);
+        PageResult<AbilityElementVO> result = abilityElementService.pageElementsByCategoryId(categoryId, pageRequest);
 
         // Assert
-        assertEquals(2, list.size());
+        assertEquals(2, result.getList().size());
     }
 
     @Test

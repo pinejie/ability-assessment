@@ -3,10 +3,10 @@ package com.company.ability.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.company.ability.dto.AbilityElementLevelCreateDTO;
 import com.company.ability.dto.AbilityElementLevelUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityElementLevel;
 import com.company.ability.vo.AbilityElementLevelVO;
-
-import java.util.List;
 
 /**
  * 能力要素等级服务
@@ -34,7 +34,7 @@ public interface AbilityElementLevelService extends IService<AbilityElementLevel
     AbilityElementLevelVO getLevelById(Long id);
 
     /**
-     * 根据能力要素ID查询等级列表
+     * 根据能力要素ID分页查询等级列表
      */
-    List<AbilityElementLevelVO> listLevelsByElementId(Long elementId);
+    PageResult<AbilityElementLevelVO> pageLevelsByElementId(Long elementId, PageRequest pageRequest);
 }

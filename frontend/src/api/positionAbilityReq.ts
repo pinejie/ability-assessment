@@ -1,5 +1,6 @@
 import request from '@/utils/request'
 import type { PositionAbilityReqVO, PositionAbilityReqCreateDTO, PositionAbilityReqUpdateDTO } from '@/types/positionAbilityReq'
+import type { PageResult } from '@/types/common'
 
 /**
  * 创建岗位能力要求
@@ -30,17 +31,17 @@ export const getPositionAbilityReqById = (id: number): Promise<PositionAbilityRe
 }
 
 /**
- * 查询所有岗位能力要求
+ * 分页查询所有岗位能力要求
  */
-export const listPositionAbilityReqs = (): Promise<PositionAbilityReqVO[]> => {
-  return request.get('/position-ability-reqs')
+export const pagePositionAbilityReqs = (pageNum = 1, pageSize = 10): Promise<PageResult<PositionAbilityReqVO>> => {
+  return request.get('/position-ability-reqs', { params: { pageNum, pageSize } })
 }
 
 /**
- * 根据岗位ID查询能力要求列表
+ * 根据岗位ID分页查询能力要求列表
  */
-export const listPositionAbilityReqsByJobTitleId = (jobTitleId: number): Promise<PositionAbilityReqVO[]> => {
-  return request.get(`/position-ability-reqs/job-title/${jobTitleId}`)
+export const pagePositionAbilityReqsByJobTitleId = (jobTitleId: number, pageNum = 1, pageSize = 10): Promise<PageResult<PositionAbilityReqVO>> => {
+  return request.get(`/position-ability-reqs/job-title/${jobTitleId}`, { params: { pageNum, pageSize } })
 }
 
 /**

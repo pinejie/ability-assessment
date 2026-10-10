@@ -1,7 +1,11 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.UserAbilityReqNewCreateDTO;
 import com.company.ability.dto.UserAbilityReqNewUpdateDTO;
 import com.company.ability.entity.AbilityElement;
@@ -169,11 +173,16 @@ public class UserAbilityReqNewServiceImpl
     }
 
     @Override
-    public List<UserAbilityReqNewVO> listAllUserAbilityReqs() {
-        List<UserAbilityReqNew> list = list();
-        return list.stream()
+    public PageResult<UserAbilityReqNewVO> pageUserAbilityReqs(PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<UserAbilityReqNew> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        QueryWrapper<UserAbilityReqNew> wrapper = new QueryWrapper<>();
+        wrapper.orderByAsc("id");
+        Page<UserAbilityReqNew> result = page(page, wrapper);
+        List<UserAbilityReqNewVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override

@@ -16,7 +16,7 @@
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">配置总数</div>
-        <div class="stat-value">{{ reqList.length }}</div>
+        <div class="stat-value">{{ pagination.total }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">涉及部门</div>
@@ -55,6 +55,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="pagination.total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -136,7 +147,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { OfficeBuilding, Folder } from '@element-plus/icons-vue'
-import { listOrgAbilityReqs, createOrgAbilityReq, updateOrgAbilityReq, deleteOrgAbilityReq } from '@/api/orgAbilityReq'
+import { pageOrgAbilityReqs, createOrgAbilityReq, updateOrgAbilityReq, deleteOrgAbilityReq } from '@/api/orgAbilityReq'
 import { listAbilityElements } from '@/api/abilityElement'
 import type { OrgAbilityReqVO } from '@/types/orgAbilityReq'
 import type { AbilityElementVO } from '@/types/abilityElement'
@@ -152,6 +163,12 @@ interface TreeNode {
 const reqList = ref<OrgAbilityReqVO[]>([])
 const elementList = ref<AbilityElementVO[]>([])
 
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+  total: 0,
+})
+
 // 部门树数据（一次性加载）
 const deptTreeData = ref<TreeNode[]>([])
 
@@ -166,10 +183,12 @@ const deptTreeProps = {
 // 一次性加载部门树
 const loadDeptTree = async () => {
   try {
-    const [companies, departments] = await Promise.all([
-      request.get('/sub-companies'),
-      request.get('/departments')
+    const [companyResult, deptResult] = await Promise.all([
+      request.get('/sub-companies?pageNum=1&pageSize=100'),
+      request.get('/departments?pageNum=1&pageSize=1000')
     ])
+    const companies = companyResult.data?.list || companyResult.list || []
+    const departments = deptResult.list || []
 
     // 1. 构建公司节点映射
     const companyMap = new Map<number, TreeNode>()
@@ -310,10 +329,23 @@ const formRules: FormRules = {
 
 const loadData = async () => {
   try {
-    reqList.value = await listOrgAbilityReqs()
+    const result = await pageOrgAbilityReqs(pagination.currentPage, pagination.pageSize)
+    reqList.value = result.list || []
+    pagination.total = result.total
   } catch (error) {
     console.error('加载数据失败:', error)
   }
+}
+
+const handlePageChange = (page: number) => {
+  pagination.currentPage = page
+  loadData()
+}
+
+const handleSizeChange = (size: number) => {
+  pagination.pageSize = size
+  pagination.currentPage = 1
+  loadData()
 }
 
 const loadElementList = async () => {
@@ -572,6 +604,12 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
 }
 </style>
 

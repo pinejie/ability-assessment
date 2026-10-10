@@ -1,7 +1,11 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.PositionAbilityReqCreateDTO;
 import com.company.ability.dto.PositionAbilityReqUpdateDTO;
 import com.company.ability.entity.AbilityElement;
@@ -146,21 +150,30 @@ public class PositionAbilityReqServiceImpl
     }
 
     @Override
-    public List<PositionAbilityReqVO> listAllPositionAbilityReqs() {
-        List<PositionAbilityReq> list = list();
-        return list.stream()
+    public PageResult<PositionAbilityReqVO> pagePositionAbilityReqs(PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<PositionAbilityReq> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        QueryWrapper<PositionAbilityReq> wrapper = new QueryWrapper<>();
+        wrapper.orderByAsc("id");
+        Page<PositionAbilityReq> result = page(page, wrapper);
+        List<PositionAbilityReqVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override
-    public List<PositionAbilityReqVO> listPositionAbilityReqsByJobTitleId(Long jobTitleId) {
+    public PageResult<PositionAbilityReqVO> pagePositionAbilityReqsByJobTitleId(Long jobTitleId, PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<PositionAbilityReq> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
         LambdaQueryWrapper<PositionAbilityReq> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(PositionAbilityReq::getJobTitleId, jobTitleId);
-        List<PositionAbilityReq> list = list(wrapper);
-        return list.stream()
+        wrapper.eq(PositionAbilityReq::getJobTitleId, jobTitleId)
+               .orderByAsc(PositionAbilityReq::getId);
+        Page<PositionAbilityReq> result = page(page, wrapper);
+        List<PositionAbilityReqVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override

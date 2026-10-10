@@ -1,5 +1,7 @@
 package com.company.ability.service;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.ScoreWeightCreateDTO;
 import com.company.ability.dto.ScoreWeightUpdateDTO;
 import com.company.ability.entity.ScoreWeight;
@@ -136,10 +138,10 @@ class ScoreWeightServiceTest {
         }
 
         // Act
-        List<ScoreWeightVO> list = scoreWeightService.listAllScoreWeights();
+        PageResult<ScoreWeightVO> result = scoreWeightService.pageScoreWeights(new PageRequest());
 
         // Assert
-        assertEquals(3, list.size());
+        assertEquals(3, result.getList().size());
     }
 
     @Test
@@ -163,9 +165,9 @@ class ScoreWeightServiceTest {
         scoreWeightService.createScoreWeight(dto);
 
         // Act
-        List<ScoreWeightVO> list = scoreWeightService.listScoreWeightsByCompanyId(1L);
+        PageResult<ScoreWeightVO> result = scoreWeightService.pageScoreWeightsByCompanyId(1L, new PageRequest());
 
         // Assert
-        assertEquals(2, list.size());
+        assertEquals(2, result.getList().size());
     }
 }

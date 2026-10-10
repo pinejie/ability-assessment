@@ -1,5 +1,7 @@
 package com.company.ability.controller;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.UserAbilityReqNewCreateDTO;
 import com.company.ability.dto.UserAbilityReqNewUpdateDTO;
 import com.company.ability.dto.Result;
@@ -52,11 +54,15 @@ public class UserAbilityReqNewController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有人员能力要求")
+    @Operation(summary = "分页查询人员能力要求")
     @GetMapping
-    public Result<List<UserAbilityReqNewVO>> listAllUserAbilityReqs() {
-        List<UserAbilityReqNewVO> list = userAbilityReqNewService.listAllUserAbilityReqs();
-        return Result.success(list);
+    public Result<PageResult<UserAbilityReqNewVO>> pageUserAbilityReqs(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        return Result.success(userAbilityReqNewService.pageUserAbilityReqs(pageRequest));
     }
 
     @Operation(summary = "根据人员ID查询能力要求")

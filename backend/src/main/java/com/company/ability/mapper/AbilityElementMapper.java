@@ -1,6 +1,7 @@
 package com.company.ability.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.company.ability.entity.AbilityElement;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -23,4 +24,14 @@ public interface AbilityElementMapper extends BaseMapper<AbilityElement> {
             "WHERE e.category_id = #{categoryId} AND e.deleted = 0 " +
             "ORDER BY e.sort ASC")
     List<AbilityElement> selectByCategoryId(@Param("categoryId") Long categoryId);
+
+    /**
+     * 根据类别ID分页查询要素列表
+     */
+    @Select("SELECT e.*, c.category_name " +
+            "FROM uf_ability_element e " +
+            "LEFT JOIN uf_ability_category c ON e.category_id = c.id " +
+            "WHERE e.category_id = #{categoryId} AND e.deleted = 0 " +
+            "ORDER BY e.sort ASC")
+    Page<AbilityElement> selectPageByCategoryId(Page<AbilityElement> page, @Param("categoryId") Long categoryId);
 }

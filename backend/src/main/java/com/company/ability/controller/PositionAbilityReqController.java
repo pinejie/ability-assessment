@@ -65,4 +65,13 @@ public class PositionAbilityReqController {
         List<PositionAbilityReqVO> list = positionAbilityReqService.listPositionAbilityReqsByJobTitleId(jobTitleId);
         return Result.success(list);
     }
+
+    @Operation(summary = "根据部门和岗位查询能力要求配置")
+    @GetMapping("/by-department-jobtitle")
+    public Result<PositionAbilityReqVO> getPositionAbilityReqByDeptAndJobTitle(
+            @RequestParam Long departmentId,
+            @RequestParam Long jobTitleId) {
+        PositionAbilityReqVO vo = positionAbilityReqService.getByDepartmentAndJobTitle(departmentId, jobTitleId);
+        return Result.success(vo);
+    }
 }

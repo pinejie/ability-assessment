@@ -69,8 +69,10 @@ public class UserAbilityReqServiceImpl
             reqs.add(req);
         }
 
-        // 批量保存
-        saveBatch(reqs);
+        // 逐条保存（避免 SQL Server 批量插入获取自增ID的问题）
+        for (UserAbilityReq req : reqs) {
+            save(req);
+        }
         log.info("创建人员能力要求成功，人员ID: {}, 创建{}条记录", dto.getResourceId(), reqs.size());
         return reqs.get(0).getId();
     }

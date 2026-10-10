@@ -42,3 +42,20 @@ export const listPositionAbilityReqs = (): Promise<PositionAbilityReqVO[]> => {
 export const listPositionAbilityReqsByJobTitleId = (jobTitleId: number): Promise<PositionAbilityReqVO[]> => {
   return request.get(`/position-ability-reqs/job-title/${jobTitleId}`)
 }
+
+/**
+ * 根据部门ID查询岗位列表（从人员表中获取不同岗位）
+ */
+export const listJobTitlesByDepartment = (departmentId: number): Promise<{ id: number; name: string }[]> => {
+  return request.get(`/job-titles/by-department?departmentId=${departmentId}`)
+}
+
+/**
+ * 根据部门和岗位查询能力要求配置
+ */
+export const getPositionAbilityReqByDeptAndJobTitle = (
+  departmentId: number,
+  jobTitleId: number
+): Promise<PositionAbilityReqVO | null> => {
+  return request.get(`/position-ability-reqs/by-department-jobtitle?departmentId=${departmentId}&jobTitleId=${jobTitleId}`)
+}

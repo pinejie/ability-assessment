@@ -42,4 +42,9 @@ public interface PositionAbilityReqService extends IService<PositionAbilityReq> 
      * 根据岗位ID查询能力要求列表
      */
     List<PositionAbilityReqVO> listPositionAbilityReqsByJobTitleId(Long jobTitleId);
+
+    /**
+     * 根据部门和岗位查询能力要求配置
+     */
+    PositionAbilityReqVO getByDepartmentAndJobTitle(Long departmentId, Long jobTitleId);
 }

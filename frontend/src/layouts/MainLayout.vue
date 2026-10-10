@@ -50,7 +50,7 @@ const route = useRoute()
 const menuItems = [
   { path: '/ability-categories', title: '能力类别管理', icon: '📋' },
   { path: '/ability-elements', title: '能力要素管理', icon: '🎯' },
-  { path: '/org-ability-reqs', title: '组织能力要求', icon: '🏢' },
+  // { path: '/org-ability-reqs', title: '组织能力要求', icon: '🏢' },
   { path: '/position-ability-reqs', title: '岗位能力要求', icon: '💼' },
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
   { path: '/score-weights', title: '评分权重配置', icon: '⚖️' },

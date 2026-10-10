@@ -285,56 +285,46 @@ public class EcologyDataController {
         }
     }
 
-    @Operation(summary = "搜索人员")
-    @GetMapping("/search/resources")
-    public Result<List<Map<String, Object>>> searchResources(@RequestParam String keyword) {
+    @Operation(summary = "查询指定部门下的岗位（从人员表中获取不同岗位）")
+    @GetMapping("/job-titles/by-department")
+    public Result<List<Map<String, Object>>> listJobTitlesByDepartment(@RequestParam Long departmentId) {
         try {
-            String sql = "SELECT r.id, r.lastname, r.departmentid, " +
+            String sql = "SELECT DISTINCT r.jobtitle as id, t.jobtitlemark as name " +
+                         "FROM HrmResource r " +
+                         "LEFT JOIN HrmJobTitles t ON r.jobtitle = t.id " +
+                         "WHERE r.departmentid = ? " +
+                         "AND r.jobtitle IS NOT NULL AND r.jobtitle > 0 " +
+                         "AND ISNULL(r.status, -1) IN (0, 1, 2, 3) " +
+                         "ORDER BY t.jobtitlemark";
+            List<Map<String, Object>> list = jdbcTemplate.queryForList(sql, departmentId);
+            return Result.success(list);
+        } catch (Exception e) {
+            log.error("查询部门下岗位失败", e);
+            return Result.success(List.of());
+        }
+    }
+
+    @Operation(summary = "搜索人员（支持姓名和拼音）")
+    @GetMapping("/search/resources")
+    public Result<List<Map<String, Object>>> searchResources(
+            @RequestParam String keyword,
+            @RequestParam(defaultValue = "10") Integer limit) {
+        try {
+            String sql = "SELECT TOP (?) r.id, r.lastname, " +
+                         "r.departmentid as departmentid, " +
+                         "r.jobtitle as jobtitle, " +
                          "d.departmentmark as departmentName, " +
                          "d.subcompanyid1, " +
-                         "s.subcompanyname as companyName, s.supsubcomid " +
+                         "s.subcompanyname as companyName " +
                          "FROM HrmResource r " +
                          "LEFT JOIN HrmDepartment d ON r.departmentid = d.id " +
                          "LEFT JOIN HrmSubCompany s ON d.subcompanyid1 = s.id " +
                          "WHERE ISNULL(r.status, -1) IN (0, 1, 2, 3) " +
-                         "AND r.lastname LIKE ? " +
+                         "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?) " +
                          "ORDER BY r.lastname";
-            List<Map<String, Object>> list = jdbcTemplate.queryForList(sql, "%" + keyword + "%");
-
-            // 为每个人员构建公司层级路径
-            List<Map<String, Object>> result = new java.util.ArrayList<>();
-            for (Map<String, Object> resource : list) {
-                Map<String, Object> item = new java.util.HashMap<>(resource);
-
-                // 构建公司路径（从根公司到当前公司）
-                List<Map<String, Object>> companyPath = new java.util.ArrayList<>();
-                Object subcompanyId = resource.get("subcompanyid1");
-                if (subcompanyId != null) {
-                    Long currentId = ((Number) subcompanyId).longValue();
-                    List<Map<String, Object>> pathReversed = new java.util.ArrayList<>();
-
-                    // 向上追溯公司层级
-                    while (currentId != null && currentId != 0) {
-                        String companySql = "SELECT id, subcompanyname, supsubcomid FROM HrmSubCompany WHERE id = ? AND ISNULL(canceled, 0) = 0";
-                        List<Map<String, Object>> companyList = jdbcTemplate.queryForList(companySql, currentId);
-                        if (companyList.isEmpty()) break;
-
-                        Map<String, Object> company = companyList.get(0);
-                        pathReversed.add(0, company);
-
-                        Object parentId = company.get("supsubcomid");
-                        if (parentId == null || ((Number) parentId).longValue() == 0) break;
-                        currentId = ((Number) parentId).longValue();
-                    }
-
-                    companyPath = pathReversed;
-                }
-
-                item.put("companyPath", companyPath);
-                result.add(item);
-            }
-
-            return Result.success(result);
+            String searchPattern = "%" + keyword + "%";
+            List<Map<String, Object>> list = jdbcTemplate.queryForList(sql, limit, searchPattern, searchPattern);
+            return Result.success(list);
         } catch (Exception e) {
             log.error("搜索人员失败", e);
             return Result.success(List.of());

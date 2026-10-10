@@ -44,4 +44,9 @@ public interface AbilityElementService extends IService<AbilityElement> {
      * 根据类别ID分页查询要素列表
      */
     PageResult<AbilityElementVO> pageElementsByCategoryId(Long categoryId, PageRequest pageRequest);
+
+    /**
+     * 根据类别ID查询要素列表（用于选择框，可过滤状态）
+     */
+    List<AbilityElementVO> listElementsByCategoryId(Long categoryId, Integer status);
 }

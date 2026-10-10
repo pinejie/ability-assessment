@@ -53,9 +53,8 @@ export const listAbilityElements = async (): Promise<AbilityElementVO[]> => {
 }
 
 /**
- * 根据类别ID查询所有能力要素（用于下拉框，不分页）
+ * 根据类别ID查询所有能力要素（用于下拉框，只获取启用状态）
  */
 export const listElementsByCategoryId = async (categoryId: number): Promise<AbilityElementVO[]> => {
-  const result = await pageElementsByCategoryId(categoryId, 1, 1000)
-  return result.list
+  return await request.get(`/ability-elements/list/category/${categoryId}?status=1`)
 }

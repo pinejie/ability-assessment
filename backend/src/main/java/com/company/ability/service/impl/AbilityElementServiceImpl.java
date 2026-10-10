@@ -116,6 +116,20 @@ public class AbilityElementServiceImpl
         return PageResult.from(result, voList);
     }
 
+    @Override
+    public List<AbilityElementVO> listElementsByCategoryId(Long categoryId, Integer status) {
+        QueryWrapper<AbilityElement> wrapper = new QueryWrapper<>();
+        wrapper.eq("category_id", categoryId);
+        if (status != null) {
+            wrapper.eq("status", status);
+        }
+        wrapper.orderByAsc("sort").orderByAsc("id");
+        List<AbilityElement> list = list(wrapper);
+        return list.stream()
+            .map(this::convertToVO)
+            .collect(Collectors.toList());
+    }
+
     /**
      * 转换为 VO
      */

@@ -38,9 +38,8 @@ export const pageAbilityCategories = (pageNum = 1, pageSize = 10): Promise<PageR
 }
 
 /**
- * 查询所有能力类别（用于下拉框，不分页）
+ * 查询所有能力类别（用于下拉框，只获取启用状态）
  */
 export const listAbilityCategories = async (): Promise<AbilityCategoryVO[]> => {
-  const result = await pageAbilityCategories(1, 1000)
-  return result.list
+  return await request.get('/ability-categories/list?status=1')
 }

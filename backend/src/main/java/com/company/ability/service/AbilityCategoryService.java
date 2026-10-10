@@ -8,6 +8,8 @@ import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityCategory;
 import com.company.ability.vo.AbilityCategoryVO;
 
+import java.util.List;
+
 /**
  * 能力类别服务接口
  */
@@ -37,4 +39,9 @@ public interface AbilityCategoryService extends IService<AbilityCategory> {
      * 分页查询能力类别
      */
     PageResult<AbilityCategoryVO> pageCategories(PageRequest pageRequest);
+
+    /**
+     * 查询能力类别列表（用于选择框，可过滤状态）
+     */
+    List<AbilityCategoryVO> listCategories(Integer status);
 }

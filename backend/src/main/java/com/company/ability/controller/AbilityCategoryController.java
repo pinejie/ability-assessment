@@ -13,6 +13,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /**
  * 能力类别控制器
  */
@@ -62,5 +64,13 @@ public class AbilityCategoryController {
         pageRequest.setPageSize(pageSize);
         PageResult<AbilityCategoryVO> result = abilityCategoryService.pageCategories(pageRequest);
         return Result.success(result);
+    }
+
+    @Operation(summary = "查询能力类别列表（用于选择框，可过滤状态）")
+    @GetMapping("/list")
+    public Result<List<AbilityCategoryVO>> listCategories(
+            @RequestParam(required = false) Integer status) {
+        List<AbilityCategoryVO> list = abilityCategoryService.listCategories(status);
+        return Result.success(list);
     }
 }

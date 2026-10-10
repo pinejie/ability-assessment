@@ -78,4 +78,13 @@ public class AbilityElementController {
         PageResult<AbilityElementVO> result = abilityElementService.pageElementsByCategoryId(categoryId, pageRequest);
         return Result.success(result);
     }
+
+    @Operation(summary = "根据类别ID查询要素列表（用于选择框，可过滤状态）")
+    @GetMapping("/list/category/{categoryId}")
+    public Result<List<AbilityElementVO>> listElementsByCategoryId(
+            @PathVariable Long categoryId,
+            @RequestParam(required = false) Integer status) {
+        List<AbilityElementVO> list = abilityElementService.listElementsByCategoryId(categoryId, status);
+        return Result.success(list);
+    }
 }

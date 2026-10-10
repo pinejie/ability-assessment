@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="page-title-section">
         <h1 class="page-title">人员能力要求配置</h1>
-        <p class="page-description">为人员配置能力要素要求等级，支持一对多配置</p>
+        <p class="page-description">为人员配置能力要素要求等级，一主多从结构</p>
       </div>
       <button class="btn-primary" @click="handleAdd">
         <span class="btn-icon">+</span>
@@ -19,12 +19,8 @@
         <div class="stat-value">{{ reqList.length }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">涉及人员</div>
-        <div class="stat-value">{{ resourceCount }}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">能力要素</div>
-        <div class="stat-value">{{ elementCount }}</div>
+        <div class="stat-label">能力要素总条数</div>
+        <div class="stat-value">{{ totalItemCount }}</div>
       </div>
     </div>
 
@@ -35,30 +31,44 @@
       </div>
       <div class="card-body">
         <el-table :data="reqList" class="data-table">
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <div class="expand-content">
+                <h4>能力要素明细（{{ row.items?.length || 0 }}条）</h4>
+                <el-table :data="row.items" size="small" border>
+                  <el-table-column prop="categoryName" label="能力类别" width="120" />
+                  <el-table-column prop="elementName" label="能力要素" min-width="150" />
+                  <el-table-column prop="levelName" label="要求等级" width="120">
+                    <template #default="{ row: item }">
+                      {{ item.levelName || '未设置' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="score" label="分数" width="100">
+                    <template #default="{ row: item }">
+                      {{ item.score ?? '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="levelRequirement" label="等级要求" min-width="200" show-overflow-tooltip>
+                    <template #default="{ row: item }">
+                      {{ item.levelRequirement || '-' }}
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="resourceLastName" label="人员" width="150">
             <template #default="{ row }">
               <span class="resource-name">{{ row.resourceLastName }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="elementName" label="能力要素" min-width="200">
+          <el-table-column label="能力要素数" width="120" align="center">
             <template #default="{ row }">
-              <span class="element-name">{{ row.elementName }}</span>
+              <span class="item-count">{{ row.items?.length || 0 }} 条</span>
             </template>
           </el-table-column>
-          <el-table-column prop="levelName" label="要求等级" width="120">
-            <template #default="{ row }">
-              <span class="level-tag">
-                {{ row.levelName }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="score" label="分数" width="100">
-            <template #default="{ row }">
-              <span class="score">{{ row.score }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="levelRequirement" label="等级要求" min-width="250" show-overflow-tooltip />
+          <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
           <el-table-column prop="createTime" label="创建时间" width="170" />
           <el-table-column label="操作" width="160" fixed="right">
             <template #default="{ row }">
@@ -74,9 +84,10 @@
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="700px"
+      width="900px"
       class="form-dialog"
-      top="5vh"
+      top="8vh"
+      :close-on-click-modal="false"
     >
       <el-form
         ref="formRef"
@@ -91,35 +102,45 @@
             placeholder="请选择或搜索人员"
             @change="handleResourceChange"
           />
-          <div class="form-tip">从泛微系统人员表中选择（只能选择人员，支持姓名和拼音搜索）</div>
+          <div class="form-tip">从泛微系统人员表中选择（支持姓名和拼音搜索）</div>
+        </el-form-item>
+
+        <el-form-item label="描述">
+          <el-input
+            v-model="formData.description"
+            type="textarea"
+            :rows="2"
+            placeholder="请输入描述信息"
+          />
         </el-form-item>
 
         <el-divider />
 
         <el-form-item label="能力要素配置">
           <div class="element-configs">
-            <div v-if="formData.elementConfigs.length === 0 || !formData.elementConfigs[0].elementId" class="empty-tip">
+            <div v-if="formData.items.length === 0" class="empty-tip">
               请先选择人员，系统会根据人员所在部门和岗位自动带出能力要素
             </div>
-            <div v-for="(config, index) in formData.elementConfigs" :key="index" class="element-config-item">
+            <div v-for="(item, index) in formData.items" :key="index" class="element-config-item">
               <div class="config-row">
                 <div class="config-field">
                   <label>能力类别</label>
-                  <div class="readonly-field">{{ config.categoryName || '-' }}</div>
+                  <div class="readonly-field">{{ item.categoryName || '-' }}</div>
                 </div>
                 <div class="config-field">
                   <label>能力要素</label>
-                  <div class="readonly-field">{{ config.elementName || '-' }}</div>
+                  <div class="readonly-field">{{ item.elementName || '-' }}</div>
                 </div>
                 <div class="config-field">
                   <label>要求等级</label>
                   <el-select
-                    v-model="config.levelId"
+                    v-model="item.levelId"
                     placeholder="请选择等级"
-                    @change="(val: number) => handleLevelChange(val, index)"
+                    clearable
+                    @change="(val: number | undefined) => handleLevelChange(val, index)"
                   >
                     <el-option
-                      v-for="level in getElementLevels(config.elementId)"
+                      v-for="level in getElementLevels(item.elementId)"
                       :key="level.id"
                       :label="level.levelName"
                       :value="level.id"
@@ -128,11 +149,11 @@
                 </div>
                 <div class="config-field">
                   <label>分数</label>
-                  <div class="readonly-field score-field">{{ config.score || '-' }}</div>
+                  <div class="readonly-field score-field">{{ item.score ?? '-' }}</div>
                 </div>
               </div>
-              <div v-if="config.levelRequirement" class="level-requirement">
-                <strong>等级要求：</strong>{{ config.levelRequirement }}
+              <div v-if="getLevelRequirement(item.levelId)" class="level-requirement">
+                <strong>等级要求：</strong>{{ getLevelRequirement(item.levelId) }}
               </div>
             </div>
           </div>
@@ -149,56 +170,43 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { listUserAbilityReqs, createUserAbilityReq, updateUserAbilityReq, deleteUserAbilityReq } from '@/api/userAbilityReq'
-import { listAbilityElements } from '@/api/abilityElement'
 import { listAbilityElementLevelsByElementId } from '@/api/abilityElementLevel'
 import { getPositionAbilityReqByDeptAndJobTitle } from '@/api/positionAbilityReq'
 import type { UserAbilityReqVO } from '@/types/userAbilityReq'
-import type { AbilityElementVO } from '@/types/abilityElement'
 import type { AbilityElementLevelVO } from '@/types/abilityElementLevel'
 import type { PositionAbilityReqVO } from '@/types/positionAbilityReq'
 import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
 
-interface ElementConfig {
-  categoryId: number | undefined
+interface ItemConfig {
+  categoryId: number
   categoryName: string
-  elementId: number | undefined
+  elementId: number
   elementName: string
   levelId: number | undefined
-  score: number
-  levelRequirement: string
-  description?: string
+  score: number | null
 }
 
 const reqList = ref<UserAbilityReqVO[]>([])
-const elementList = ref<AbilityElementVO[]>([])
 const elementLevelMap = ref<Map<number, AbilityElementLevelVO[]>>(new Map())
+
+const totalItemCount = computed(() => {
+  return reqList.value.reduce((sum, req) => sum + (req.items?.length || 0), 0)
+})
 
 // 人员选择变化处理
 const handleResourceChange = async (_value: number | undefined, data: any) => {
   if (!data) {
-    // 人员被清空
-    formData.elementConfigs = [{
-      categoryId: undefined,
-      categoryName: '',
-      elementId: undefined,
-      elementName: '',
-      levelId: undefined,
-      score: 0,
-      levelRequirement: '',
-      description: '',
-    }]
+    formData.items = []
     return
   }
 
-  // 根据人员的部门和岗位获取岗位能力配置
   const departmentId = data.departmentid
   const jobTitleId = data.jobtitle
 
-  // 检查字段是否存在且大于 0（0 表示未配置）
   if (!departmentId || departmentId <= 0) {
     ElMessage.warning('该人员未配置部门，无法自动带出能力要素')
     return
@@ -214,54 +222,31 @@ const handleResourceChange = async (_value: number | undefined, data: any) => {
 
     if (!positionReq || !positionReq.items || positionReq.items.length === 0) {
       ElMessage.warning('该岗位未配置能力要求')
-      formData.elementConfigs = [{
-        categoryId: undefined,
-        categoryName: '',
-        elementId: undefined,
-        elementName: '',
-        levelId: undefined,
-        score: 0,
-        levelRequirement: '',
-        description: '',
-      }]
+      formData.items = []
       return
     }
 
-    // 根据岗位配置填充元素列表
-    formData.elementConfigs = positionReq.items.map(item => ({
+    formData.items = positionReq.items.map(item => ({
       categoryId: item.categoryId,
       categoryName: item.categoryName || '',
       elementId: item.elementId,
       elementName: item.elementName || '',
       levelId: undefined,
-      score: 0,
-      levelRequirement: '',
-      description: '',
+      score: null,
     }))
 
-    // 预加载每个要素的等级数据
-    for (const config of formData.elementConfigs) {
-      if (config.elementId) {
-        await loadElementLevels(config.elementId)
+    for (const item of formData.items) {
+      if (item.elementId) {
+        await loadElementLevels(item.elementId)
       }
     }
 
-    ElMessage.success(`已自动带出 ${formData.elementConfigs.length} 个能力要素`)
+    ElMessage.success(`已自动带出 ${formData.items.length} 个能力要素`)
   } catch (error) {
     console.error('获取岗位能力配置失败:', error)
     ElMessage.error('获取岗位能力配置失败')
   }
 }
-
-const resourceCount = computed(() => {
-  const resourceIds = new Set(reqList.value.map(r => r.resourceId))
-  return resourceIds.size
-})
-
-const elementCount = computed(() => {
-  const elementIds = new Set(reqList.value.map(r => r.elementId))
-  return elementIds.size
-})
 
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
@@ -270,16 +255,8 @@ const formRef = ref<FormInstance>()
 const formData = reactive({
   id: 0,
   resourceId: undefined as number | undefined,
-  elementConfigs: [{
-    categoryId: undefined,
-    categoryName: '',
-    elementId: undefined,
-    elementName: '',
-    levelId: undefined,
-    score: 0,
-    levelRequirement: '',
-    description: '',
-  }] as ElementConfig[],
+  description: '',
+  items: [] as ItemConfig[],
 })
 
 const formRules: FormRules = {
@@ -296,14 +273,6 @@ const loadData = async () => {
   }
 }
 
-const loadElementList = async () => {
-  try {
-    elementList.value = await listAbilityElements()
-  } catch (error) {
-    console.error('加载能力要素列表失败:', error)
-  }
-}
-
 const loadElementLevels = async (elementId: number) => {
   if (elementLevelMap.value.has(elementId)) {
     return
@@ -316,26 +285,38 @@ const loadElementLevels = async (elementId: number) => {
   }
 }
 
-const getElementLevels = (elementId: number | undefined): AbilityElementLevelVO[] => {
+const getElementLevels = (elementId: number): AbilityElementLevelVO[] => {
   if (!elementId) return []
   return elementLevelMap.value.get(elementId) || []
 }
 
-const handleLevelChange = (levelId: number, index: number) => {
-  const elementId = formData.elementConfigs[index].elementId
-  if (elementId && levelId) {
-    const levels = getElementLevels(elementId)
+const handleLevelChange = (levelId: number | undefined, index: number) => {
+  const item = formData.items[index]
+  if (levelId) {
+    const levels = getElementLevels(item.elementId)
     const level = levels.find(l => l.id === levelId)
     if (level) {
-      formData.elementConfigs[index].score = level.score
-      formData.elementConfigs[index].levelRequirement = level.levelRequirement || ''
+      formData.items[index].score = level.score
     }
+  } else {
+    formData.items[index].score = null
   }
 }
 
-const handleAdd = () => {
+const getLevelRequirement = (levelId: number | undefined): string => {
+  if (!levelId) return ''
+  for (const levels of elementLevelMap.value.values()) {
+    const level = levels.find(l => l.id === levelId)
+    if (level?.levelRequirement) {
+      return level.levelRequirement
+    }
+  }
+  return ''
+}
+
+const handleAdd = async () => {
   dialogTitle.value = '新增配置'
-  resetForm()
+  await resetForm()
   dialogVisible.value = true
 }
 
@@ -343,31 +324,21 @@ const handleEdit = async (row: UserAbilityReqVO) => {
   dialogTitle.value = '编辑配置'
   formData.id = row.id
   formData.resourceId = row.resourceId
+  formData.description = row.description || ''
 
-  // 编辑模式：需要从 elementId 反查 categoryId 和 categoryName
-  // 这里简化处理，从 elementList 中查找
-  let categoryId: number | undefined = undefined
-  let categoryName = ''
-  const element = elementList.value.find(e => e.id === row.elementId)
-  if (element) {
-    categoryId = element.categoryId
-    // 需要从 elementCategoryMap 中获取 categoryName，这里先简化
-    categoryName = ''
-  }
+  formData.items = (row.items || []).map(item => ({
+    categoryId: item.categoryId,
+    categoryName: item.categoryName || '',
+    elementId: item.elementId,
+    elementName: item.elementName || '',
+    levelId: item.levelId || undefined,
+    score: item.score,
+  }))
 
-  formData.elementConfigs = [{
-    categoryId,
-    categoryName,
-    elementId: row.elementId,
-    elementName: row.elementName || '',
-    levelId: row.levelId,
-    score: row.score,
-    levelRequirement: row.levelRequirement || '',
-    description: row.description || '',
-  }]
-
-  if (row.elementId) {
-    await loadElementLevels(row.elementId)
+  for (const item of formData.items) {
+    if (item.elementId) {
+      await loadElementLevels(item.elementId)
+    }
   }
 
   dialogVisible.value = true
@@ -398,40 +369,40 @@ const handleSubmit = async () => {
       return
     }
 
-    if (formData.elementConfigs.length === 0 || !formData.elementConfigs[0].elementId) {
+    if (formData.items.length === 0) {
       ElMessage.error('请先选择人员以自动带出能力要素')
       return
     }
 
-    // 验证所有能力要素配置
-    for (const config of formData.elementConfigs) {
-      if (!config.elementId || !config.levelId) {
-        ElMessage.error('请为所有能力要素选择要求等级')
+    for (const item of formData.items) {
+      if (!item.elementId) {
+        ElMessage.error('能力要素不能为空')
         return
       }
     }
 
     if (formData.id) {
-      // 编辑模式：只更新第一条记录
-      const config = formData.elementConfigs[0]
       await updateUserAbilityReq({
         id: formData.id,
         resourceId: formData.resourceId,
-        elementId: config.elementId,
-        levelId: config.levelId,
-        score: config.score,
-        description: config.description,
+        description: formData.description,
+        items: formData.items.map(item => ({
+          categoryId: item.categoryId,
+          elementId: item.elementId,
+          levelId: item.levelId,
+          score: item.score,
+        })),
       })
       ElMessage.success('更新成功')
     } else {
-      // 新增模式：一对多创建
       await createUserAbilityReq({
         resourceId: formData.resourceId,
-        elementConfigs: formData.elementConfigs.map(config => ({
-          elementId: config.elementId!,
-          levelId: config.levelId!,
-          score: config.score,
-          description: config.description,
+        description: formData.description,
+        items: formData.items.map(item => ({
+          categoryId: item.categoryId,
+          elementId: item.elementId,
+          levelId: item.levelId,
+          score: item.score,
         })),
       })
       ElMessage.success('创建成功')
@@ -444,25 +415,17 @@ const handleSubmit = async () => {
   }
 }
 
-const resetForm = () => {
+const resetForm = async () => {
   formData.id = 0
   formData.resourceId = undefined
-  formData.elementConfigs = [{
-    categoryId: undefined,
-    categoryName: '',
-    elementId: undefined,
-    elementName: '',
-    levelId: undefined,
-    score: 0,
-    levelRequirement: '',
-    description: '',
-  }]
+  formData.description = ''
+  formData.items = []
+  await nextTick()
   formRef.value?.resetFields()
 }
 
 onMounted(() => {
   loadData()
-  loadElementList()
 })
 </script>
 
@@ -472,7 +435,6 @@ onMounted(() => {
   margin: 0 auto;
 }
 
-/* 页面标题区 */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -492,7 +454,6 @@ onMounted(() => {
   color: #86909C;
 }
 
-/* 按钮 */
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -534,10 +495,9 @@ onMounted(() => {
   border-color: #C9CDD4;
 }
 
-/* 统计卡片 */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -561,7 +521,6 @@ onMounted(() => {
   color: #1D2129;
 }
 
-/* 卡片 */
 .card {
   background: #FFFFFF;
   border-radius: 8px;
@@ -583,7 +542,6 @@ onMounted(() => {
   padding: 0;
 }
 
-/* 表格 */
 .data-table {
   width: 100%;
 }
@@ -593,23 +551,9 @@ onMounted(() => {
   color: #1D2129;
 }
 
-.element-name {
-  color: #1D2129;
-}
-
-.level-tag {
-  display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  background: #EFF4FF;
+.item-count {
   color: #2563EB;
-}
-
-.score {
-  font-weight: 600;
-  color: #F53F3F;
+  font-weight: 500;
 }
 
 .action-btn {
@@ -638,7 +582,17 @@ onMounted(() => {
   background: #FFECE8;
 }
 
-/* 表单 */
+.expand-content {
+  padding: 16px 20px;
+}
+
+.expand-content h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1D2129;
+}
+
 .form-content {
   padding: 20px 0;
 }
@@ -655,7 +609,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-/* 能力要素配置 */
 .element-configs {
   width: 100%;
   max-height: 500px;
@@ -728,7 +681,6 @@ onMounted(() => {
   color: #FF7D00;
 }
 
-/* 滚动条样式 */
 .form-content::-webkit-scrollbar,
 .element-configs::-webkit-scrollbar {
   width: 6px;
@@ -745,10 +697,16 @@ onMounted(() => {
   background: #86909C;
 }
 
-/* 对话框样式 */
+.form-dialog :deep(.el-dialog) {
+  height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
 .form-dialog :deep(.el-dialog__body) {
   padding: 20px;
-  max-height: calc(90vh - 150px);
+  flex: 1;
   overflow-y: auto;
+  min-height: 0;
 }
 </style>

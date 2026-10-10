@@ -227,8 +227,8 @@ import {
   deletePositionAbilityReq,
   listJobTitlesByDepartment,
 } from '@/api/positionAbilityReq'
-import { listAbilityCategories } from '@/api/abilityCategory'
-import { listElementsByCategoryId } from '@/api/abilityElement'
+import { listAbilityCategories, getAbilityCategoryById } from '@/api/abilityCategory'
+import { listElementsByCategoryId, getAbilityElementById } from '@/api/abilityElement'
 import type { PositionAbilityReqVO } from '@/types/positionAbilityReq'
 import type { AbilityCategoryVO } from '@/types/abilityCategory'
 import type { AbilityElementVO } from '@/types/abilityElement'
@@ -494,6 +494,18 @@ const handleEdit = async (row: PositionAbilityReqVO) => {
   formData.items = []
   if (row.items && row.items.length > 0) {
     for (const item of row.items) {
+      // 编辑时：如果已选的类别被停用，补充到下拉框中（确保显示名称而非ID）
+      if (item.categoryId && !categoryList.value.find(c => c.id === item.categoryId)) {
+        try {
+          const category = await getAbilityCategoryById(item.categoryId)
+          if (category) {
+            categoryList.value.push(category)
+          }
+        } catch (e) {
+          console.warn('加载已停用的类别失败:', item.categoryId, e)
+        }
+      }
+
       const config: ItemConfig = {
         categoryId: item.categoryId,
         elementId: item.elementId,
@@ -505,6 +517,17 @@ const handleEdit = async (row: PositionAbilityReqVO) => {
         config.elementLoading = true
         try {
           config.elementOptions = await loadElementsByCategory(item.categoryId)
+          // 编辑时：如果已选的要素被停用，补充到下拉框中（确保显示名称而非ID）
+          if (item.elementId && !config.elementOptions.find(e => e.id === item.elementId)) {
+            try {
+              const element = await getAbilityElementById(item.elementId)
+              if (element) {
+                config.elementOptions.push(element)
+              }
+            } catch (e) {
+              console.warn('加载已停用的要素失败:', item.elementId, e)
+            }
+          }
         } finally {
           config.elementLoading = false
         }

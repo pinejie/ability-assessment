@@ -626,39 +626,39 @@ onMounted(() => {
 }
 
 .element-config-item {
-  padding: 16px;
+  padding: 12px;
   background: #F7F8FA;
   border-radius: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .config-row {
   display: grid;
   grid-template-columns: 1.5fr 2fr 1.5fr 1fr;
-  gap: 12px;
+  gap: 8px;
   align-items: end;
 }
 
 .config-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .config-field label {
-  font-size: 13px;
+  font-size: 12px;
   color: #4E5969;
   font-weight: 500;
 }
 
 .readonly-field {
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: #FFFFFF;
   border: 1px solid #E5E6EB;
   border-radius: 4px;
-  font-size: 14px;
+  font-size: 13px;
   color: #1D2129;
-  min-height: 32px;
+  min-height: 28px;
   display: flex;
   align-items: center;
 }
@@ -669,11 +669,11 @@ onMounted(() => {
 }
 
 .level-requirement {
-  margin-top: 12px;
-  padding: 10px;
+  margin-top: 8px;
+  padding: 8px;
   background: #FFF7E8;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
   color: #FF7D00;
 }
 
@@ -698,12 +698,32 @@ onMounted(() => {
 }
 
 .form-dialog :deep(.el-dialog) {
-  height: 84vh;
+  height: 84vh !important;
+  max-height: 84vh !important;
   display: flex;
   flex-direction: column;
+  margin: 8vh auto !important;
 }
 
 .form-dialog :deep(.el-dialog__body) {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+</style>
+
+<!-- 非 scoped 样式，用于穿透 el-dialog -->
+<style>
+.form-dialog {
+  height: 84vh !important;
+  max-height: 84vh !important;
+  display: flex;
+  flex-direction: column;
+  margin: 8vh auto !important;
+}
+
+.form-dialog .el-dialog__body {
   padding: 20px;
   flex: 1;
   overflow-y: auto;

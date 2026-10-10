@@ -86,57 +86,30 @@
         class="form-content"
       >
         <el-form-item label="人员" prop="resourceId">
-          <el-tree-select
+          <ResourceAutocomplete
             v-model="formData.resourceId"
-            :key="resourceTreeKey"
-            :data="resourceSearchMode ? resourceSearchTree : []"
-            :load="loadResourceTree"
-            :props="resourceTreeProps"
             placeholder="请选择或搜索人员"
-            style="width: 100%"
-            :lazy="!resourceSearchMode"
-            check-strictly
-            filterable
-            :filter-node-method="handleResourceFilter"
-          >
-            <template #default="{ data }">
-              <span class="tree-node">
-                <el-icon v-if="data.type === 'company'" style="color: #2563EB; margin-right: 4px;">
-                  <OfficeBuilding />
-                </el-icon>
-                <el-icon v-else-if="data.type === 'department'" style="color: #10B981; margin-right: 4px;">
-                  <Folder />
-                </el-icon>
-                <el-icon v-else style="color: #8B5CF6; margin-right: 4px;">
-                  <User />
-                </el-icon>
-                <span>{{ data.name }}</span>
-              </span>
-            </template>
-          </el-tree-select>
-          <div class="form-tip">从泛微系统人员表中选择（只能选择人员，支持搜索）</div>
+            @change="handleResourceChange"
+          />
+          <div class="form-tip">从泛微系统人员表中选择（只能选择人员，支持姓名和拼音搜索）</div>
         </el-form-item>
 
         <el-divider />
 
         <el-form-item label="能力要素配置">
           <div class="element-configs">
+            <div v-if="formData.elementConfigs.length === 0 || !formData.elementConfigs[0].elementId" class="empty-tip">
+              请先选择人员，系统会根据人员所在部门和岗位自动带出能力要素
+            </div>
             <div v-for="(config, index) in formData.elementConfigs" :key="index" class="element-config-item">
               <div class="config-row">
                 <div class="config-field">
+                  <label>能力类别</label>
+                  <div class="readonly-field">{{ config.categoryName || '-' }}</div>
+                </div>
+                <div class="config-field">
                   <label>能力要素</label>
-                  <el-select
-                    v-model="config.elementId"
-                    placeholder="请选择能力要素"
-                    @change="(val: number) => handleElementChange(val, index)"
-                  >
-                    <el-option
-                      v-for="item in elementList"
-                      :key="item.id"
-                      :label="item.elementName"
-                      :value="item.id"
-                    />
-                  </el-select>
+                  <div class="readonly-field">{{ config.elementName || '-' }}</div>
                 </div>
                 <div class="config-field">
                   <label>要求等级</label>
@@ -155,28 +128,13 @@
                 </div>
                 <div class="config-field">
                   <label>分数</label>
-                  <el-input-number
-                    v-model="config.score"
-                    :min="0"
-                    :max="100"
-                    :precision="2"
-                    readonly
-                  />
-                </div>
-                <div class="config-field">
-                  <label>&nbsp;</label>
-                  <el-button type="danger" @click="removeElementConfig(index)" :disabled="formData.elementConfigs.length <= 1">
-                    删除
-                  </el-button>
+                  <div class="readonly-field score-field">{{ config.score || '-' }}</div>
                 </div>
               </div>
               <div v-if="config.levelRequirement" class="level-requirement">
                 <strong>等级要求：</strong>{{ config.levelRequirement }}
               </div>
             </div>
-            <el-button type="primary" plain @click="addElementConfig" class="add-config-btn">
-              + 添加能力要素
-            </el-button>
           </div>
         </el-form-item>
       </el-form>
@@ -197,41 +155,18 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { listUserAbilityReqs, createUserAbilityReq, updateUserAbilityReq, deleteUserAbilityReq } from '@/api/userAbilityReq'
 import { listAbilityElements } from '@/api/abilityElement'
 import { listAbilityElementLevelsByElementId } from '@/api/abilityElementLevel'
+import { getPositionAbilityReqByDeptAndJobTitle } from '@/api/positionAbilityReq'
 import type { UserAbilityReqVO } from '@/types/userAbilityReq'
 import type { AbilityElementVO } from '@/types/abilityElement'
 import type { AbilityElementLevelVO } from '@/types/abilityElementLevel'
-import request from '@/utils/request'
-
-import { OfficeBuilding, Folder, User } from '@element-plus/icons-vue'
-
-interface SubCompany {
-  id: number
-  subcompanyname: string
-  supsubcomid: number
-}
-
-interface Department {
-  id: number
-  departmentmark: string
-  supdepid: number
-  subcompanyid1: number
-}
-
-interface Resource {
-  id: number
-  lastname: string
-  departmentid: number
-}
-
-interface TreeNode {
-  id: number
-  name: string
-  type: 'company' | 'department' | 'resource'
-  children?: TreeNode[]
-}
+import type { PositionAbilityReqVO } from '@/types/positionAbilityReq'
+import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
 
 interface ElementConfig {
+  categoryId: number | undefined
+  categoryName: string
   elementId: number | undefined
+  elementName: string
   levelId: number | undefined
   score: number
   levelRequirement: string
@@ -242,246 +177,79 @@ const reqList = ref<UserAbilityReqVO[]>([])
 const elementList = ref<AbilityElementVO[]>([])
 const elementLevelMap = ref<Map<number, AbilityElementLevelVO[]>>(new Map())
 
-// 搜索相关
-const resourceSearchMode = ref(false)
-const resourceSearchTree = ref<TreeNode[]>([])
-const resourceTreeKey = ref(0) // 用于强制重新渲染
-
-// 搜索防抖定时器
-let resourceSearchTimer: any = null
-
-// filter-node-method：每次输入都会调用，用于触发远程搜索
-const handleResourceFilter = (value: string) => {
-  clearTimeout(resourceSearchTimer)
-
-  if (!value || value.trim() === '') {
-    // 清空搜索，恢复懒加载模式
-    if (resourceSearchMode.value) {
-      resourceSearchMode.value = false
-      resourceSearchTree.value = []
-      resourceTreeKey.value++ // 强制重新渲染，恢复懒加载
-    }
-    return true
+// 人员选择变化处理
+const handleResourceChange = async (_value: number | undefined, data: any) => {
+  if (!data) {
+    // 人员被清空
+    formData.elementConfigs = [{
+      categoryId: undefined,
+      categoryName: '',
+      elementId: undefined,
+      elementName: '',
+      levelId: undefined,
+      score: 0,
+      levelRequirement: '',
+      description: '',
+    }]
+    return
   }
 
-  // 进入搜索模式
-  resourceSearchTimer = setTimeout(async () => {
-    try {
-      // 只需要一个请求，后端已返回完整的公司层级路径
-      const searchResults = await request.get(`/search/resources?keyword=${encodeURIComponent(value)}`)
+  // 根据人员的部门和岗位获取岗位能力配置
+  const departmentId = data.departmentid
+  const jobTitleId = data.jobtitle
 
-      // 使用 companyPath 构建树结构
-      const companyMap = new Map<number, TreeNode>()
-      const deptMap = new Map<string, TreeNode>() // key: companyId-departmentId
-      const rootCompanyIds = new Set<number>() // 跟踪根公司，避免重复
+  // 检查字段是否存在且大于 0（0 表示未配置）
+  if (!departmentId || departmentId <= 0) {
+    ElMessage.warning('该人员未配置部门，无法自动带出能力要素')
+    return
+  }
 
-      // 遍历搜索结果，根据 companyPath 构建公司层级
-      searchResults.forEach((item: any) => {
-        const companyPath: any[] = item.companyPath || []
-        const deptId = item.departmentid
+  if (!jobTitleId || jobTitleId <= 0) {
+    ElMessage.warning('该人员未配置岗位，无法自动带出能力要素')
+    return
+  }
 
-        // 构建公司层级链
-        let parentNode: TreeNode | undefined = undefined
-        let lastCompanyId: number | null = null
-        companyPath.forEach((company: any) => {
-          if (!companyMap.has(company.id)) {
-            const node: TreeNode = {
-              id: company.id,
-              name: company.subcompanyname,
-              type: 'company',
-              children: []
-            }
-            companyMap.set(company.id, node)
+  try {
+    const positionReq: PositionAbilityReqVO | null = await getPositionAbilityReqByDeptAndJobTitle(departmentId, jobTitleId)
 
-            // 如果是第一个公司（根公司），记录其ID
-            if (!parentNode) {
-              rootCompanyIds.add(company.id)
-            } else {
-              // 否则挂到父公司下
-              parentNode.children = parentNode.children || []
-              parentNode.children.push(node)
-            }
-          }
-          parentNode = companyMap.get(company.id)
-          lastCompanyId = company.id
-        })
+    if (!positionReq || !positionReq.items || positionReq.items.length === 0) {
+      ElMessage.warning('该岗位未配置能力要求')
+      formData.elementConfigs = [{
+        categoryId: undefined,
+        categoryName: '',
+        elementId: undefined,
+        elementName: '',
+        levelId: undefined,
+        score: 0,
+        levelRequirement: '',
+        description: '',
+      }]
+      return
+    }
 
-        // 创建部门节点（挂到最后一个公司下）
-        if (parentNode !== undefined && lastCompanyId !== null) {
-          const lastCompany = parentNode as TreeNode
-          const deptKey = `${lastCompanyId}-${deptId}`
-          if (!deptMap.has(deptKey)) {
-            const deptNode: TreeNode = {
-              id: deptId,
-              name: item.departmentName,
-              type: 'department',
-              children: []
-            }
-            deptMap.set(deptKey, deptNode)
-            lastCompany.children = lastCompany.children || []
-            lastCompany.children.push(deptNode)
-          }
+    // 根据岗位配置填充元素列表
+    formData.elementConfigs = positionReq.items.map(item => ({
+      categoryId: item.categoryId,
+      categoryName: item.categoryName || '',
+      elementId: item.elementId,
+      elementName: item.elementName || '',
+      levelId: undefined,
+      score: 0,
+      levelRequirement: '',
+      description: '',
+    }))
 
-          // 创建人员节点（挂到部门下）
-          const resourceNode: TreeNode = {
-            id: item.id,
-            name: item.lastname,
-            type: 'resource'
-          }
-          const deptNode = deptMap.get(deptKey)!
-          deptNode.children = deptNode.children || []
-          deptNode.children.push(resourceNode)
-        }
-      })
-
-      // 构建根公司列表（从 companyMap 中获取，避免重复）
-      const rootCompanies: TreeNode[] = []
-      rootCompanyIds.forEach(id => {
-        const company = companyMap.get(id)
-        if (company) {
-          rootCompanies.push(company)
-        }
-      })
-
-      // 去重：多个人员可能属于同一个部门/公司，需要合并
-      const mergeDuplicates = (nodes: TreeNode[]): TreeNode[] => {
-        const seen = new Map<string, TreeNode>()
-        const result: TreeNode[] = []
-
-        nodes.forEach(node => {
-          const key = `${node.type}-${node.id}`
-          if (seen.has(key)) {
-            // 合并 children
-            const existing = seen.get(key)!
-            if (node.children) {
-              existing.children = existing.children || []
-              existing.children.push(...node.children)
-            }
-          } else {
-            seen.set(key, node)
-            result.push(node)
-          }
-        })
-
-        // 递归处理 children
-        result.forEach(node => {
-          if (node.children && node.children.length > 0) {
-            node.children = mergeDuplicates(node.children)
-          }
-        })
-
-        return result
+    // 预加载每个要素的等级数据
+    for (const config of formData.elementConfigs) {
+      if (config.elementId) {
+        await loadElementLevels(config.elementId)
       }
-
-      resourceSearchTree.value = mergeDuplicates(rootCompanies)
-
-      // 切换到搜索模式
-      if (!resourceSearchMode.value) {
-        resourceSearchMode.value = true
-        resourceTreeKey.value++ // 强制重新渲染
-      }
-    } catch (error) {
-      console.error('搜索人员失败:', error)
-      resourceSearchTree.value = []
     }
-  }, 300)
 
-  // 搜索模式下显示所有节点（已经通过后端过滤）
-  return true
-}
-
-// 人员树形选择器配置
-const resourceTreeProps = {
-  label: 'name',
-  value: 'id',
-  isLeaf: (data: TreeNode) => data.type === 'resource',
-  disabled: (data: TreeNode) => data.type !== 'resource'
-}
-
-// 懒加载人员树
-const loadResourceTree = async (node: any, resolve: (nodes: TreeNode[]) => void) => {
-  if (node.level === 0) {
-    // 加载第一层：只加载根公司
-    try {
-      const response = await request.get('/sub-companies/root')
-      const nodes: TreeNode[] = response.map((company: SubCompany) => ({
-        id: company.id,
-        name: company.subcompanyname,
-        type: 'company' as const
-      }))
-      resolve(nodes)
-    } catch (error) {
-      console.error('加载根公司列表失败:', error)
-      resolve([])
-    }
-  } else if (node.data.type === 'company') {
-    // 展开公司：加载子公司 + 该公司下的根部门
-    try {
-      const [childCompanies, rootDepts] = await Promise.all([
-        request.get(`/sub-companies/children?parentId=${node.data.id}`),
-        request.get(`/departments/root?subcompanyId=${node.data.id}`)
-      ])
-
-      const nodes: TreeNode[] = []
-
-      // 添加子公司
-      childCompanies.forEach((company: SubCompany) => {
-        nodes.push({
-          id: company.id,
-          name: company.subcompanyname,
-          type: 'company' as const
-        })
-      })
-
-      // 添加根部门
-      rootDepts.forEach((dept: Department) => {
-        nodes.push({
-          id: dept.id,
-          name: dept.departmentmark,
-          type: 'department' as const
-        })
-      })
-
-      resolve(nodes)
-    } catch (error) {
-      console.error('加载公司子节点失败:', error)
-      resolve([])
-    }
-  } else if (node.data.type === 'department') {
-    // 展开部门：加载子部门 + 人员
-    try {
-      const [childDepts, resources] = await Promise.all([
-        request.get(`/departments/children?parentId=${node.data.id}`),
-        request.get(`/resources/by-department?departmentId=${node.data.id}`)
-      ])
-
-      const nodes: TreeNode[] = []
-
-      // 添加子部门
-      childDepts.forEach((dept: Department) => {
-        nodes.push({
-          id: dept.id,
-          name: dept.departmentmark,
-          type: 'department' as const
-        })
-      })
-
-      // 添加人员
-      resources.forEach((resource: Resource) => {
-        nodes.push({
-          id: resource.id,
-          name: resource.lastname,
-          type: 'resource' as const
-        })
-      })
-
-      resolve(nodes)
-    } catch (error) {
-      console.error('加载子部门或人员失败:', error)
-      resolve([])
-    }
-  } else {
-    resolve([])
+    ElMessage.success(`已自动带出 ${formData.elementConfigs.length} 个能力要素`)
+  } catch (error) {
+    console.error('获取岗位能力配置失败:', error)
+    ElMessage.error('获取岗位能力配置失败')
   }
 }
 
@@ -503,7 +271,10 @@ const formData = reactive({
   id: 0,
   resourceId: undefined as number | undefined,
   elementConfigs: [{
+    categoryId: undefined,
+    categoryName: '',
     elementId: undefined,
+    elementName: '',
     levelId: undefined,
     score: 0,
     levelRequirement: '',
@@ -550,15 +321,6 @@ const getElementLevels = (elementId: number | undefined): AbilityElementLevelVO[
   return elementLevelMap.value.get(elementId) || []
 }
 
-const handleElementChange = async (elementId: number, index: number) => {
-  if (elementId) {
-    await loadElementLevels(elementId)
-    formData.elementConfigs[index].levelId = undefined
-    formData.elementConfigs[index].score = 0
-    formData.elementConfigs[index].levelRequirement = ''
-  }
-}
-
 const handleLevelChange = (levelId: number, index: number) => {
   const elementId = formData.elementConfigs[index].elementId
   if (elementId && levelId) {
@@ -571,20 +333,6 @@ const handleLevelChange = (levelId: number, index: number) => {
   }
 }
 
-const addElementConfig = () => {
-  formData.elementConfigs.push({
-    elementId: undefined,
-    levelId: undefined,
-    score: 0,
-    levelRequirement: '',
-    description: '',
-  })
-}
-
-const removeElementConfig = (index: number) => {
-  formData.elementConfigs.splice(index, 1)
-}
-
 const handleAdd = () => {
   dialogTitle.value = '新增配置'
   resetForm()
@@ -595,8 +343,23 @@ const handleEdit = async (row: UserAbilityReqVO) => {
   dialogTitle.value = '编辑配置'
   formData.id = row.id
   formData.resourceId = row.resourceId
+
+  // 编辑模式：需要从 elementId 反查 categoryId 和 categoryName
+  // 这里简化处理，从 elementList 中查找
+  let categoryId: number | undefined = undefined
+  let categoryName = ''
+  const element = elementList.value.find(e => e.id === row.elementId)
+  if (element) {
+    categoryId = element.categoryId
+    // 需要从 elementCategoryMap 中获取 categoryName，这里先简化
+    categoryName = ''
+  }
+
   formData.elementConfigs = [{
+    categoryId,
+    categoryName,
     elementId: row.elementId,
+    elementName: row.elementName || '',
     levelId: row.levelId,
     score: row.score,
     levelRequirement: row.levelRequirement || '',
@@ -635,10 +398,15 @@ const handleSubmit = async () => {
       return
     }
 
+    if (formData.elementConfigs.length === 0 || !formData.elementConfigs[0].elementId) {
+      ElMessage.error('请先选择人员以自动带出能力要素')
+      return
+    }
+
     // 验证所有能力要素配置
     for (const config of formData.elementConfigs) {
       if (!config.elementId || !config.levelId) {
-        ElMessage.error('请完整填写所有能力要素配置')
+        ElMessage.error('请为所有能力要素选择要求等级')
         return
       }
     }
@@ -680,7 +448,10 @@ const resetForm = () => {
   formData.id = 0
   formData.resourceId = undefined
   formData.elementConfigs = [{
+    categoryId: undefined,
+    categoryName: '',
     elementId: undefined,
+    elementName: '',
     levelId: undefined,
     score: 0,
     levelRequirement: '',
@@ -892,6 +663,15 @@ onMounted(() => {
   padding-right: 8px;
 }
 
+.empty-tip {
+  padding: 40px 20px;
+  text-align: center;
+  color: #86909C;
+  font-size: 14px;
+  background: #F7F8FA;
+  border-radius: 8px;
+}
+
 .element-config-item {
   padding: 16px;
   background: #F7F8FA;
@@ -901,7 +681,7 @@ onMounted(() => {
 
 .config-row {
   display: grid;
-  grid-template-columns: 2fr 1.5fr 1fr auto;
+  grid-template-columns: 1.5fr 2fr 1.5fr 1fr;
   gap: 12px;
   align-items: end;
 }
@@ -918,6 +698,23 @@ onMounted(() => {
   font-weight: 500;
 }
 
+.readonly-field {
+  padding: 8px 12px;
+  background: #FFFFFF;
+  border: 1px solid #E5E6EB;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #1D2129;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.score-field {
+  font-weight: 600;
+  color: #F53F3F;
+}
+
 .level-requirement {
   margin-top: 12px;
   padding: 10px;
@@ -929,11 +726,6 @@ onMounted(() => {
 
 .level-requirement strong {
   color: #FF7D00;
-}
-
-.add-config-btn {
-  width: 100%;
-  margin-top: 12px;
 }
 
 /* 滚动条样式 */

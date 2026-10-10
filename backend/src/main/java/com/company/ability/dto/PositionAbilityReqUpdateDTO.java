@@ -2,6 +2,7 @@ package com.company.ability.dto;
 
 import lombok.Data;
 import jakarta.validation.constraints.*;
+import java.util.List;
 
 /**
  * 岗位能力要求更新DTO
@@ -12,9 +13,11 @@ public class PositionAbilityReqUpdateDTO {
     @NotNull(message = "ID不能为空")
     private Long id;
 
+    private Long departmentId;
+
     private Long jobTitleId;
 
-    private Long elementId;
+    private List<PositionAbilityReqCreateDTO.ElementItem> items;
 
     private String description;
 }

@@ -34,6 +34,7 @@ class PositionAbilityReqServiceTest {
     @Autowired
     private AbilityElementService abilityElementService;
 
+    private Long categoryId;
     private Long elementId;
 
     @BeforeEach
@@ -47,7 +48,7 @@ class PositionAbilityReqServiceTest {
         var categoryDTO = new com.company.ability.dto.AbilityCategoryCreateDTO();
         categoryDTO.setCategoryName("测试类别");
         categoryDTO.setStatus(1);
-        Long categoryId = abilityCategoryService.createCategory(categoryDTO);
+        categoryId = abilityCategoryService.createCategory(categoryDTO);
 
         var elementDTO = new com.company.ability.dto.AbilityElementCreateDTO();
         elementDTO.setElementName("测试要素");
@@ -60,9 +61,14 @@ class PositionAbilityReqServiceTest {
     void shouldCreatePositionAbilityReq() {
         // Arrange
         PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
+        dto.setDepartmentId(1L);
         dto.setJobTitleId(200L);
-        dto.setElementId(elementId);
         dto.setDescription("测试描述");
+
+        PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
+        item.setCategoryId(categoryId);
+        item.setElementId(elementId);
+        dto.setItems(List.of(item));
 
         // Act
         Long id = positionAbilityReqService.createPositionAbilityReq(dto);
@@ -71,8 +77,10 @@ class PositionAbilityReqServiceTest {
         assertNotNull(id);
         PositionAbilityReqVO vo = positionAbilityReqService.getPositionAbilityReqById(id);
         assertEquals(200L, vo.getJobTitleId());
-        assertEquals(elementId, vo.getElementId());
         assertEquals("测试描述", vo.getDescription());
+        assertNotNull(vo.getItems());
+        assertEquals(1, vo.getItems().size());
+        assertEquals(elementId, vo.getItems().get(0).getElementId());
     }
 
     @Test
@@ -80,9 +88,15 @@ class PositionAbilityReqServiceTest {
     void shouldUpdatePositionAbilityReq() {
         // Arrange
         PositionAbilityReqCreateDTO createDTO = new PositionAbilityReqCreateDTO();
+        createDTO.setDepartmentId(1L);
         createDTO.setJobTitleId(200L);
-        createDTO.setElementId(elementId);
         createDTO.setDescription("原始描述");
+
+        PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
+        item.setCategoryId(categoryId);
+        item.setElementId(elementId);
+        createDTO.setItems(List.of(item));
+
         Long id = positionAbilityReqService.createPositionAbilityReq(createDTO);
 
         PositionAbilityReqUpdateDTO updateDTO = new PositionAbilityReqUpdateDTO();
@@ -102,8 +116,14 @@ class PositionAbilityReqServiceTest {
     void shouldDeletePositionAbilityReq() {
         // Arrange
         PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
+        dto.setDepartmentId(1L);
         dto.setJobTitleId(200L);
-        dto.setElementId(elementId);
+
+        PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
+        item.setCategoryId(categoryId);
+        item.setElementId(elementId);
+        dto.setItems(List.of(item));
+
         Long id = positionAbilityReqService.createPositionAbilityReq(dto);
 
         // Act
@@ -121,8 +141,14 @@ class PositionAbilityReqServiceTest {
         // Arrange
         for (int i = 1; i <= 3; i++) {
             PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
+            dto.setDepartmentId(1L);
             dto.setJobTitleId((long) (200 + i));
-            dto.setElementId(elementId);
+
+            PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
+            item.setCategoryId(categoryId);
+            item.setElementId(elementId);
+            dto.setItems(List.of(item));
+
             positionAbilityReqService.createPositionAbilityReq(dto);
         }
 
@@ -139,8 +165,14 @@ class PositionAbilityReqServiceTest {
         // Arrange
         for (int i = 1; i <= 2; i++) {
             PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
+            dto.setDepartmentId(1L);
             dto.setJobTitleId(200L);
-            dto.setElementId(elementId);
+
+            PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
+            item.setCategoryId(categoryId);
+            item.setElementId(elementId);
+            dto.setItems(List.of(item));
+
             positionAbilityReqService.createPositionAbilityReq(dto);
         }
 

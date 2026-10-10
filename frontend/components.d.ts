@@ -26,6 +26,7 @@ declare module 'vue' {
     ElTree: typeof import('element-plus/es')['ElTree']
     ElTreeSelect: typeof import('element-plus/es')['ElTreeSelect']
     LazySearchTreeSelect: typeof import('./src/components/LazySearchTreeSelect.vue')['default']
+    ResourceAutocomplete: typeof import('./src/components/ResourceAutocomplete.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }

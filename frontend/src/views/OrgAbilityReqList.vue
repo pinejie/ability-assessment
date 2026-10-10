@@ -646,7 +646,7 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-.form-dialog .el-dialog {
+.form-dialog {
   height: 84vh !important;
   max-height: 84vh !important;
   display: flex;

@@ -77,10 +77,16 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
               <button class="action-btn config" @click="handleConfigLevels(row)">配置等级</button>
               <button class="action-btn edit" @click="handleEdit(row)">编辑</button>
+              <button
+                :class="['action-btn', row.status === 1 ? 'disable' : 'enable']"
+                @click="handleToggleStatus(row)"
+              >
+                {{ row.status === 1 ? '停用' : '启用' }}
+              </button>
               <button class="action-btn delete" @click="handleDelete(row)">删除</button>
             </template>
           </el-table-column>
@@ -357,6 +363,28 @@ const handleDelete = async (row: AbilityElementVO) => {
     await loadData()
   } catch (error) {
     console.error('删除失败:', error)
+  }
+}
+
+const handleToggleStatus = async (row: AbilityElementVO) => {
+  const action = row.status === 1 ? '停用' : '启用'
+  try {
+    await ElMessageBox.confirm(`确定要${action}要素"${row.elementName}"吗？`, '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+
+    await updateAbilityElement({
+      id: row.id,
+      status: row.status === 1 ? 0 : 1
+    })
+    ElMessage.success(`${action}成功`)
+    await loadData()
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error(`${action}失败:`, error)
+    }
   }
 }
 
@@ -702,6 +730,22 @@ onMounted(() => {
 
 .action-btn.delete:hover {
   background: #FFECE8;
+}
+
+.action-btn.enable {
+  color: #00B42A;
+}
+
+.action-btn.enable:hover {
+  background: #E8FFEA;
+}
+
+.action-btn.disable {
+  color: #FF7D00;
+}
+
+.action-btn.disable:hover {
+  background: #FFF7E8;
 }
 
 /* 对话框 */

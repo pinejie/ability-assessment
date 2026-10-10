@@ -81,6 +81,15 @@ public class AbilityCategoryServiceImpl
         if (category == null) {
             throw new BusinessException("能力类别不存在");
         }
+
+        // 检查该类别下是否还有能力要素
+        LambdaQueryWrapper<AbilityElement> elementWrapper = new LambdaQueryWrapper<>();
+        elementWrapper.eq(AbilityElement::getCategoryId, id);
+        long elementCount = abilityElementService.count(elementWrapper);
+        if (elementCount > 0) {
+            throw new BusinessException("该类别下存在" + elementCount + "个能力要素，请先删除能力要素后再删除类别");
+        }
+
         removeById(id);
         log.info("删除能力类别成功，ID: {}", id);
     }

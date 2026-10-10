@@ -188,7 +188,7 @@
               <el-input
                 v-model="levelForms[levelNum - 1].levelRequirement"
                 type="textarea"
-                :rows="2"
+                :rows="4"
                 placeholder="请输入该等级的要求描述"
               />
             </el-form-item>
@@ -764,8 +764,6 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 16px;
-  max-height: 600px;
-  overflow-y: auto;
   padding: 10px;
 }
 
@@ -780,8 +778,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   border-bottom: 1px solid #E5E6EB;
 }
 
@@ -828,8 +826,32 @@ onMounted(() => {
   margin-top: 12px;
 }
 
+.level-form :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+
+.level-form :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.level-dialog :deep(.el-dialog) {
+  height: 84vh !important;
+  max-height: 84vh !important;
+  display: flex;
+  flex-direction: column;
+  margin: 8vh auto !important;
+}
+
 .level-dialog :deep(.el-dialog__body) {
   padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.level-dialog :deep(.el-dialog__footer) {
+  padding: 16px 20px;
+  border-top: 1px solid #E5E6EB;
 }
 
 .pagination-wrapper {
@@ -854,6 +876,49 @@ onMounted(() => {
 }
 
 .form-dialog :deep(.el-dialog__footer) {
+  padding: 16px 20px;
+  border-top: 1px solid #E5E6EB;
+}
+</style>
+
+<!-- 弹窗被 teleport 到 body，必须用非 scoped 样式 -->
+<style>
+.level-dialog {
+  height: 84vh !important;
+  max-height: 84vh !important;
+  display: flex;
+  flex-direction: column;
+  margin: 8vh auto !important;
+}
+
+.level-dialog .el-dialog__body {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.level-dialog .el-dialog__footer {
+  padding: 16px 20px;
+  border-top: 1px solid #E5E6EB;
+}
+
+.form-dialog {
+  height: 84vh !important;
+  max-height: 84vh !important;
+  display: flex;
+  flex-direction: column;
+  margin: 8vh auto !important;
+}
+
+.form-dialog .el-dialog__body {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.form-dialog .el-dialog__footer {
   padding: 16px 20px;
   border-top: 1px solid #E5E6EB;
 }

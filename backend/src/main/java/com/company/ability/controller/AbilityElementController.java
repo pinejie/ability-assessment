@@ -2,6 +2,8 @@ package com.company.ability.controller;
 
 import com.company.ability.dto.AbilityElementCreateDTO;
 import com.company.ability.dto.AbilityElementUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
 import com.company.ability.service.AbilityElementService;
 import com.company.ability.vo.AbilityElementVO;
@@ -52,17 +54,28 @@ public class AbilityElementController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有能力要素")
+    @Operation(summary = "分页查询能力要素")
     @GetMapping
-    public Result<List<AbilityElementVO>> listAllElements() {
-        List<AbilityElementVO> list = abilityElementService.listAllElements();
-        return Result.success(list);
+    public Result<PageResult<AbilityElementVO>> pageElements(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<AbilityElementVO> result = abilityElementService.pageElements(pageRequest);
+        return Result.success(result);
     }
 
-    @Operation(summary = "根据类别ID查询要素列表")
+    @Operation(summary = "根据类别ID分页查询要素列表")
     @GetMapping("/category/{categoryId}")
-    public Result<List<AbilityElementVO>> listElementsByCategoryId(@PathVariable Long categoryId) {
-        List<AbilityElementVO> list = abilityElementService.listElementsByCategoryId(categoryId);
-        return Result.success(list);
+    public Result<PageResult<AbilityElementVO>> pageElementsByCategoryId(
+            @PathVariable Long categoryId,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<AbilityElementVO> result = abilityElementService.pageElementsByCategoryId(categoryId, pageRequest);
+        return Result.success(result);
     }
 }

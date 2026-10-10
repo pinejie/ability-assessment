@@ -2,6 +2,8 @@ package com.company.ability.controller;
 
 import com.company.ability.dto.OrgAbilityReqCreateDTO;
 import com.company.ability.dto.OrgAbilityReqUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
 import com.company.ability.service.OrgAbilityReqService;
 import com.company.ability.vo.OrgAbilityReqVO;
@@ -52,17 +54,28 @@ public class OrgAbilityReqController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有部门能力要求")
+    @Operation(summary = "分页查询所有部门能力要求")
     @GetMapping
-    public Result<List<OrgAbilityReqVO>> listAllOrgAbilityReqs() {
-        List<OrgAbilityReqVO> list = orgAbilityReqService.listAllOrgAbilityReqs();
-        return Result.success(list);
+    public Result<PageResult<OrgAbilityReqVO>> pageOrgAbilityReqs(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<OrgAbilityReqVO> result = orgAbilityReqService.pageOrgAbilityReqs(pageRequest);
+        return Result.success(result);
     }
 
-    @Operation(summary = "根据部门ID查询能力要求列表")
+    @Operation(summary = "根据部门ID分页查询能力要求列表")
     @GetMapping("/department/{departmentId}")
-    public Result<List<OrgAbilityReqVO>> listOrgAbilityReqsByDepartmentId(@PathVariable Long departmentId) {
-        List<OrgAbilityReqVO> list = orgAbilityReqService.listOrgAbilityReqsByDepartmentId(departmentId);
-        return Result.success(list);
+    public Result<PageResult<OrgAbilityReqVO>> pageOrgAbilityReqsByDepartmentId(
+            @PathVariable Long departmentId,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<OrgAbilityReqVO> result = orgAbilityReqService.pageOrgAbilityReqsByDepartmentId(departmentId, pageRequest);
+        return Result.success(result);
     }
 }

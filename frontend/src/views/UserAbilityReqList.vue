@@ -16,7 +16,7 @@
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">配置总数</div>
-        <div class="stat-value">{{ reqList.length }}</div>
+        <div class="stat-value">{{ pagination.total }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">能力要素总条数</div>
@@ -77,6 +77,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="pagination.total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -173,7 +184,7 @@
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { listUserAbilityReqs, createUserAbilityReq, updateUserAbilityReq, deleteUserAbilityReq } from '@/api/userAbilityReq'
+import { pageUserAbilityReqs, createUserAbilityReq, updateUserAbilityReq, deleteUserAbilityReq } from '@/api/userAbilityReq'
 import { listAbilityElementLevelsByElementId } from '@/api/abilityElementLevel'
 import { getPositionAbilityReqByDeptAndJobTitle } from '@/api/positionAbilityReq'
 import type { UserAbilityReqVO } from '@/types/userAbilityReq'
@@ -193,8 +204,14 @@ interface ItemConfig {
 const reqList = ref<UserAbilityReqVO[]>([])
 const elementLevelMap = ref<Map<number, AbilityElementLevelVO[]>>(new Map())
 
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+  total: 0,
+})
+
 const totalItemCount = computed(() => {
-  return reqList.value.reduce((sum, req) => sum + (req.items?.length || 0), 0)
+  return (reqList.value || []).reduce((sum, req) => sum + (req.items?.length || 0), 0)
 })
 
 // 人员选择变化处理
@@ -267,10 +284,23 @@ const formRules: FormRules = {
 
 const loadData = async () => {
   try {
-    reqList.value = await listUserAbilityReqs()
+    const result = await pageUserAbilityReqs(pagination.currentPage, pagination.pageSize)
+    reqList.value = result.list || []
+    pagination.total = result.total
   } catch (error) {
     console.error('加载数据失败:', error)
   }
+}
+
+const handlePageChange = (page: number) => {
+  pagination.currentPage = page
+  loadData()
+}
+
+const handleSizeChange = (size: number) => {
+  pagination.pageSize = size
+  pagination.currentPage = 1
+  loadData()
 }
 
 const loadElementLevels = async (elementId: number) => {
@@ -626,39 +656,39 @@ onMounted(() => {
 }
 
 .element-config-item {
-  padding: 12px;
+  padding: 8px;
   background: #F7F8FA;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  border-radius: 6px;
+  margin-bottom: 6px;
 }
 
 .config-row {
   display: grid;
   grid-template-columns: 1.5fr 2fr 1.5fr 1fr;
-  gap: 8px;
-  align-items: end;
+  gap: 6px;
+  align-items: center;
 }
 
 .config-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .config-field label {
-  font-size: 12px;
-  color: #4E5969;
-  font-weight: 500;
+  font-size: 11px;
+  color: #86909C;
+  font-weight: 400;
 }
 
 .readonly-field {
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: #FFFFFF;
   border: 1px solid #E5E6EB;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: 3px;
+  font-size: 12px;
   color: #1D2129;
-  min-height: 28px;
+  min-height: 24px;
   display: flex;
   align-items: center;
 }
@@ -669,12 +699,13 @@ onMounted(() => {
 }
 
 .level-requirement {
-  margin-top: 8px;
-  padding: 8px;
-  background: #FFF7E8;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #FF7D00;
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: transparent;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #86909C;
+  line-height: 1.3;
 }
 
 .level-requirement strong {
@@ -728,5 +759,11 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
 }
 </style>

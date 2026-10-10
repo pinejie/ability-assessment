@@ -1,6 +1,10 @@
 package com.company.ability.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.ScoreWeightCreateDTO;
 import com.company.ability.dto.ScoreWeightUpdateDTO;
 import com.company.ability.entity.ScoreWeight;
@@ -78,21 +82,30 @@ public class ScoreWeightServiceImpl
     }
 
     @Override
-    public List<ScoreWeightVO> listAllScoreWeights() {
-        List<ScoreWeight> weights = list();
-        return weights.stream()
+    public PageResult<ScoreWeightVO> pageScoreWeights(PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<ScoreWeight> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        QueryWrapper<ScoreWeight> wrapper = new QueryWrapper<>();
+        wrapper.orderByAsc("id");
+        Page<ScoreWeight> result = page(page, wrapper);
+        List<ScoreWeightVO> voList = result.getRecords().stream()
             .map(this::convertToVO)
             .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override
-    public List<ScoreWeightVO> listScoreWeightsByCompanyId(Long companyId) {
-        List<ScoreWeight> weights = lambdaQuery()
+    public PageResult<ScoreWeightVO> pageScoreWeightsByCompanyId(Long companyId, PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<ScoreWeight> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        Page<ScoreWeight> result = lambdaQuery()
             .eq(ScoreWeight::getCompanyId, companyId)
-            .list();
-        return weights.stream()
+            .orderByAsc(ScoreWeight::getId)
+            .page(page);
+        List<ScoreWeightVO> voList = result.getRecords().stream()
             .map(this::convertToVO)
             .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     /**

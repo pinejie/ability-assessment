@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.company.ability.dto.UserAbilityReqNewCreateDTO;
 import com.company.ability.dto.UserAbilityReqNewUpdateDTO;
 import com.company.ability.entity.UserAbilityReqNew;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.vo.UserAbilityReqNewVO;
 
 import java.util.List;
@@ -34,9 +36,9 @@ public interface UserAbilityReqNewService extends IService<UserAbilityReqNew> {
     UserAbilityReqNewVO getUserAbilityReqById(Long id);
 
     /**
-     * 查询所有人员能力要求
+     * 分页查询人员能力要求
      */
-    List<UserAbilityReqNewVO> listAllUserAbilityReqs();
+    PageResult<UserAbilityReqNewVO> pageUserAbilityReqs(PageRequest pageRequest);
 
     /**
      * 根据人员ID查询能力要求

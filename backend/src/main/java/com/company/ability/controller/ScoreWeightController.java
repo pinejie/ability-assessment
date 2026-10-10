@@ -1,5 +1,7 @@
 package com.company.ability.controller;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.ScoreWeightCreateDTO;
 import com.company.ability.dto.ScoreWeightUpdateDTO;
 import com.company.ability.dto.Result;
@@ -52,17 +54,26 @@ public class ScoreWeightController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有评分权重配置")
+    @Operation(summary = "分页查询评分权重配置")
     @GetMapping
-    public Result<List<ScoreWeightVO>> listAllScoreWeights() {
-        List<ScoreWeightVO> list = scoreWeightService.listAllScoreWeights();
-        return Result.success(list);
+    public Result<PageResult<ScoreWeightVO>> pageScoreWeights(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        return Result.success(scoreWeightService.pageScoreWeights(pageRequest));
     }
 
-    @Operation(summary = "根据分公司ID查询权重配置列表")
+    @Operation(summary = "根据分公司ID分页查询权重配置列表")
     @GetMapping("/company/{companyId}")
-    public Result<List<ScoreWeightVO>> listScoreWeightsByCompanyId(@PathVariable Long companyId) {
-        List<ScoreWeightVO> list = scoreWeightService.listScoreWeightsByCompanyId(companyId);
-        return Result.success(list);
+    public Result<PageResult<ScoreWeightVO>> pageScoreWeightsByCompanyId(
+            @PathVariable Long companyId,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        return Result.success(scoreWeightService.pageScoreWeightsByCompanyId(companyId, pageRequest));
     }
 }

@@ -1,5 +1,7 @@
 package com.company.ability.service;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.PositionAbilityReqCreateDTO;
 import com.company.ability.dto.PositionAbilityReqUpdateDTO;
 import com.company.ability.exception.BusinessException;
@@ -153,10 +155,10 @@ class PositionAbilityReqServiceTest {
         }
 
         // Act
-        List<PositionAbilityReqVO> list = positionAbilityReqService.listAllPositionAbilityReqs();
+        PageResult<PositionAbilityReqVO> result = positionAbilityReqService.pagePositionAbilityReqs(new PageRequest());
 
         // Assert
-        assertEquals(3, list.size());
+        assertEquals(3, result.getList().size());
     }
 
     @Test
@@ -177,10 +179,10 @@ class PositionAbilityReqServiceTest {
         }
 
         // Act
-        List<PositionAbilityReqVO> list = positionAbilityReqService.listPositionAbilityReqsByJobTitleId(200L);
+        PageResult<PositionAbilityReqVO> result = positionAbilityReqService.pagePositionAbilityReqsByJobTitleId(200L, new PageRequest());
 
         // Assert
-        assertEquals(2, list.size());
+        assertEquals(2, result.getList().size());
     }
 
     @Test

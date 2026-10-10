@@ -1,5 +1,7 @@
 package com.company.ability.controller;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.UserAbilityReqCreateDTO;
 import com.company.ability.dto.UserAbilityReqUpdateDTO;
 import com.company.ability.dto.Result;
@@ -59,17 +61,26 @@ public class UserAbilityReqController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有人员能力要求")
+    @Operation(summary = "分页查询人员能力要求")
     @GetMapping
-    public Result<List<UserAbilityReqVO>> listAllUserAbilityReqs() {
-        List<UserAbilityReqVO> list = userAbilityReqService.listAllUserAbilityReqs();
-        return Result.success(list);
+    public Result<PageResult<UserAbilityReqVO>> pageUserAbilityReqs(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        return Result.success(userAbilityReqService.pageUserAbilityReqs(pageRequest));
     }
 
-    @Operation(summary = "根据人员ID查询能力要求列表")
+    @Operation(summary = "根据人员ID分页查询能力要求列表")
     @GetMapping("/resource/{resourceId}")
-    public Result<List<UserAbilityReqVO>> listUserAbilityReqsByResourceId(@PathVariable Long resourceId) {
-        List<UserAbilityReqVO> list = userAbilityReqService.listUserAbilityReqsByResourceId(resourceId);
-        return Result.success(list);
+    public Result<PageResult<UserAbilityReqVO>> pageUserAbilityReqsByResourceId(
+            @PathVariable Long resourceId,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        return Result.success(userAbilityReqService.pageUserAbilityReqsByResourceId(resourceId, pageRequest));
     }
 }

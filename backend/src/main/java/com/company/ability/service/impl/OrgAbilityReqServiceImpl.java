@@ -1,9 +1,13 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.company.ability.dto.OrgAbilityReqCreateDTO;
 import com.company.ability.dto.OrgAbilityReqUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityElement;
 import com.company.ability.entity.OrgAbilityReq;
 import com.company.ability.exception.BusinessException;
@@ -94,21 +98,30 @@ public class OrgAbilityReqServiceImpl
     }
 
     @Override
-    public List<OrgAbilityReqVO> listAllOrgAbilityReqs() {
-        List<OrgAbilityReq> list = list();
-        return list.stream()
+    public PageResult<OrgAbilityReqVO> pageOrgAbilityReqs(PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<OrgAbilityReq> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        QueryWrapper<OrgAbilityReq> wrapper = new QueryWrapper<>();
+        wrapper.orderByAsc("id");
+        Page<OrgAbilityReq> result = page(page, wrapper);
+        List<OrgAbilityReqVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override
-    public List<OrgAbilityReqVO> listOrgAbilityReqsByDepartmentId(Long departmentId) {
+    public PageResult<OrgAbilityReqVO> pageOrgAbilityReqsByDepartmentId(Long departmentId, PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<OrgAbilityReq> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
         LambdaQueryWrapper<OrgAbilityReq> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(OrgAbilityReq::getDepartmentId, departmentId);
-        List<OrgAbilityReq> list = list(wrapper);
-        return list.stream()
+        wrapper.eq(OrgAbilityReq::getDepartmentId, departmentId)
+               .orderByAsc(OrgAbilityReq::getId);
+        Page<OrgAbilityReq> result = page(page, wrapper);
+        List<OrgAbilityReqVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     private OrgAbilityReqVO convertToVO(OrgAbilityReq req) {

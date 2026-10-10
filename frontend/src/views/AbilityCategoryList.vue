@@ -16,7 +16,7 @@
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">总类别数</div>
-        <div class="stat-value">{{ categoryList.length }}</div>
+        <div class="stat-value">{{ pagination.total }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">已启用</div>
@@ -58,6 +58,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="pagination.total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -110,13 +121,21 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { listAbilityCategories, createAbilityCategory, updateAbilityCategory, deleteAbilityCategory } from '@/api/abilityCategory'
+import { pageAbilityCategories, createAbilityCategory, updateAbilityCategory, deleteAbilityCategory } from '@/api/abilityCategory'
 import type { AbilityCategoryVO } from '@/types/abilityCategory'
 
 const categoryList = ref<AbilityCategoryVO[]>([])
 
-const activeCount = computed(() => categoryList.value.filter(c => c.status === 1).length)
-const disabledCount = computed(() => categoryList.value.filter(c => c.status === 0).length)
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+  total: 0,
+})
+
+const activeCount = computed(() => pagination.total)
+const disabledCount = computed(() => {
+  return categoryList.value.filter(c => c.status === 0).length
+})
 
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
@@ -139,10 +158,23 @@ const formRules: FormRules = {
 
 const loadData = async () => {
   try {
-    categoryList.value = await listAbilityCategories()
+    const result = await pageAbilityCategories(pagination.currentPage, pagination.pageSize)
+    categoryList.value = result.list || []
+    pagination.total = result.total
   } catch (error) {
     console.error('加载数据失败:', error)
   }
+}
+
+const handlePageChange = (page: number) => {
+  pagination.currentPage = page
+  loadData()
+}
+
+const handleSizeChange = (size: number) => {
+  pagination.pageSize = size
+  pagination.currentPage = 1
+  loadData()
 }
 
 const handleAdd = () => {
@@ -386,5 +418,11 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
 }
 </style>

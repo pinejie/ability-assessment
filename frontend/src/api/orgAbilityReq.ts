@@ -1,5 +1,6 @@
 import request from '@/utils/request'
 import type { OrgAbilityReqVO, OrgAbilityReqCreateDTO, OrgAbilityReqUpdateDTO } from '@/types/orgAbilityReq'
+import type { PageResult } from '@/types/common'
 
 /**
  * 创建部门能力要求
@@ -30,15 +31,15 @@ export const getOrgAbilityReqById = (id: number): Promise<OrgAbilityReqVO> => {
 }
 
 /**
- * 查询所有部门能力要求
+ * 分页查询所有部门能力要求
  */
-export const listOrgAbilityReqs = (): Promise<OrgAbilityReqVO[]> => {
-  return request.get('/org-ability-reqs')
+export const pageOrgAbilityReqs = (pageNum = 1, pageSize = 10): Promise<PageResult<OrgAbilityReqVO>> => {
+  return request.get('/org-ability-reqs', { params: { pageNum, pageSize } })
 }
 
 /**
- * 根据部门ID查询能力要求列表
+ * 根据部门ID分页查询能力要求列表
  */
-export const listOrgAbilityReqsByDepartmentId = (departmentId: number): Promise<OrgAbilityReqVO[]> => {
-  return request.get(`/org-ability-reqs/department/${departmentId}`)
+export const pageOrgAbilityReqsByDepartmentId = (departmentId: number, pageNum = 1, pageSize = 10): Promise<PageResult<OrgAbilityReqVO>> => {
+  return request.get(`/org-ability-reqs/department/${departmentId}`, { params: { pageNum, pageSize } })
 }

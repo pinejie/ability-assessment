@@ -1,7 +1,11 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.UserAbilityReqCreateDTO;
 import com.company.ability.dto.UserAbilityReqUpdateDTO;
 import com.company.ability.entity.AbilityElement;
@@ -134,21 +138,30 @@ public class UserAbilityReqServiceImpl
     }
 
     @Override
-    public List<UserAbilityReqVO> listAllUserAbilityReqs() {
-        List<UserAbilityReq> list = list();
-        return list.stream()
+    public PageResult<UserAbilityReqVO> pageUserAbilityReqs(PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<UserAbilityReq> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        QueryWrapper<UserAbilityReq> wrapper = new QueryWrapper<>();
+        wrapper.orderByAsc("id");
+        Page<UserAbilityReq> result = page(page, wrapper);
+        List<UserAbilityReqVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override
-    public List<UserAbilityReqVO> listUserAbilityReqsByResourceId(Long resourceId) {
+    public PageResult<UserAbilityReqVO> pageUserAbilityReqsByResourceId(Long resourceId, PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<UserAbilityReq> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
         LambdaQueryWrapper<UserAbilityReq> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(UserAbilityReq::getResourceId, resourceId);
-        List<UserAbilityReq> list = list(wrapper);
-        return list.stream()
+        wrapper.eq(UserAbilityReq::getResourceId, resourceId)
+               .orderByAsc(UserAbilityReq::getId);
+        Page<UserAbilityReq> result = page(page, wrapper);
+        List<UserAbilityReqVO> voList = result.getRecords().stream()
                 .map(this::convertToVO)
                 .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     private UserAbilityReqVO convertToVO(UserAbilityReq req) {

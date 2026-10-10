@@ -1,5 +1,6 @@
 import request from '@/utils/request'
 import type { AbilityElementVO, AbilityElementCreateDTO, AbilityElementUpdateDTO } from '@/types/abilityElement'
+import type { PageResult } from '@/types/common'
 
 /**
  * 创建能力要素
@@ -30,15 +31,31 @@ export const getAbilityElementById = (id: number): Promise<AbilityElementVO> => 
 }
 
 /**
- * 查询所有能力要素
+ * 分页查询能力要素
  */
-export const listAbilityElements = (): Promise<AbilityElementVO[]> => {
-  return request.get('/ability-elements')
+export const pageAbilityElements = (pageNum = 1, pageSize = 10): Promise<PageResult<AbilityElementVO>> => {
+  return request.get('/ability-elements', { params: { pageNum, pageSize } })
 }
 
 /**
- * 根据类别ID查询要素列表
+ * 根据类别ID分页查询要素列表
  */
-export const listElementsByCategoryId = (categoryId: number): Promise<AbilityElementVO[]> => {
-  return request.get(`/ability-elements/category/${categoryId}`)
+export const pageElementsByCategoryId = (categoryId: number, pageNum = 1, pageSize = 10): Promise<PageResult<AbilityElementVO>> => {
+  return request.get(`/ability-elements/category/${categoryId}`, { params: { pageNum, pageSize } })
+}
+
+/**
+ * 查询所有能力要素（用于下拉框，不分页）
+ */
+export const listAbilityElements = async (): Promise<AbilityElementVO[]> => {
+  const result = await pageAbilityElements(1, 1000)
+  return result.list
+}
+
+/**
+ * 根据类别ID查询所有能力要素（用于下拉框，不分页）
+ */
+export const listElementsByCategoryId = async (categoryId: number): Promise<AbilityElementVO[]> => {
+  const result = await pageElementsByCategoryId(categoryId, 1, 1000)
+  return result.list
 }

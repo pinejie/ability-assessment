@@ -2,6 +2,8 @@ package com.company.ability.service;
 
 import com.company.ability.dto.AbilityElementLevelCreateDTO;
 import com.company.ability.dto.AbilityElementLevelUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.vo.AbilityElementLevelVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,7 +15,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -128,8 +129,8 @@ class AbilityElementLevelServiceTest {
     }
 
     @Test
-    @DisplayName("应该查询所有等级配置")
-    void shouldListLevelsByElementId() {
+    @DisplayName("应该分页查询等级配置")
+    void shouldPageLevelsByElementId() {
         // Arrange
         for (int i = 1; i <= 5; i++) {
             AbilityElementLevelCreateDTO dto = new AbilityElementLevelCreateDTO();
@@ -142,10 +143,14 @@ class AbilityElementLevelServiceTest {
         }
 
         // Act
-        List<AbilityElementLevelVO> list = abilityElementLevelService.listLevelsByElementId(elementId);
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(1);
+        pageRequest.setPageSize(10);
+        PageResult<AbilityElementLevelVO> result = abilityElementLevelService.pageLevelsByElementId(elementId, pageRequest);
 
         // Assert
-        assertEquals(5, list.size());
+        assertEquals(5, result.getList().size());
+        assertEquals(5L, result.getTotal());
     }
 
     @Test

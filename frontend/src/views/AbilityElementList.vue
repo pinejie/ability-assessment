@@ -85,6 +85,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="pagination.total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -199,7 +210,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { listAbilityElements, listElementsByCategoryId, createAbilityElement, updateAbilityElement, deleteAbilityElement } from '@/api/abilityElement'
+import { pageAbilityElements, pageElementsByCategoryId, createAbilityElement, updateAbilityElement, deleteAbilityElement } from '@/api/abilityElement'
 import { listAbilityCategories } from '@/api/abilityCategory'
 import { listAbilityElementLevelsByElementId, createAbilityElementLevel, updateAbilityElementLevel } from '@/api/abilityElementLevel'
 import type { AbilityElementVO } from '@/types/abilityElement'
@@ -208,11 +219,17 @@ import type { AbilityCategoryVO } from '@/types/abilityCategory'
 const elementList = ref<AbilityElementVO[]>([])
 const categoryList = ref<AbilityCategoryVO[]>([])
 
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+  total: 0,
+})
+
 const filterForm = reactive({
   categoryId: undefined as number | undefined,
 })
 
-const activeCount = computed(() => elementList.value.filter(e => e.status === 1).length)
+const activeCount = computed(() => pagination.total)
 const categoryCoverage = computed(() => {
   const categoryIds = new Set(elementList.value.map(e => e.categoryId))
   return categoryIds.size
@@ -275,14 +292,28 @@ const getLevelName = (level: number): string => {
 
 const loadData = async () => {
   try {
+    let result
     if (filterForm.categoryId) {
-      elementList.value = await listElementsByCategoryId(filterForm.categoryId)
+      result = await pageElementsByCategoryId(filterForm.categoryId, pagination.currentPage, pagination.pageSize)
     } else {
-      elementList.value = await listAbilityElements()
+      result = await pageAbilityElements(pagination.currentPage, pagination.pageSize)
     }
+    elementList.value = result.list || []
+    pagination.total = result.total
   } catch (error) {
     console.error('加载数据失败:', error)
   }
+}
+
+const handlePageChange = (page: number) => {
+  pagination.currentPage = page
+  loadData()
+}
+
+const handleSizeChange = (size: number) => {
+  pagination.pageSize = size
+  pagination.currentPage = 1
+  loadData()
 }
 
 const loadCategoryList = async () => {
@@ -295,6 +326,7 @@ const loadCategoryList = async () => {
 
 const resetFilter = () => {
   filterForm.categoryId = undefined
+  pagination.currentPage = 1
   loadData()
 }
 
@@ -752,5 +784,11 @@ onMounted(() => {
 
 .level-dialog :deep(.el-dialog__body) {
   padding: 20px;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
 }
 </style>

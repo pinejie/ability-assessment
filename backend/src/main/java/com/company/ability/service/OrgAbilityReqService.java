@@ -3,6 +3,8 @@ package com.company.ability.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.company.ability.dto.OrgAbilityReqCreateDTO;
 import com.company.ability.dto.OrgAbilityReqUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.OrgAbilityReq;
 import com.company.ability.vo.OrgAbilityReqVO;
 
@@ -34,12 +36,12 @@ public interface OrgAbilityReqService extends IService<OrgAbilityReq> {
     OrgAbilityReqVO getOrgAbilityReqById(Long id);
 
     /**
-     * 查询所有部门能力要求
+     * 分页查询所有部门能力要求
      */
-    List<OrgAbilityReqVO> listAllOrgAbilityReqs();
+    PageResult<OrgAbilityReqVO> pageOrgAbilityReqs(PageRequest pageRequest);
 
     /**
-     * 根据部门ID查询能力要求列表
+     * 根据部门ID分页查询能力要求列表
      */
-    List<OrgAbilityReqVO> listOrgAbilityReqsByDepartmentId(Long departmentId);
+    PageResult<OrgAbilityReqVO> pageOrgAbilityReqsByDepartmentId(Long departmentId, PageRequest pageRequest);
 }

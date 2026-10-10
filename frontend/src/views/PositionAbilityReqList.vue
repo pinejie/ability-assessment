@@ -16,7 +16,7 @@
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">配置总数</div>
-        <div class="stat-value">{{ reqList.length }}</div>
+        <div class="stat-value">{{ pagination.total }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">涉及部门</div>
@@ -73,6 +73,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="pagination.total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -209,7 +220,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { OfficeBuilding, Folder } from '@element-plus/icons-vue'
 import {
-  listPositionAbilityReqs,
+  pagePositionAbilityReqs,
   createPositionAbilityReq,
   updatePositionAbilityReq,
   deletePositionAbilityReq,
@@ -240,6 +251,12 @@ interface ItemConfig {
 const reqList = ref<PositionAbilityReqVO[]>([])
 const categoryList = ref<AbilityCategoryVO[]>([])
 
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+  total: 0,
+})
+
 // 部门树数据
 const deptTreeData = ref<TreeNode[]>([])
 const deptTreeSelectRef = ref<any>()
@@ -259,10 +276,12 @@ const jobTitleLoading = ref(false)
 // 加载部门树
 const loadDeptTree = async () => {
   try {
-    const [companies, departments] = await Promise.all([
-      request.get('/sub-companies'),
-      request.get('/departments')
+    const [companyResult, deptResult] = await Promise.all([
+      request.get('/sub-companies?pageNum=1&pageSize=100'),
+      request.get('/departments?pageNum=1&pageSize=1000')
     ])
+    const companies = companyResult.data?.list || companyResult.list || []
+    const departments = deptResult.list || []
 
     const companyMap = new Map<number, TreeNode>()
     companies.forEach((c: any) => {
@@ -402,7 +421,7 @@ const jobTitleCount = computed(() => {
 })
 
 const totalItems = computed(() => {
-  return reqList.value.reduce((sum, r) => sum + (r.items?.length || 0), 0)
+  return (reqList.value || []).reduce((sum, r) => sum + (r.items?.length || 0), 0)
 })
 
 const dialogVisible = ref(false)
@@ -433,10 +452,23 @@ const formRules: FormRules = {
 
 const loadData = async () => {
   try {
-    reqList.value = await listPositionAbilityReqs()
+    const result = await pagePositionAbilityReqs(pagination.currentPage, pagination.pageSize)
+    reqList.value = result.list || []
+    pagination.total = result.total
   } catch (error) {
     console.error('加载数据失败:', error)
   }
+}
+
+const handlePageChange = (page: number) => {
+  pagination.currentPage = page
+  loadData()
+}
+
+const handleSizeChange = (size: number) => {
+  pagination.pageSize = size
+  pagination.currentPage = 1
+  loadData()
 }
 
 const handleAdd = () => {
@@ -859,6 +891,12 @@ onMounted(() => {
 .tree-node {
   display: flex;
   align-items: center;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
 }
 </style>
 

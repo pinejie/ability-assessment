@@ -16,7 +16,7 @@
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">方案总数</div>
-        <div class="stat-value">{{ weightList.length }}</div>
+        <div class="stat-value">{{ pagination.total }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">涉及分公司</div>
@@ -67,6 +67,17 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="pagination.total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -146,10 +157,16 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { listScoreWeights, createScoreWeight, updateScoreWeight, deleteScoreWeight } from '@/api/scoreWeight'
+import { pageScoreWeights, createScoreWeight, updateScoreWeight, deleteScoreWeight } from '@/api/scoreWeight'
 import type { ScoreWeightVO } from '@/types/scoreWeight'
 
 const weightList = ref<ScoreWeightVO[]>([])
+
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+  total: 0,
+})
 
 const companyCount = computed(() => {
   const companyIds = new Set(weightList.value.map(w => w.companyId))
@@ -157,9 +174,10 @@ const companyCount = computed(() => {
 })
 
 const avgCategoryWeight = computed(() => {
-  if (weightList.value.length === 0) return 0
-  const sum = weightList.value.reduce((acc, w) => acc + w.categoryWeight, 0)
-  return Math.round(sum / weightList.value.length)
+  const list = weightList.value || []
+  if (list.length === 0) return 0
+  const sum = list.reduce((acc, w) => acc + w.categoryWeight, 0)
+  return Math.round(sum / list.length)
 })
 
 const dialogVisible = ref(false)
@@ -198,10 +216,23 @@ const updateElementWeight = () => {
 
 const loadData = async () => {
   try {
-    weightList.value = await listScoreWeights()
+    const result = await pageScoreWeights(pagination.currentPage, pagination.pageSize)
+    weightList.value = result.list || []
+    pagination.total = result.total
   } catch (error) {
     console.error('加载数据失败:', error)
   }
+}
+
+const handlePageChange = (page: number) => {
+  pagination.currentPage = page
+  loadData()
+}
+
+const handleSizeChange = (size: number) => {
+  pagination.pageSize = size
+  pagination.currentPage = 1
+  loadData()
 }
 
 const handleAdd = () => {
@@ -526,5 +557,11 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
 }
 </style>

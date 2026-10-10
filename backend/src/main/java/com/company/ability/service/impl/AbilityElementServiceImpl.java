@@ -1,8 +1,12 @@
 package com.company.ability.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.company.ability.dto.AbilityElementCreateDTO;
 import com.company.ability.dto.AbilityElementUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityCategory;
 import com.company.ability.entity.AbilityElement;
 import com.company.ability.exception.BusinessException;
@@ -89,19 +93,27 @@ public class AbilityElementServiceImpl
     }
 
     @Override
-    public List<AbilityElementVO> listAllElements() {
-        List<AbilityElement> elements = list();
-        return elements.stream()
+    public PageResult<AbilityElementVO> pageElements(PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<AbilityElement> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        QueryWrapper<AbilityElement> wrapper = new QueryWrapper<>();
+        wrapper.orderByAsc("id");
+        Page<AbilityElement> result = page(page, wrapper);
+        List<AbilityElementVO> voList = result.getRecords().stream()
             .map(this::convertToVO)
             .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     @Override
-    public List<AbilityElementVO> listElementsByCategoryId(Long categoryId) {
-        List<AbilityElement> elements = baseMapper.selectByCategoryId(categoryId);
-        return elements.stream()
+    public PageResult<AbilityElementVO> pageElementsByCategoryId(Long categoryId, PageRequest pageRequest) {
+        pageRequest.validate();
+        Page<AbilityElement> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
+        Page<AbilityElement> result = baseMapper.selectPageByCategoryId(page, categoryId);
+        List<AbilityElementVO> voList = result.getRecords().stream()
             .map(this::convertToVO)
             .collect(Collectors.toList());
+        return PageResult.from(result, voList);
     }
 
     /**

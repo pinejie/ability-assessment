@@ -1,6 +1,8 @@
 package com.company.ability.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.PositionAbilityReqCreateDTO;
 import com.company.ability.dto.PositionAbilityReqUpdateDTO;
 import com.company.ability.entity.PositionAbilityReq;
@@ -34,14 +36,14 @@ public interface PositionAbilityReqService extends IService<PositionAbilityReq> 
     PositionAbilityReqVO getPositionAbilityReqById(Long id);
 
     /**
-     * 查询所有岗位能力要求
+     * 分页查询所有岗位能力要求
      */
-    List<PositionAbilityReqVO> listAllPositionAbilityReqs();
+    PageResult<PositionAbilityReqVO> pagePositionAbilityReqs(PageRequest pageRequest);
 
     /**
-     * 根据岗位ID查询能力要求列表
+     * 根据岗位ID分页查询能力要求列表
      */
-    List<PositionAbilityReqVO> listPositionAbilityReqsByJobTitleId(Long jobTitleId);
+    PageResult<PositionAbilityReqVO> pagePositionAbilityReqsByJobTitleId(Long jobTitleId, PageRequest pageRequest);
 
     /**
      * 根据部门和岗位查询能力要求配置

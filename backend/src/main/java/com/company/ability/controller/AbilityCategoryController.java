@@ -2,6 +2,8 @@ package com.company.ability.controller;
 
 import com.company.ability.dto.AbilityCategoryCreateDTO;
 import com.company.ability.dto.AbilityCategoryUpdateDTO;
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
 import com.company.ability.service.AbilityCategoryService;
 import com.company.ability.vo.AbilityCategoryVO;
@@ -10,8 +12,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * 能力类别控制器
@@ -52,10 +52,15 @@ public class AbilityCategoryController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有能力类别")
+    @Operation(summary = "分页查询能力类别")
     @GetMapping
-    public Result<List<AbilityCategoryVO>> listAllCategories() {
-        List<AbilityCategoryVO> list = abilityCategoryService.listAllCategories();
-        return Result.success(list);
+    public Result<PageResult<AbilityCategoryVO>> pageCategories(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<AbilityCategoryVO> result = abilityCategoryService.pageCategories(pageRequest);
+        return Result.success(result);
     }
 }

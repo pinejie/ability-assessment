@@ -1,5 +1,7 @@
 package com.company.ability.controller;
 
+import com.company.ability.dto.PageRequest;
+import com.company.ability.dto.PageResult;
 import com.company.ability.dto.PositionAbilityReqCreateDTO;
 import com.company.ability.dto.PositionAbilityReqUpdateDTO;
 import com.company.ability.dto.Result;
@@ -52,18 +54,29 @@ public class PositionAbilityReqController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "查询所有岗位能力要求")
+    @Operation(summary = "分页查询所有岗位能力要求")
     @GetMapping
-    public Result<List<PositionAbilityReqVO>> listAllPositionAbilityReqs() {
-        List<PositionAbilityReqVO> list = positionAbilityReqService.listAllPositionAbilityReqs();
-        return Result.success(list);
+    public Result<PageResult<PositionAbilityReqVO>> pagePositionAbilityReqs(
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<PositionAbilityReqVO> result = positionAbilityReqService.pagePositionAbilityReqs(pageRequest);
+        return Result.success(result);
     }
 
-    @Operation(summary = "根据岗位ID查询能力要求列表")
+    @Operation(summary = "根据岗位ID分页查询能力要求列表")
     @GetMapping("/job-title/{jobTitleId}")
-    public Result<List<PositionAbilityReqVO>> listPositionAbilityReqsByJobTitleId(@PathVariable Long jobTitleId) {
-        List<PositionAbilityReqVO> list = positionAbilityReqService.listPositionAbilityReqsByJobTitleId(jobTitleId);
-        return Result.success(list);
+    public Result<PageResult<PositionAbilityReqVO>> pagePositionAbilityReqsByJobTitleId(
+            @PathVariable Long jobTitleId,
+            @RequestParam(defaultValue = "1") Integer pageNum,
+            @RequestParam(defaultValue = "10") Integer pageSize) {
+        PageRequest pageRequest = new PageRequest();
+        pageRequest.setPageNum(pageNum);
+        pageRequest.setPageSize(pageSize);
+        PageResult<PositionAbilityReqVO> result = positionAbilityReqService.pagePositionAbilityReqsByJobTitleId(jobTitleId, pageRequest);
+        return Result.success(result);
     }
 
     @Operation(summary = "根据部门和岗位查询能力要求配置")

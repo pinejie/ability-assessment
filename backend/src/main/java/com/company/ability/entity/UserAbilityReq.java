@@ -29,6 +29,11 @@ public class UserAbilityReq {
     private Long elementId;
 
     /**
+     * 岗位能力要求ID（关联 uf_position_ability_req）
+     */
+    private Long positionReqId;
+
+    /**
      * 等级ID（关联 uf_ability_element_level）
      */
     private Long levelId;

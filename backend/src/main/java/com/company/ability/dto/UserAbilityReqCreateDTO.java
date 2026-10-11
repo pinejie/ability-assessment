@@ -25,6 +25,8 @@ public class UserAbilityReqCreateDTO {
         @NotNull(message = "能力要素ID不能为空")
         private Long elementId;
 
+        private Long positionReqId;
+
         @NotNull(message = "等级ID不能为空")
         private Long levelId;
 

@@ -67,6 +67,7 @@ public class UserAbilityReqServiceImpl
             UserAbilityReq req = new UserAbilityReq();
             req.setResourceId(dto.getResourceId());
             req.setElementId(config.getElementId());
+            req.setPositionReqId(config.getPositionReqId());
             req.setLevelId(config.getLevelId());
             req.setScore(config.getScore());
             req.setDescription(config.getDescription());

@@ -1,5 +1,6 @@
 package com.company.ability.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -9,10 +10,12 @@ import com.company.ability.dto.PageRequest;
 import com.company.ability.dto.PageResult;
 import com.company.ability.entity.AbilityCategory;
 import com.company.ability.entity.AbilityElement;
+import com.company.ability.entity.PositionAbilityReqItem;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.mapper.AbilityElementMapper;
 import com.company.ability.service.AbilityCategoryService;
 import com.company.ability.service.AbilityElementService;
+import com.company.ability.service.PositionAbilityReqItemService;
 import com.company.ability.vo.AbilityElementVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +37,7 @@ public class AbilityElementServiceImpl
     implements AbilityElementService {
 
     private final AbilityCategoryService abilityCategoryService;
+    private final PositionAbilityReqItemService positionAbilityReqItemService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -98,6 +102,15 @@ public class AbilityElementServiceImpl
         if (element == null) {
             throw new BusinessException("能力要素不存在");
         }
+
+        // 检查该要素是否被岗位能力要求引用
+        LambdaQueryWrapper<PositionAbilityReqItem> itemWrapper = new LambdaQueryWrapper<>();
+        itemWrapper.eq(PositionAbilityReqItem::getElementId, id);
+        long itemCount = positionAbilityReqItemService.count(itemWrapper);
+        if (itemCount > 0) {
+            throw new BusinessException("该能力要素已被岗位能力要求引用（" + itemCount + "处），请先删除相关岗位能力要求后再删除要素");
+        }
+
         removeById(id);
         log.info("删除能力要素成功，ID: {}", id);
     }

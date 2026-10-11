@@ -17,6 +17,8 @@ public class UserAbilityReqUpdateDTO {
 
     private Long elementId;
 
+    private Long positionReqId;
+
     private Long levelId;
 
     private BigDecimal score;

@@ -20,6 +20,8 @@ public class UserAbilityReqVO {
 
     private String elementName;
 
+    private Long positionReqId;
+
     private Long levelId;
 
     private Integer level;

@@ -4,6 +4,7 @@
       v-model="searchKeyword"
       :placeholder="placeholder"
       @focus="handleFocus"
+      @blur="handleBlur"
       @input="handleInput"
       @keydown="handleKeydown"
       clearable
@@ -33,7 +34,7 @@
             :key="item.id"
             class="dropdown-item"
             :class="{ 'is-active': index === activeIndex }"
-            @click="handleSelect(item)"
+            @mousedown.prevent="handleSelect(item)"
             @mouseenter="activeIndex = index"
           >
             <div class="item-content">
@@ -78,7 +79,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   modelValue: undefined,
   placeholder: '请选择或搜索人员',
-  maxRecent: 10
+  maxRecent: 5
 })
 
 const emit = defineEmits<{
@@ -150,8 +151,8 @@ const searchResources = async (keyword: string) => {
 
   loading.value = true
   try {
-    const results = await request.get(`/search/resources?keyword=${encodeURIComponent(keyword)}&limit=10`)
-    searchResults.value = results
+    const results = await request.get(`/search/resources?keyword=${encodeURIComponent(keyword)}&pageSize=5`)
+    searchResults.value = results.list || []
   } catch (error) {
     console.error('搜索人员失败:', error)
     searchResults.value = []
@@ -164,6 +165,14 @@ const searchResources = async (keyword: string) => {
 const handleFocus = () => {
   dropdownVisible.value = true
   activeIndex.value = -1
+  const keyword = searchKeyword.value.trim()
+  if (keyword) {
+    searchResources(keyword)
+  }
+}
+
+const handleBlur = () => {
+  dropdownVisible.value = false
 }
 
 // 输入处理（防抖）
@@ -228,8 +237,8 @@ const handleSelect = async (resource: Resource) => {
   if (!resource.jobtitle && resource.jobtitle !== 0) {
     // 重新搜索获取完整数据
     try {
-      const results = await request.get(`/search/resources?keyword=${encodeURIComponent(resource.lastname)}&limit=10`)
-      const fullResource = results.find((r: Resource) => r.id === resource.id)
+      const results = await request.get(`/search/resources?keyword=${encodeURIComponent(resource.lastname)}&pageSize=50`)
+      const fullResource = (results.list || []).find((r: Resource) => r.id === resource.id)
       if (fullResource) {
         selectedResource = fullResource
       }
@@ -241,13 +250,6 @@ const handleSelect = async (resource: Resource) => {
   saveToRecent(selectedResource)
   emit('update:modelValue', selectedResource.id)
   emit('change', selectedResource.id, selectedResource)
-}
-
-// 点击外部关闭
-const handleClickOutside = (e: MouseEvent) => {
-  if (containerRef.value && !containerRef.value.contains(e.target as Node)) {
-    dropdownVisible.value = false
-  }
 }
 
 // 监听 modelValue 变化，更新显示
@@ -279,11 +281,9 @@ watch(
 
 onMounted(() => {
   loadRecentResources()
-  document.addEventListener('click', handleClickOutside)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
   clearTimeout(searchTimer)
 })
 </script>

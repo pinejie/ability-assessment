@@ -402,7 +402,7 @@ public class EcologyDataController {
                          "AND (lastname LIKE ? OR ecology_pinyin_search LIKE ?)";
 
             return Result.success(JdbcPageHelper.page(
-                jdbcTemplate, baseSql, countSql, List.<Object>of(searchPattern, searchPattern, searchPattern, searchPattern), pageRequest));
+                jdbcTemplate, baseSql, countSql, List.<Object>of(searchPattern, searchPattern), pageRequest));
         } catch (Exception e) {
             log.error("搜索人员失败", e);
             return Result.success(new PageResult<>(List.of(), 0L, pageNum, pageSize));

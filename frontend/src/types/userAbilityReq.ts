@@ -5,6 +5,7 @@ export interface UserAbilityReqItemVO {
   categoryName: string
   elementId: number
   elementName: string
+  positionReqId: number | null
   levelId: number | null
   levelName: string | null
   levelRequirement: string | null
@@ -25,6 +26,7 @@ export interface UserAbilityReqVO {
 // 能力要素配置
 export interface UserAbilityElementConfig {
   elementId: number
+  positionReqId?: number | null
   levelId: number | null
   score: number | null
 }
@@ -34,6 +36,7 @@ export interface UserAbilityReqCreateDTO {
   resourceId: number
   items: {
     elementId: number
+    positionReqId?: number | null
     levelId?: number | null
     score?: number | null
   }[]
@@ -46,6 +49,7 @@ export interface UserAbilityReqUpdateDTO {
   resourceId?: number
   items?: {
     elementId: number
+    positionReqId?: number | null
     levelId?: number | null
     score?: number | null
   }[]

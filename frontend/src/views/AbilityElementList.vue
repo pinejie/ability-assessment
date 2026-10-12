@@ -6,10 +6,7 @@
         <h1 class="page-title">能力要素管理</h1>
         <p class="page-description">管理各类别下的能力要素，配置5个等级要求</p>
       </div>
-      <button class="btn-primary" @click="handleAdd">
-        <span class="btn-icon">+</span>
-        新增要素
-      </button>
+      <el-button type="primary" @click="handleAdd">新增要素</el-button>
     </div>
 
     <!-- 统计卡片 -->
@@ -46,8 +43,8 @@
               :value="item.id"
             />
           </el-select>
-          <button class="btn-secondary" @click="loadData">查询</button>
-          <button class="btn-text" @click="resetFilter">重置</button>
+          <el-button @click="loadData">查询</el-button>
+          <el-button link @click="resetFilter">重置</el-button>
         </div>
       </div>
       <div class="card-body">
@@ -79,15 +76,12 @@
           </el-table-column>
           <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
-              <button class="action-btn config" @click="handleConfigLevels(row)">配置等级</button>
-              <button class="action-btn edit" @click="handleEdit(row)">编辑</button>
-              <button
-                :class="['action-btn', row.status === 1 ? 'disable' : 'enable']"
+              <el-button link type="primary" @click="handleConfigLevels(row)">配置等级</el-button>
+              <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+              <el-button link :type="row.status === 1 ? 'warning' : 'success'"
                 @click="handleToggleStatus(row)"
-              >
-                {{ row.status === 1 ? '停用' : '启用' }}
-              </button>
-              <button class="action-btn delete" @click="handleDelete(row)">删除</button>
+              >{{ row.status === 1 ? '停用' : '启用' }}</el-button>
+              <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -109,57 +103,66 @@
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="520px"
-      class="form-dialog"
+      width="680px"
       top="8vh"
       :close-on-click-modal="false"
+      destroy-on-close
     >
       <el-form
         ref="formRef"
         :model="formData"
         :rules="formRules"
-        label-width="90px"
-        class="form-content"
+        label-position="top"
       >
-        <el-form-item label="要素名称" prop="elementName">
-          <el-input v-model="formData.elementName" placeholder="请输入要素名称" />
-        </el-form-item>
-        <el-form-item label="要素编码" prop="elementCode">
-          <el-input v-model="formData.elementCode" placeholder="请输入要素编码（可选）" />
-        </el-form-item>
-        <el-form-item label="所属类别" prop="categoryId">
-          <el-select v-model="formData.categoryId" placeholder="请选择类别" style="width: 100%">
-            <el-option
-              v-for="item in categoryList"
-              :key="item.id"
-              :label="item.categoryName"
-              :value="item.id"
+        <div class="form-section">
+          <h3 class="form-section-title">基本信息</h3>
+          <div class="form-grid">
+            <el-form-item label="要素名称" prop="elementName">
+              <el-input v-model="formData.elementName" placeholder="请输入要素名称" maxlength="100" show-word-limit />
+            </el-form-item>
+            <el-form-item label="要素编码" prop="elementCode">
+              <el-input v-model="formData.elementCode" placeholder="可选，如 ELE-001" />
+            </el-form-item>
+          </div>
+          <el-form-item label="描述" prop="description">
+            <el-input
+              v-model="formData.description"
+              type="textarea"
+              :rows="3"
+              placeholder="请输入描述信息"
             />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="描述" prop="description">
-          <el-input
-            v-model="formData.description"
-            type="textarea"
-            :rows="3"
-            placeholder="请输入描述信息"
-          />
-        </el-form-item>
-        <el-form-item label="状态" prop="status">
-          <el-radio-group v-model="formData.status">
-            <el-radio :label="1">启用</el-radio>
-            <el-radio :label="0">禁用</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="排序" prop="sort">
-          <el-input-number v-model="formData.sort" :min="0" :max="999" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <div class="dialog-footer">
-          <button class="btn-secondary" @click="dialogVisible = false">取消</button>
-          <button class="btn-primary" @click="handleSubmit">确定</button>
+          </el-form-item>
         </div>
+
+        <div class="form-section">
+          <h3 class="form-section-title">归属与设置</h3>
+          <div class="form-grid">
+            <el-form-item label="所属类别" prop="categoryId">
+              <el-select v-model="formData.categoryId" placeholder="请选择类别" class="full-width">
+                <el-option
+                  v-for="item in categoryList"
+                  :key="item.id"
+                  :label="item.categoryName"
+                  :value="item.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="排序" prop="sort">
+              <el-input-number v-model="formData.sort" :min="0" :max="999" controls-position="right" class="full-width" />
+            </el-form-item>
+          </div>
+          <el-form-item label="状态" prop="status">
+            <el-radio-group v-model="formData.status">
+              <el-radio-button :value="1">启用</el-radio-button>
+              <el-radio-button :value="0">禁用</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+        </div>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -206,8 +209,8 @@
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-secondary" @click="levelDialogVisible = false">取消</button>
-          <button class="btn-primary" @click="handleSubmitLevels">保存配置</button>
+          <el-button @click="levelDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSubmitLevels">保存配置</el-button>
         </div>
       </template>
     </el-dialog>
@@ -522,15 +525,15 @@ onMounted(() => {
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
   margin-bottom: 8px;
 }
 
 .page-description {
   font-size: 14px;
-  color: #86909C;
+  color: var(--color-text-muted);
 }
 
 /* 按钮 */
@@ -538,8 +541,8 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #2563EB;
-  color: #FFFFFF;
+  background: var(--color-primary);
+  color: var(--color-card);
   border: none;
   border-radius: 6px;
   font-size: 14px;
@@ -549,7 +552,7 @@ onMounted(() => {
 }
 
 .btn-primary:hover {
-  background: #1D4ED8;
+  background: var(--color-primary-dark);
 }
 
 .btn-icon {
@@ -561,9 +564,9 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 8px 16px;
-  background: #FFFFFF;
-  color: #4E5969;
-  border: 1px solid #E5E6EB;
+  background: var(--color-card);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
@@ -571,21 +574,21 @@ onMounted(() => {
 }
 
 .btn-secondary:hover {
-  background: #F5F7FA;
+  background: var(--color-bg);
   border-color: #C9CDD4;
 }
 
 .btn-text {
   padding: 8px 12px;
   background: none;
-  color: #2563EB;
+  color: var(--color-primary);
   border: none;
   font-size: 13px;
   cursor: pointer;
 }
 
 .btn-text:hover {
-  color: #1D4ED8;
+  color: var(--color-primary-dark);
 }
 
 /* 统计卡片 */
@@ -597,34 +600,34 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
   padding: 20px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .stat-label {
   font-size: 13px;
-  color: #86909C;
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-size: 28px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 /* 卡片 */
 .card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .card-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #E5E6EB;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .card-body {
@@ -640,7 +643,7 @@ onMounted(() => {
 
 .filter-label {
   font-size: 13px;
-  color: #4E5969;
+  color: var(--color-text-secondary);
 }
 
 .filter-select {
@@ -654,14 +657,14 @@ onMounted(() => {
 
 .element-name {
   font-weight: 500;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .element-code {
   font-family: 'SF Mono', Monaco, monospace;
   font-size: 12px;
-  color: #86909C;
-  background: #F2F3F5;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
   padding: 2px 8px;
   border-radius: 4px;
 }
@@ -669,8 +672,8 @@ onMounted(() => {
 .category-tag {
   display: inline-block;
   padding: 4px 10px;
-  background: #EFF4FF;
-  color: #2563EB;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
@@ -689,13 +692,13 @@ onMounted(() => {
 }
 
 .status-tag.active {
-  background: #E8FFEA;
-  color: #00B42A;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .status-tag.disabled {
-  background: #F2F3F5;
-  color: #86909C;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
 }
 
 .action-btn {
@@ -709,43 +712,43 @@ onMounted(() => {
 }
 
 .action-btn.config {
-  color: #FF7D00;
+  color: var(--color-warning);
 }
 
 .action-btn.config:hover {
-  background: #FFF7E8;
+  background: var(--color-warning-light);
 }
 
 .action-btn.edit {
-  color: #2563EB;
+  color: var(--color-primary);
 }
 
 .action-btn.edit:hover {
-  background: #EFF4FF;
+  background: var(--color-primary-light);
 }
 
 .action-btn.delete {
-  color: #F53F3F;
+  color: var(--color-danger);
 }
 
 .action-btn.delete:hover {
-  background: #FFECE8;
+  background: var(--color-danger-light);
 }
 
 .action-btn.enable {
-  color: #00B42A;
+  color: var(--color-success);
 }
 
 .action-btn.enable:hover {
-  background: #E8FFEA;
+  background: var(--color-success-light);
 }
 
 .action-btn.disable {
-  color: #FF7D00;
+  color: var(--color-warning);
 }
 
 .action-btn.disable:hover {
-  background: #FFF7E8;
+  background: var(--color-warning-light);
 }
 
 /* 对话框 */
@@ -768,10 +771,10 @@ onMounted(() => {
 }
 
 .level-card {
-  background: #F7F8FA;
+  background: var(--color-bg);
   border-radius: 8px;
   padding: 16px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .level-header {
@@ -780,13 +783,13 @@ onMounted(() => {
   justify-content: space-between;
   margin-bottom: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #E5E6EB;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .level-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
   margin: 0;
 }
 
@@ -798,28 +801,28 @@ onMounted(() => {
 }
 
 .level-badge.level-1 {
-  background: #F2F3F5;
-  color: #4E5969;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
 }
 
 .level-badge.level-2 {
   background: #E8F3FF;
-  color: #2563EB;
+  color: var(--color-primary);
 }
 
 .level-badge.level-3 {
-  background: #FFF7E8;
-  color: #FF7D00;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 .level-badge.level-4 {
-  background: #FFECE8;
-  color: #F53F3F;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 
 .level-badge.level-5 {
-  background: #E8FFEA;
-  color: #00B42A;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .level-form {
@@ -851,7 +854,7 @@ onMounted(() => {
 
 .level-dialog :deep(.el-dialog__footer) {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 
 .pagination-wrapper {
@@ -877,7 +880,22 @@ onMounted(() => {
 
 .form-dialog :deep(.el-dialog__footer) {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 
@@ -900,7 +918,7 @@ onMounted(() => {
 
 .level-dialog .el-dialog__footer {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 
 .form-dialog {
@@ -920,6 +938,6 @@ onMounted(() => {
 
 .form-dialog .el-dialog__footer {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 </style>

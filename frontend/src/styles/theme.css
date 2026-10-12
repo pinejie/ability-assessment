@@ -1,0 +1,128 @@
+/* 全局主题：颜色、字号、页面结构统一 */
+:root {
+  --color-primary: #2563EB;
+  --color-primary-dark: #1D4ED8;
+  --color-primary-light: #EFF4FF;
+  --color-text: #1D2129;
+  --color-text-secondary: #4E5969;
+  --color-text-muted: #86909C;
+  --color-border: #E5E6EB;
+  --color-bg: #F5F7FA;
+  --color-card: #FFFFFF;
+  --color-danger: #F53F3F;
+  --color-danger-light: #FFECE8;
+  --color-success: #00B42A;
+  --color-success-light: #E8FFEA;
+  --color-warning: #FF7D00;
+  --color-warning-light: #FFF7E8;
+
+  --font-size-title: 20px;
+  --font-size-body: 14px;
+  --font-size-small: 13px;
+  --radius: 6px;
+  --space-page: 20px;
+}
+
+/* 统一 Element Plus 主色，使 el-button 与整体色板一致 */
+:root {
+  --el-color-primary: #2563EB;
+  --el-color-primary-light-3: #6B9BF4;
+  --el-color-primary-light-5: #A3C1F8;
+  --el-color-primary-light-7: #D6E4FD;
+  --el-color-primary-light-9: #EFF4FF;
+  --el-color-primary-dark-2: #1D4ED8;
+}
+
+/* 统一页面结构：标题 + 描述 + 内容区 */
+.page-wrapper {
+  padding: var(--space-page);
+  background: var(--color-bg);
+  min-height: 100%;
+}
+
+.page-title {
+  font-size: var(--font-size-title);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 4px;
+}
+
+.page-description {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+  margin: 0 0 16px;
+}
+
+/* 统一卡片内容区 */
+.page-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.page-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* 统计卡片 */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.stat-label {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-top: 4px;
+}
+
+/* 卡片标题栏 */
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* 弹窗分组 */
+.form-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.form-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 12px;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}

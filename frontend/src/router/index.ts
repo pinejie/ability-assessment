@@ -38,10 +38,10 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '人员能力要求配置' },
   },
   {
-    path: '/score-weights',
-    name: 'ScoreWeights',
-    component: () => import('@/views/ScoreWeightList.vue'),
-    meta: { title: '评分权重配置' },
+    path: '/assess-config',
+    name: 'AssessConfig',
+    component: () => import('@/views/AssessConfigList.vue'),
+    meta: { title: '能力测评配置' },
   },
 ]
 

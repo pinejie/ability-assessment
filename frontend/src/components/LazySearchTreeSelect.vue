@@ -62,7 +62,7 @@ import { ArrowDown } from '@element-plus/icons-vue'
 
 interface TreeNode {
   id: number | string
-  [key: string]: any
+  [key: string]: unknown
 }
 
 interface Props {
@@ -176,7 +176,12 @@ const treeProps = computed(() => ({
 }))
 
 // el-tree 的 lazy load 回调
-const loadNode = async (node: any, resolve: (data: TreeNode[]) => void) => {
+interface LazyLoadNode {
+  level: number
+  data: TreeNode | null
+}
+
+const loadNode = async (node: LazyLoadNode, resolve: (data: TreeNode[]) => void) => {
   if (!props.load) {
     resolve([])
     return
@@ -194,7 +199,7 @@ const loadNode = async (node: any, resolve: (data: TreeNode[]) => void) => {
 }
 
 // 防抖处理输入（移除 watch，避免重复处理）
-let searchTimer: any = null
+let searchTimer: ReturnType<typeof setTimeout> | undefined = undefined
 const handleInput = () => {
   clearTimeout(searchTimer)
   const keyword = searchKeyword.value.trim()
@@ -236,7 +241,7 @@ const handleNodeClick = (data: TreeNode) => {
     if (isDisabled) return
   }
 
-  const value = data[valueKey.value]
+  const value = data[valueKey.value] as number | string
 
   // 缓存当前选中的节点数据（供 selectedLabel 回退使用）
   cachedSelectedNode.value = { ...data }
@@ -288,7 +293,7 @@ defineExpose({
   height: 40px;
   border: 1px solid #dcdfe6;
   border-radius: 4px;
-  background: #fff;
+  background: var(--color-card);
   cursor: pointer;
   transition: border-color 0.2s;
 }

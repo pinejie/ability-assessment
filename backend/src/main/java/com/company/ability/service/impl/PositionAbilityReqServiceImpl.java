@@ -11,19 +11,16 @@ import com.company.ability.dto.PositionAbilityReqUpdateDTO;
 import com.company.ability.entity.AbilityElement;
 import com.company.ability.entity.PositionAbilityReq;
 import com.company.ability.entity.PositionAbilityReqItem;
-import com.company.ability.entity.UserAbilityReq;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.mapper.PositionAbilityReqMapper;
 import com.company.ability.service.AbilityElementService;
 import com.company.ability.service.PositionAbilityReqItemService;
 import com.company.ability.service.PositionAbilityReqService;
-import com.company.ability.service.UserAbilityReqService;
 import com.company.ability.vo.PositionAbilityReqVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,10 +41,6 @@ public class PositionAbilityReqServiceImpl
 
     private final AbilityElementService abilityElementService;
     private final PositionAbilityReqItemService itemService;
-
-    @Autowired
-    @Lazy
-    private UserAbilityReqService userAbilityReqService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -135,14 +128,6 @@ public class PositionAbilityReqServiceImpl
         PositionAbilityReq req = getById(id);
         if (req == null) {
             throw new BusinessException("岗位能力要求不存在");
-        }
-
-        // 检查该岗位能力要求是否被人员能力要求引用
-        LambdaQueryWrapper<UserAbilityReq> userWrapper = new LambdaQueryWrapper<>();
-        userWrapper.eq(UserAbilityReq::getPositionReqId, id);
-        long userCount = userAbilityReqService.count(userWrapper);
-        if (userCount > 0) {
-            throw new BusinessException("该岗位能力要求已被人员能力要求引用（" + userCount + "处），请先删除相关人员能力要求后再删除岗位能力要求");
         }
 
         // 删除明细

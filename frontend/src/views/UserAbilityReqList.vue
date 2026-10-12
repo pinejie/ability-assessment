@@ -1,19 +1,14 @@
 <template>
-  <div class="page-container">
-    <!-- 页面标题区 -->
-    <div class="page-header">
-      <div class="page-title-section">
+  <div class="page-wrapper">
+    <div class="page-toolbar">
+      <div>
         <h1 class="page-title">人员能力要求配置</h1>
         <p class="page-description">为人员配置能力要素要求等级，一主多从结构</p>
       </div>
-      <button class="btn-primary" @click="handleAdd">
-        <span class="btn-icon">+</span>
-        新增配置
-      </button>
+      <el-button type="primary" @click="handleAdd">新增配置</el-button>
     </div>
 
-    <!-- 统计卡片 -->
-    <div class="stats-grid">
+    <div class="stat-grid">
       <div class="stat-card">
         <div class="stat-label">配置总数</div>
         <div class="stat-value">{{ pagination.total }}</div>
@@ -24,157 +19,134 @@
       </div>
     </div>
 
-    <!-- 数据表格 -->
-    <div class="card">
-      <div class="card-header">
+    <div class="page-card">
+      <div class="page-toolbar">
         <h2 class="card-title">配置列表</h2>
       </div>
-      <div class="card-body">
-        <el-table :data="reqList" class="data-table">
-          <el-table-column type="expand">
-            <template #default="{ row }">
-              <div class="expand-content">
-                <h4>能力要素明细（{{ row.items?.length || 0 }}条）</h4>
-                <el-table :data="row.items" size="small" border>
-                  <el-table-column prop="categoryName" label="能力类别" width="120" />
-                  <el-table-column prop="elementName" label="能力要素" min-width="150" />
-                  <el-table-column prop="levelName" label="要求等级" width="120">
-                    <template #default="{ row: item }">
-                      {{ item.levelName || '未设置' }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="score" label="分数" width="100">
-                    <template #default="{ row: item }">
-                      {{ item.score ?? '-' }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="levelRequirement" label="等级要求" min-width="200" show-overflow-tooltip>
-                    <template #default="{ row: item }">
-                      {{ item.levelRequirement || '-' }}
-                    </template>
-                  </el-table-column>
-                </el-table>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="resourceLastName" label="人员" width="150">
-            <template #default="{ row }">
-              <span class="resource-name">{{ row.resourceLastName }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="能力要素数" width="120" align="center">
-            <template #default="{ row }">
-              <span class="item-count">{{ row.items?.length || 0 }} 条</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="createTime" label="创建时间" width="170" />
-          <el-table-column label="操作" width="160" fixed="right">
-            <template #default="{ row }">
-              <button class="action-btn edit" @click="handleEdit(row)">编辑</button>
-              <button class="action-btn delete" @click="handleDelete(row)">删除</button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <div class="pagination-wrapper">
-          <el-pagination
-            v-model:current-page="pagination.currentPage"
-            v-model:page-size="pagination.pageSize"
-            :page-sizes="[10, 20, 50, 100]"
-            :total="pagination.total"
-            layout="total, sizes, prev, pager, next, jumper"
-            @size-change="handleSizeChange"
-            @current-change="handlePageChange"
-          />
-        </div>
+
+      <el-table :data="reqList" stripe>
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="expand-content">
+              <div class="expand-title">能力要素明细（{{ row.items?.length || 0 }} 条）</div>
+              <el-table :data="row.items" size="small" border>
+                <el-table-column prop="categoryName" label="能力类别" width="130" />
+                <el-table-column prop="elementName" label="能力要素" min-width="150" />
+                <el-table-column label="要求等级" width="120">
+                  <template #default="{ row: item }">
+                    {{ item.levelName || '未设置' }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="分数" width="90">
+                  <template #default="{ row: item }">
+                    {{ item.score ?? '-' }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="等级要求" min-width="200" show-overflow-tooltip>
+                  <template #default="{ row: item }">
+                    {{ item.levelRequirement || '-' }}
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column prop="resourceLastName" label="人员" width="150" />
+        <el-table-column label="能力要素数" width="120" align="center">
+          <template #default="{ row }">
+            {{ row.items?.length || 0 }} 条
+          </template>
+        </el-table-column>
+        <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="createTime" label="创建时间" width="170" />
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="pagination.currentPage"
+          v-model:page-size="pagination.pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="pagination.total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handlePageChange"
+        />
       </div>
     </div>
 
-    <!-- 新增/编辑对话框 -->
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="900px"
-      class="form-dialog"
-      top="8vh"
+      width="860px"
+      top="6vh"
       :close-on-click-modal="false"
+      destroy-on-close
     >
-      <el-form
-        ref="formRef"
-        :model="formData"
-        :rules="formRules"
-        label-width="100px"
-        class="form-content"
-      >
-        <el-form-item label="人员" prop="resourceId">
-          <ResourceAutocomplete
-            v-model="formData.resourceId"
-            placeholder="请选择或搜索人员"
-            @change="handleResourceChange"
-          />
-          <div class="form-tip">从泛微系统人员表中选择（支持姓名和拼音搜索）</div>
-        </el-form-item>
+      <el-form ref="formRef" :model="formData" :rules="formRules" label-position="top">
+        <div class="form-section">
+          <h3 class="form-section-title">基本信息</h3>
+          <el-form-item label="人员" prop="resourceId">
+            <ResourceAutocomplete
+              v-model="formData.resourceId"
+              placeholder="请选择或搜索人员"
+              @change="handleResourceChange"
+            />
+            <div class="form-tip">从泛微系统人员表中选择，支持姓名和拼音搜索</div>
+          </el-form-item>
+          <el-form-item label="描述">
+            <el-input v-model="formData.description" type="textarea" :rows="2" placeholder="请输入描述信息" />
+          </el-form-item>
+        </div>
 
-        <el-form-item label="描述">
-          <el-input
-            v-model="formData.description"
-            type="textarea"
-            :rows="2"
-            placeholder="请输入描述信息"
-          />
-        </el-form-item>
-
-        <el-divider />
-
-        <el-form-item label="能力要素配置">
-          <div class="element-configs">
-            <div v-if="formData.items.length === 0" class="empty-tip">
-              请先选择人员，系统会根据人员所在部门和岗位自动带出能力要素
+        <div class="form-section">
+          <h3 class="form-section-title">能力要素配置</h3>
+          <div v-if="formData.items.length === 0" class="empty-tip">
+            请先选择人员，系统会根据人员所在部门和岗位自动带出能力要素
+          </div>
+          <div v-for="(item, index) in formData.items" :key="index" class="element-row">
+            <div class="element-meta">
+              <div class="element-meta-item">
+                <span class="element-meta-label">能力类别</span>
+                <span>{{ item.categoryName || '-' }}</span>
+              </div>
+              <div class="element-meta-item">
+                <span class="element-meta-label">能力要素</span>
+                <span>{{ item.elementName || '-' }}</span>
+              </div>
             </div>
-            <div v-for="(item, index) in formData.items" :key="index" class="element-config-item">
-              <div class="config-row">
-                <div class="config-field">
-                  <label>能力类别</label>
-                  <div class="readonly-field">{{ item.categoryName || '-' }}</div>
-                </div>
-                <div class="config-field">
-                  <label>能力要素</label>
-                  <div class="readonly-field">{{ item.elementName || '-' }}</div>
-                </div>
-                <div class="config-field">
-                  <label>要求等级</label>
-                  <el-select
-                    v-model="item.levelId"
-                    placeholder="请选择等级"
-                    clearable
-                    @change="(val: number | undefined) => handleLevelChange(val, index)"
-                  >
-                    <el-option
-                      v-for="level in getElementLevels(item.elementId)"
-                      :key="level.id"
-                      :label="level.levelName"
-                      :value="level.id"
-                    />
-                  </el-select>
-                </div>
-                <div class="config-field">
-                  <label>分数</label>
-                  <div class="readonly-field score-field">{{ item.score ?? '-' }}</div>
-                </div>
-              </div>
-              <div v-if="getLevelRequirement(item.levelId)" class="level-requirement">
-                <strong>等级要求：</strong>{{ getLevelRequirement(item.levelId) }}
-              </div>
+            <div class="element-control">
+              <el-select
+                v-model="item.levelId"
+                placeholder="请选择等级"
+                clearable
+                @change="(val: number | undefined) => handleLevelChange(val, index)"
+              >
+                <el-option
+                  v-for="level in getElementLevels(item.elementId)"
+                  :key="level.id"
+                  :label="level.levelName"
+                  :value="level.id"
+                />
+              </el-select>
+              <div class="element-score">分数 {{ item.score ?? '-' }}</div>
+            </div>
+            <div v-if="getLevelRequirement(item.levelId)" class="level-requirement">
+              等级要求：{{ getLevelRequirement(item.levelId) }}
             </div>
           </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <div class="dialog-footer">
-          <button class="btn-secondary" @click="dialogVisible = false">取消</button>
-          <button class="btn-primary" @click="handleSubmit">确定</button>
         </div>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -191,6 +163,7 @@ import type { UserAbilityReqVO } from '@/types/userAbilityReq'
 import type { AbilityElementLevelVO } from '@/types/abilityElementLevel'
 import type { PositionAbilityReqVO } from '@/types/positionAbilityReq'
 import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
+import type { ResourceItem } from '@/types/org'
 
 interface ItemConfig {
   categoryId: number
@@ -215,7 +188,7 @@ const totalItemCount = computed(() => {
 })
 
 // 人员选择变化处理
-const handleResourceChange = async (_value: number | undefined, data: any) => {
+const handleResourceChange = async (_value: number | undefined, data: ResourceItem | undefined) => {
   if (!data) {
     formData.items = []
     return
@@ -460,310 +433,72 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page-container {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-}
-
-.page-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1D2129;
-  margin-bottom: 8px;
-}
-
-.page-description {
-  font-size: 14px;
-  color: #86909C;
-}
-
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 20px;
-  background: #2563EB;
-  color: #FFFFFF;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-primary:hover {
-  background: #1D4ED8;
-}
-
-.btn-icon {
-  margin-right: 6px;
-  font-size: 16px;
-}
-
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 20px;
-  background: #FFFFFF;
-  color: #4E5969;
-  border: 1px solid #E5E6EB;
-  border-radius: 6px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-secondary:hover {
-  background: #F5F7FA;
-  border-color: #C9CDD4;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.stat-card {
-  background: #FFFFFF;
-  border-radius: 8px;
-  padding: 20px;
-  border: 1px solid #E5E6EB;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: #86909C;
-  margin-bottom: 8px;
-}
-
-.stat-value {
-  font-size: 28px;
-  font-weight: 600;
-  color: #1D2129;
-}
-
-.card {
-  background: #FFFFFF;
-  border-radius: 8px;
-  border: 1px solid #E5E6EB;
-}
-
-.card-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid #E5E6EB;
-}
-
-.card-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1D2129;
-}
-
-.card-body {
-  padding: 0;
-}
-
-.data-table {
-  width: 100%;
-}
-
-.resource-name {
-  font-weight: 500;
-  color: #1D2129;
-}
-
-.item-count {
-  color: #2563EB;
-  font-weight: 500;
-}
-
-.action-btn {
-  padding: 6px 12px;
-  border: none;
-  background: none;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.action-btn.edit {
-  color: #2563EB;
-}
-
-.action-btn.edit:hover {
-  background: #EFF4FF;
-}
-
-.action-btn.delete {
-  color: #F53F3F;
-}
-
-.action-btn.delete:hover {
-  background: #FFECE8;
-}
-
 .expand-content {
-  padding: 16px 20px;
+  padding: 8px 16px 12px;
 }
 
-.expand-content h4 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
+.expand-title {
+  font-size: 13px;
   font-weight: 600;
-  color: #1D2129;
-}
-
-.form-content {
-  padding: 20px 0;
-}
-
-.form-tip {
-  font-size: 12px;
-  color: #86909C;
-  margin-top: 4px;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.element-configs {
-  width: 100%;
-  max-height: 500px;
-  overflow-y: auto;
-  padding-right: 8px;
-}
-
-.empty-tip {
-  padding: 40px 20px;
-  text-align: center;
-  color: #86909C;
-  font-size: 14px;
-  background: #F7F8FA;
-  border-radius: 8px;
-}
-
-.element-config-item {
-  padding: 8px;
-  background: #F7F8FA;
-  border-radius: 6px;
-  margin-bottom: 6px;
-}
-
-.config-row {
-  display: grid;
-  grid-template-columns: 1.5fr 2fr 1.5fr 1fr;
-  gap: 6px;
-  align-items: center;
-}
-
-.config-field {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.config-field label {
-  font-size: 11px;
-  color: #86909C;
-  font-weight: 400;
-}
-
-.readonly-field {
-  padding: 4px 8px;
-  background: #FFFFFF;
-  border: 1px solid #E5E6EB;
-  border-radius: 3px;
-  font-size: 12px;
-  color: #1D2129;
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-}
-
-.score-field {
-  font-weight: 600;
-  color: #F53F3F;
-}
-
-.level-requirement {
-  margin-top: 4px;
-  padding: 4px 6px;
-  background: transparent;
-  border-radius: 3px;
-  font-size: 11px;
-  color: #86909C;
-  line-height: 1.3;
-}
-
-.level-requirement strong {
-  color: #FF7D00;
-}
-
-.form-content::-webkit-scrollbar,
-.element-configs::-webkit-scrollbar {
-  width: 6px;
-}
-
-.form-content::-webkit-scrollbar-thumb,
-.element-configs::-webkit-scrollbar-thumb {
-  background: #C9CDD4;
-  border-radius: 3px;
-}
-
-.form-content::-webkit-scrollbar-thumb:hover,
-.element-configs::-webkit-scrollbar-thumb:hover {
-  background: #86909C;
-}
-
-.form-dialog :deep(.el-dialog) {
-  height: 84vh !important;
-  max-height: 84vh !important;
-  display: flex;
-  flex-direction: column;
-  margin: 8vh auto !important;
-}
-
-.form-dialog :deep(.el-dialog__body) {
-  padding: 20px;
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-</style>
-
-<!-- 非 scoped 样式，用于穿透 el-dialog -->
-<style>
-.form-dialog {
-  height: 84vh !important;
-  max-height: 84vh !important;
-  display: flex;
-  flex-direction: column;
-  margin: 8vh auto !important;
-}
-
-.form-dialog .el-dialog__body {
-  padding: 20px;
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
 }
 
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
-  padding: 16px 0;
+  margin-top: 16px;
+}
+
+.empty-tip {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.element-row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--color-bg);
+}
+
+.element-meta {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 8px;
+}
+
+.element-meta-item {
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.element-meta-label {
+  color: var(--color-text-muted);
+  margin-right: 6px;
+}
+
+.element-control {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.element-control :deep(.el-select) {
+  width: 220px;
+}
+
+.element-score {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.level-requirement {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
 }
 </style>

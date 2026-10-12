@@ -6,10 +6,7 @@
         <h1 class="page-title">部门能力要求配置</h1>
         <p class="page-description">为各部门配置能力要素要求</p>
       </div>
-      <button class="btn-primary" @click="handleAdd">
-        <span class="btn-icon">+</span>
-        新增要求
-      </button>
+      <el-button type="primary" @click="handleAdd">新增要求</el-button>
     </div>
 
     <!-- 统计卡片 -->
@@ -50,8 +47,8 @@
           <el-table-column prop="createTime" label="创建时间" width="170" />
           <el-table-column label="操作" width="160" fixed="right">
             <template #default="{ row }">
-              <button class="action-btn edit" @click="handleEdit(row)">编辑</button>
-              <button class="action-btn delete" @click="handleDelete(row)">删除</button>
+              <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+              <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -136,8 +133,8 @@
       </el-form>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-secondary" @click="dialogVisible = false">取消</button>
-          <button class="btn-primary" @click="handleSubmit">确定</button>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSubmit">确定</el-button>
         </div>
       </template>
     </el-dialog>
@@ -145,6 +142,7 @@
 </template>
 
 <script setup lang="ts">
+import type { RawSubCompany, RawDepartment } from '@/types/org'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -194,7 +192,7 @@ const loadDeptTree = async () => {
 
     // 1. 构建公司节点映射
     const companyMap = new Map<number, TreeNode>()
-    companies.forEach((c: any) => {
+    companies.forEach((c: RawSubCompany) => {
       companyMap.set(c.id, {
         id: c.id,
         name: c.subcompanyname,
@@ -205,7 +203,7 @@ const loadDeptTree = async () => {
 
     // 2. 构建公司父子关系
     const rootCompanies: TreeNode[] = []
-    companies.forEach((c: any) => {
+    companies.forEach((c: RawSubCompany) => {
       const node = companyMap.get(c.id)!
       if (c.supsubcomid && companyMap.has(c.supsubcomid)) {
         const parent = companyMap.get(c.supsubcomid)!
@@ -218,7 +216,7 @@ const loadDeptTree = async () => {
 
     // 3. 构建部门节点映射
     const deptMap = new Map<number, TreeNode>()
-    departments.forEach((d: any) => {
+    departments.forEach((d: RawDepartment) => {
       deptMap.set(d.id, {
         id: d.id,
         name: d.departmentmark,
@@ -228,7 +226,7 @@ const loadDeptTree = async () => {
     })
 
     // 4. 构建部门父子关系，并把根部门挂到公司下
-    departments.forEach((d: any) => {
+    departments.forEach((d: RawDepartment) => {
       const node = deptMap.get(d.id)!
       if (d.supdepid && deptMap.has(d.supdepid)) {
         const parent = deptMap.get(d.supdepid)!
@@ -236,7 +234,7 @@ const loadDeptTree = async () => {
         parent.children.push(node)
       } else {
         // 根部门，挂到所属公司下
-        const company = companyMap.get(d.subcompanyid1)
+        const company = d.subcompanyid1 != null ? companyMap.get(d.subcompanyid1) : undefined
         if (company) {
           company.children = company.children || []
           company.children.push(node)
@@ -263,7 +261,15 @@ const elementCount = computed(() => {
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const formRef = ref<FormInstance>()
-const treeSelectRef = ref<any>()
+interface TreeRefLike {
+  getNode: (key: number) => { key: string | number } | null
+  $el: HTMLElement
+}
+interface TreeSelectRefLike {
+  treeRef?: TreeRefLike | null
+}
+
+const treeSelectRef = ref<TreeSelectRefLike>()
 
 const formData = reactive({
   id: 0,
@@ -449,15 +455,15 @@ onMounted(() => {
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
   margin-bottom: 8px;
 }
 
 .page-description {
   font-size: 14px;
-  color: #86909C;
+  color: var(--color-text-muted);
 }
 
 /* 按钮 */
@@ -465,8 +471,8 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #2563EB;
-  color: #FFFFFF;
+  background: var(--color-primary);
+  color: var(--color-card);
   border: none;
   border-radius: 6px;
   font-size: 14px;
@@ -476,7 +482,7 @@ onMounted(() => {
 }
 
 .btn-primary:hover {
-  background: #1D4ED8;
+  background: var(--color-primary-dark);
 }
 
 .btn-icon {
@@ -488,9 +494,9 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #FFFFFF;
-  color: #4E5969;
-  border: 1px solid #E5E6EB;
+  background: var(--color-card);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
@@ -498,7 +504,7 @@ onMounted(() => {
 }
 
 .btn-secondary:hover {
-  background: #F5F7FA;
+  background: var(--color-bg);
   border-color: #C9CDD4;
 }
 
@@ -511,40 +517,40 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
   padding: 20px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .stat-label {
   font-size: 13px;
-  color: #86909C;
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-size: 28px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 /* 卡片 */
 .card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .card-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #E5E6EB;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .card-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .card-body {
@@ -558,11 +564,11 @@ onMounted(() => {
 
 .dept-name {
   font-weight: 500;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .element-name {
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .action-btn {
@@ -576,19 +582,19 @@ onMounted(() => {
 }
 
 .action-btn.edit {
-  color: #2563EB;
+  color: var(--color-primary);
 }
 
 .action-btn.edit:hover {
-  background: #EFF4FF;
+  background: var(--color-primary-light);
 }
 
 .action-btn.delete {
-  color: #F53F3F;
+  color: var(--color-danger);
 }
 
 .action-btn.delete:hover {
-  background: #FFECE8;
+  background: var(--color-danger-light);
 }
 
 /* 表单 */
@@ -598,7 +604,7 @@ onMounted(() => {
 
 .form-tip {
   font-size: 12px;
-  color: #86909C;
+  color: var(--color-text-muted);
   margin-top: 4px;
 }
 
@@ -631,7 +637,7 @@ onMounted(() => {
 
 .form-dialog :deep(.el-dialog__footer) {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 </style>
 
@@ -663,6 +669,6 @@ onMounted(() => {
 
 .form-dialog .el-dialog__footer {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 </style>

@@ -6,10 +6,7 @@
         <h1 class="page-title">岗位能力要求配置</h1>
         <p class="page-description">为各部门下的岗位配置需要的能力要素（类别+要素），用于人员能力要求自动带出</p>
       </div>
-      <button class="btn-primary" @click="handleAdd">
-        <span class="btn-icon">+</span>
-        新增配置
-      </button>
+      <el-button type="primary" @click="handleAdd">新增配置</el-button>
     </div>
 
     <!-- 统计卡片 -->
@@ -55,21 +52,17 @@
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="departmentName" label="部门" width="180" />
           <el-table-column prop="jobTitleName" label="岗位" width="180" />
-          <el-table-column label="能力要素" min-width="250">
+          <el-table-column label="能力要素" width="140">
             <template #default="{ row }">
-              <span v-if="row.items && row.items.length > 0">
-                <span v-for="(item, idx) in row.items" :key="item.id">
-                  {{ item.elementName }}<span v-if="idx < row.items.length - 1">、</span>
-                </span>
-              </span>
-              <span v-else style="color: #999;">未配置</span>
+              <span v-if="row.items && row.items.length > 0">{{ row.items.length }} 个（展开查看）</span>
+              <span v-else class="text-muted">未配置</span>
             </template>
           </el-table-column>
           <el-table-column prop="createTime" label="创建时间" width="170" />
           <el-table-column label="操作" width="160" fixed="right">
             <template #default="{ row }">
-              <button class="action-btn edit" @click="handleEdit(row)">编辑</button>
-              <button class="action-btn delete" @click="handleDelete(row)">删除</button>
+              <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+              <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -91,7 +84,7 @@
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="700px"
+      width="860px"
       class="form-dialog"
       top="8vh"
       :close-on-click-modal="false"
@@ -156,59 +149,46 @@
 
         <el-divider />
 
-        <el-form-item label="能力要素配置">
-          <div class="element-configs">
-            <div v-for="(config, index) in formData.items" :key="index" class="element-config-item">
-              <div class="config-row">
-                <div class="config-field">
-                  <label>能力类别</label>
-                  <el-select
-                    v-model="config.categoryId"
-                    placeholder="请选择类别"
-                    @change="(_val: number) => handleCategoryChange(index)"
-                  >
-                    <el-option
-                      v-for="cat in categoryList"
-                      :key="cat.id"
-                      :label="cat.categoryName"
-                      :value="cat.id"
-                    />
-                  </el-select>
-                </div>
-                <div class="config-field">
-                  <label>能力要素</label>
-                  <el-select
-                    v-model="config.elementId"
-                    placeholder="请选择要素"
-                    :disabled="!config.categoryId"
-                    :loading="config.elementLoading"
-                  >
-                    <el-option
-                      v-for="elem in config.elementOptions"
-                      :key="elem.id"
-                      :label="elem.elementName"
-                      :value="elem.id"
-                    />
-                  </el-select>
-                </div>
-                <div class="config-field" style="flex: 0 0 auto;">
-                  <label>&nbsp;</label>
-                  <el-button type="danger" @click="removeItem(index)" :disabled="formData.items.length <= 1">
-                    删除
-                  </el-button>
-                </div>
+        <el-form-item label="能力要素配置" class="element-section">
+          <div class="element-summary">
+            已选 <strong>{{ formData.items.length }}</strong> 个能力要素，涉及
+            <strong>{{ selectedCategoryCount }}</strong> 个类别
+          </div>
+          <div class="category-list">
+            <div v-for="cat in visibleCategories" :key="cat.id" class="category-row">
+              <div class="category-name">
+                <span>{{ cat.categoryName }}</span>
+                <el-tag v-if="cat.status !== 1" type="info" size="small">已停用</el-tag>
+                <span class="category-count">{{ selectedIdsOf(cat.id).length }} 个</span>
               </div>
+              <el-select
+                :model-value="selectedIdsOf(cat.id)"
+                multiple
+                filterable
+                clearable
+                collapse-tags
+                collapse-tags-tooltip
+                :max-collapse-tags="4"
+                placeholder="搜索并选择能力要素"
+                :loading="!!elementLoading[cat.id]"
+                class="category-select"
+                @update:model-value="(val: number[]) => setCategoryElements(cat.id, val)"
+              >
+                <el-option
+                  v-for="elem in elementCache[cat.id] || []"
+                  :key="elem.id"
+                  :label="elem.elementName"
+                  :value="elem.id"
+                />
+              </el-select>
             </div>
-            <el-button type="primary" plain @click="addItem" class="add-config-btn">
-              + 添加能力要素
-            </el-button>
           </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-secondary" @click="dialogVisible = false">取消</button>
-          <button class="btn-primary" @click="handleSubmit">确定</button>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSubmit">确定</el-button>
         </div>
       </template>
     </el-dialog>
@@ -216,7 +196,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import type { RawSubCompany, RawDepartment } from '@/types/org'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { OfficeBuilding, Folder } from '@element-plus/icons-vue'
@@ -239,14 +220,13 @@ interface TreeNode {
   name: string
   type: 'company' | 'department'
   children?: TreeNode[]
-  [key: string]: any
+  [key: string]: unknown
 }
 
-interface ItemConfig {
-  categoryId: number | undefined
-  elementId: number | undefined
-  elementOptions: AbilityElementVO[]
-  elementLoading: boolean
+/** 一个已选能力要素（扁平结构，提交时直接使用） */
+interface SelectedItem {
+  categoryId: number
+  elementId: number
 }
 
 const reqList = ref<PositionAbilityReqVO[]>([])
@@ -260,7 +240,15 @@ const pagination = reactive({
 
 // 部门树数据
 const deptTreeData = ref<TreeNode[]>([])
-const deptTreeSelectRef = ref<any>()
+interface TreeRefLike {
+  getNode: (key: number) => { key: string | number } | null
+  $el: HTMLElement
+}
+interface TreeSelectRefLike {
+  treeRef?: TreeRefLike | null
+}
+
+const deptTreeSelectRef = ref<TreeSelectRefLike>()
 
 // 部门树配置
 const deptTreeProps = {
@@ -285,7 +273,7 @@ const loadDeptTree = async () => {
     const departments = deptResult.list || []
 
     const companyMap = new Map<number, TreeNode>()
-    companies.forEach((c: any) => {
+    companies.forEach((c: RawSubCompany) => {
       companyMap.set(c.id, {
         id: c.id,
         name: c.subcompanyname,
@@ -295,7 +283,7 @@ const loadDeptTree = async () => {
     })
 
     const rootCompanies: TreeNode[] = []
-    companies.forEach((c: any) => {
+    companies.forEach((c: RawSubCompany) => {
       const node = companyMap.get(c.id)!
       if (c.supsubcomid && companyMap.has(c.supsubcomid)) {
         const parent = companyMap.get(c.supsubcomid)!
@@ -307,7 +295,7 @@ const loadDeptTree = async () => {
     })
 
     const deptMap = new Map<number, TreeNode>()
-    departments.forEach((d: any) => {
+    departments.forEach((d: RawDepartment) => {
       deptMap.set(d.id, {
         id: d.id,
         name: d.departmentmark,
@@ -316,14 +304,14 @@ const loadDeptTree = async () => {
       })
     })
 
-    departments.forEach((d: any) => {
+    departments.forEach((d: RawDepartment) => {
       const node = deptMap.get(d.id)!
       if (d.supdepid && deptMap.has(d.supdepid)) {
         const parent = deptMap.get(d.supdepid)!
         parent.children = parent.children || []
         parent.children.push(node)
       } else {
-        const company = companyMap.get(d.subcompanyid1)
+        const company = d.subcompanyid1 != null ? companyMap.get(d.subcompanyid1) : undefined
         if (company) {
           company.children = company.children || []
           company.children.push(node)
@@ -434,12 +422,7 @@ const formData = reactive({
   departmentId: undefined as number | undefined,
   jobTitleId: undefined as number | undefined,
   description: '',
-  items: [{
-    categoryId: undefined,
-    elementId: undefined,
-    elementOptions: [],
-    elementLoading: false,
-  }] as ItemConfig[],
+  items: [] as SelectedItem[],
 })
 
 const formRules: FormRules = {
@@ -472,6 +455,44 @@ const handleSizeChange = (size: number) => {
   loadData()
 }
 
+// 按类别缓存的能力要素选项，同一类别只请求一次
+const elementCache = ref<Record<number, AbilityElementVO[]>>({})
+const elementLoading = ref<Record<number, boolean>>({})
+
+const preloadElements = async (categoryIds: number[]) => {
+  await Promise.all(categoryIds.map(async (id) => {
+    if (elementCache.value[id] || elementLoading.value[id]) return
+    elementLoading.value[id] = true
+    try {
+      elementCache.value[id] = await loadElementsByCategory(id)
+    } finally {
+      elementLoading.value[id] = false
+    }
+  }))
+}
+
+// 打开弹窗时预加载所有类别的要素
+watch(dialogVisible, (visible) => {
+  if (visible) preloadElements(categoryList.value.map(c => c.id))
+})
+
+// 当前类别下已选的要素ID
+const selectedIdsOf = (categoryId: number): number[] =>
+  formData.items.filter(i => i.categoryId === categoryId).map(i => i.elementId)
+
+// 替换某类别下的已选要素（天然去重）
+const setCategoryElements = (categoryId: number, ids: number[]) => {
+  const others = formData.items.filter(i => i.categoryId !== categoryId)
+  formData.items = [...others, ...ids.map(elementId => ({ categoryId, elementId }))]
+}
+
+// 展示的类别：启用的，或已有选中项的（含已停用但仍被引用的）
+const visibleCategories = computed(() =>
+  categoryList.value.filter(c => c.status === 1 || selectedIdsOf(c.id).length > 0)
+)
+
+const selectedCategoryCount = computed(() => new Set(formData.items.map(i => i.categoryId)).size)
+
 const handleAdd = () => {
   dialogTitle.value = '新增配置'
   resetForm()
@@ -490,60 +511,38 @@ const handleEdit = async (row: PositionAbilityReqVO) => {
     await loadJobTitlesByDepartment(row.departmentId)
   }
   
-  // 加载明细项
-  formData.items = []
-  if (row.items && row.items.length > 0) {
-    for (const item of row.items) {
-      // 编辑时：如果已选的类别被停用，补充到下拉框中（确保显示名称而非ID）
-      if (item.categoryId && !categoryList.value.find(c => c.id === item.categoryId)) {
-        try {
-          const category = await getAbilityCategoryById(item.categoryId)
-          if (category) {
-            categoryList.value.push(category)
-          }
-        } catch (e) {
-          console.warn('加载已停用的类别失败:', item.categoryId, e)
-        }
-      }
+  // 加载明细项：扁平化为 {categoryId, elementId}
+  formData.items = (row.items || [])
+    .filter(item => item.categoryId && item.elementId)
+    .map(item => ({ categoryId: item.categoryId as number, elementId: item.elementId as number }))
 
-      const config: ItemConfig = {
-        categoryId: item.categoryId,
-        elementId: item.elementId,
-        elementOptions: [],
-        elementLoading: false,
+  // 补充已停用的类别，保证能显示名称而非ID
+  const categoryIds = [...new Set(formData.items.map(i => i.categoryId))]
+  for (const categoryId of categoryIds) {
+    if (!categoryList.value.find(c => c.id === categoryId)) {
+      try {
+        const category = await getAbilityCategoryById(categoryId)
+        if (category) categoryList.value.push(category)
+      } catch (e) {
+        console.warn('加载已停用的类别失败:', categoryId, e)
       }
-      // 加载该类别下的要素选项
-      if (item.categoryId) {
-        config.elementLoading = true
-        try {
-          config.elementOptions = await loadElementsByCategory(item.categoryId)
-          // 编辑时：如果已选的要素被停用，补充到下拉框中（确保显示名称而非ID）
-          if (item.elementId && !config.elementOptions.find(e => e.id === item.elementId)) {
-            try {
-              const element = await getAbilityElementById(item.elementId)
-              if (element) {
-                config.elementOptions.push(element)
-              }
-            } catch (e) {
-              console.warn('加载已停用的要素失败:', item.elementId, e)
-            }
-          }
-        } finally {
-          config.elementLoading = false
-        }
-      }
-      formData.items.push(config)
     }
-  } else {
-    // 如果没有明细，添加一个空行
-    formData.items.push({
-      categoryId: undefined,
-      elementId: undefined,
-      elementOptions: [],
-      elementLoading: false,
-    })
   }
-  
+
+  // 预加载要素，并补充已停用的要素
+  await preloadElements(categoryIds)
+  for (const item of formData.items) {
+    const options = elementCache.value[item.categoryId] || []
+    if (!options.find(e => e.id === item.elementId)) {
+      try {
+        const element = await getAbilityElementById(item.elementId)
+        if (element) elementCache.value[item.categoryId] = [...options, element]
+      } catch (e) {
+        console.warn('加载已停用的要素失败:', item.elementId, e)
+      }
+    }
+  }
+
   dialogVisible.value = true
 }
 
@@ -572,20 +571,6 @@ const handleDepartmentChange = async (departmentId: number) => {
   }
 }
 
-const handleCategoryChange = async (index: number) => {
-  const config = formData.items[index]
-  config.elementId = undefined
-  config.elementOptions = []
-  if (config.categoryId) {
-    config.elementLoading = true
-    try {
-      config.elementOptions = await loadElementsByCategory(config.categoryId)
-    } finally {
-      config.elementLoading = false
-    }
-  }
-}
-
 const handleSubmit = async () => {
   try {
     await formRef.value?.validate()
@@ -595,18 +580,11 @@ const handleSubmit = async () => {
       return
     }
 
-    // 验证能力要素配置
-    const items: { categoryId: number; elementId: number }[] = []
-    for (const config of formData.items) {
-      if (!config.categoryId || !config.elementId) {
-        ElMessage.error('请完整填写能力要素配置（类别和要素）')
-        return
-      }
-      items.push({
-        categoryId: config.categoryId,
-        elementId: config.elementId,
-      })
+    if (formData.items.length === 0) {
+      ElMessage.error('请至少选择一个能力要素')
+      return
     }
+    const items = formData.items.map(i => ({ categoryId: i.categoryId, elementId: i.elementId }))
 
     if (formData.id) {
       // 编辑模式
@@ -641,27 +619,9 @@ const resetForm = () => {
   formData.departmentId = undefined
   formData.jobTitleId = undefined
   formData.description = ''
-  formData.items = [{
-    categoryId: undefined,
-    elementId: undefined,
-    elementOptions: [],
-    elementLoading: false,
-  }]
+  formData.items = []
   jobTitleOptions.value = []
   formRef.value?.resetFields()
-}
-
-const addItem = () => {
-  formData.items.push({
-    categoryId: undefined,
-    elementId: undefined,
-    elementOptions: [],
-    elementLoading: false,
-  })
-}
-
-const removeItem = (index: number) => {
-  formData.items.splice(index, 1)
 }
 
 onMounted(() => {
@@ -686,15 +646,15 @@ onMounted(() => {
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
   margin-bottom: 8px;
 }
 
 .page-description {
   font-size: 14px;
-  color: #86909C;
+  color: var(--color-text-muted);
 }
 
 /* 按钮 */
@@ -702,8 +662,8 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #2563EB;
-  color: #FFFFFF;
+  background: var(--color-primary);
+  color: var(--color-card);
   border: none;
   border-radius: 6px;
   font-size: 14px;
@@ -713,7 +673,7 @@ onMounted(() => {
 }
 
 .btn-primary:hover {
-  background: #1D4ED8;
+  background: var(--color-primary-dark);
 }
 
 .btn-icon {
@@ -725,9 +685,9 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #FFFFFF;
-  color: #4E5969;
-  border: 1px solid #E5E6EB;
+  background: var(--color-card);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
@@ -735,7 +695,7 @@ onMounted(() => {
 }
 
 .btn-secondary:hover {
-  background: #F5F7FA;
+  background: var(--color-bg);
   border-color: #C9CDD4;
 }
 
@@ -748,40 +708,40 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
   padding: 20px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .stat-label {
   font-size: 13px;
-  color: #86909C;
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-size: 28px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 /* 卡片 */
 .card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .card-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #E5E6EB;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .card-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .card-body {
@@ -809,7 +769,7 @@ onMounted(() => {
 
 .items-title {
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
   margin-bottom: 12px;
   font-size: 14px;
 }
@@ -824,12 +784,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   padding: 8px 12px;
-  background: #F7F8FA;
+  background: var(--color-bg);
   border-radius: 6px;
 }
 
 .element-name {
-  color: #4E5969;
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
@@ -844,19 +804,19 @@ onMounted(() => {
 }
 
 .action-btn.edit {
-  color: #2563EB;
+  color: var(--color-primary);
 }
 
 .action-btn.edit:hover {
-  background: #EFF4FF;
+  background: var(--color-primary-light);
 }
 
 .action-btn.delete {
-  color: #F53F3F;
+  color: var(--color-danger);
 }
 
 .action-btn.delete:hover {
-  background: #FFECE8;
+  background: var(--color-danger-light);
 }
 
 /* 表单 */
@@ -866,7 +826,7 @@ onMounted(() => {
 
 .form-tip {
   font-size: 12px;
-  color: #86909C;
+  color: var(--color-text-muted);
   margin-top: 4px;
 }
 
@@ -876,41 +836,61 @@ onMounted(() => {
   gap: 12px;
 }
 
-/* 能力要素配置 */
-.element-configs {
-  width: 100%;
+/* 能力要素配置（分组多选） */
+.element-summary {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
 }
 
-.element-config-item {
-  margin-bottom: 12px;
-  padding: 16px;
-  background: #F7F8FA;
-  border-radius: 6px;
-}
-
-.config-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.config-field {
-  flex: 1;
+.category-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-
-.config-field label {
-  font-size: 13px;
-  color: #4E5969;
-  font-weight: 500;
-}
-
-.add-config-btn {
+  gap: 10px;
   width: 100%;
-  margin-top: 8px;
 }
+
+.category-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.category-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  padding-top: 6px;
+  flex-wrap: wrap;
+}
+
+.category-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.category-select {
+  width: 100%;
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+
+
+
+
+
 
 .tree-node {
   display: flex;
@@ -940,7 +920,7 @@ onMounted(() => {
 
 .form-dialog :deep(.el-dialog__footer) {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 </style>
 
@@ -972,6 +952,6 @@ onMounted(() => {
 
 .form-dialog .el-dialog__footer {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 </style>

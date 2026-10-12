@@ -6,10 +6,7 @@
         <h1 class="page-title">能力类别管理</h1>
         <p class="page-description">管理能力素质标准库中的类别，支持启用/禁用、排序调整</p>
       </div>
-      <button class="btn-primary" @click="handleAdd">
-        <span class="btn-icon">+</span>
-        新增类别
-      </button>
+      <el-button type="primary" @click="handleAdd">新增类别</el-button>
     </div>
 
     <!-- 统计卡片 -->
@@ -53,14 +50,11 @@
           <el-table-column prop="createTime" label="创建时间" width="180" />
           <el-table-column label="操作" width="240" fixed="right">
             <template #default="{ row }">
-              <button class="action-btn edit" @click="handleEdit(row)">编辑</button>
-              <button
-                :class="['action-btn', row.status === 1 ? 'disable' : 'enable']"
+              <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+              <el-button link :type="row.status === 1 ? 'warning' : 'success'"
                 @click="handleToggleStatus(row)"
-              >
-                {{ row.status === 1 ? '停用' : '启用' }}
-              </button>
-              <button class="action-btn delete" @click="handleDelete(row)">删除</button>
+              >{{ row.status === 1 ? '停用' : '启用' }}</el-button>
+              <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -117,8 +111,8 @@
       </el-form>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-secondary" @click="dialogVisible = false">取消</button>
-          <button class="btn-primary" @click="handleSubmit">确定</button>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSubmit">确定</el-button>
         </div>
       </template>
     </el-dialog>
@@ -283,15 +277,15 @@ onMounted(() => {
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
   margin-bottom: 8px;
 }
 
 .page-description {
   font-size: 14px;
-  color: #86909C;
+  color: var(--color-text-muted);
 }
 
 /* 按钮 */
@@ -299,8 +293,8 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #2563EB;
-  color: #FFFFFF;
+  background: var(--color-primary);
+  color: var(--color-card);
   border: none;
   border-radius: 6px;
   font-size: 14px;
@@ -310,7 +304,7 @@ onMounted(() => {
 }
 
 .btn-primary:hover {
-  background: #1D4ED8;
+  background: var(--color-primary-dark);
 }
 
 .btn-icon {
@@ -322,9 +316,9 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 10px 20px;
-  background: #FFFFFF;
-  color: #4E5969;
-  border: 1px solid #E5E6EB;
+  background: var(--color-card);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
@@ -332,7 +326,7 @@ onMounted(() => {
 }
 
 .btn-secondary:hover {
-  background: #F5F7FA;
+  background: var(--color-bg);
   border-color: #C9CDD4;
 }
 
@@ -345,40 +339,40 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
   padding: 20px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .stat-label {
   font-size: 13px;
-  color: #86909C;
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-size: 28px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 /* 卡片 */
 .card {
-  background: #FFFFFF;
+  background: var(--color-card);
   border-radius: 8px;
-  border: 1px solid #E5E6EB;
+  border: 1px solid var(--color-border);
 }
 
 .card-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #E5E6EB;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .card-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .card-body {
@@ -392,7 +386,7 @@ onMounted(() => {
 
 .category-name {
   font-weight: 500;
-  color: #1D2129;
+  color: var(--color-text);
 }
 
 .status-tag {
@@ -404,13 +398,13 @@ onMounted(() => {
 }
 
 .status-tag.active {
-  background: #E8FFEA;
-  color: #00B42A;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .status-tag.disabled {
-  background: #F2F3F5;
-  color: #86909C;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
 }
 
 .action-btn {
@@ -424,35 +418,35 @@ onMounted(() => {
 }
 
 .action-btn.edit {
-  color: #2563EB;
+  color: var(--color-primary);
 }
 
 .action-btn.edit:hover {
-  background: #EFF4FF;
+  background: var(--color-primary-light);
 }
 
 .action-btn.delete {
-  color: #F53F3F;
+  color: var(--color-danger);
 }
 
 .action-btn.delete:hover {
-  background: #FFECE8;
+  background: var(--color-danger-light);
 }
 
 .action-btn.enable {
-  color: #00B42A;
+  color: var(--color-success);
 }
 
 .action-btn.enable:hover {
-  background: #E8FFEA;
+  background: var(--color-success-light);
 }
 
 .action-btn.disable {
-  color: #FF7D00;
+  color: var(--color-warning);
 }
 
 .action-btn.disable:hover {
-  background: #FFF7E8;
+  background: var(--color-warning-light);
 }
 
 /* 对话框 */
@@ -489,6 +483,6 @@ onMounted(() => {
 
 .form-dialog :deep(.el-dialog__footer) {
   padding: 16px 20px;
-  border-top: 1px solid #E5E6EB;
+  border-top: 1px solid var(--color-border);
 }
 </style>

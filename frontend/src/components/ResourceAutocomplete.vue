@@ -98,7 +98,7 @@ const containerRef = ref<HTMLElement>()
 const dropdownRef = ref<HTMLElement>()
 
 // 搜索防抖
-let searchTimer: any = null
+let searchTimer: ReturnType<typeof setTimeout> | undefined = undefined
 
 // localStorage key
 const STORAGE_KEY = 'recent_persons'
@@ -300,7 +300,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   margin-top: 4px;
-  background: #fff;
+  background: var(--color-card);
   border: 1px solid #e4e7ed;
   border-radius: 4px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
@@ -322,7 +322,7 @@ onUnmounted(() => {
 
 .dropdown-item:hover,
 .dropdown-item.is-active {
-  background-color: #f5f7fa;
+  background-color: var(--color-bg);
 }
 
 .dropdown-item.loading,

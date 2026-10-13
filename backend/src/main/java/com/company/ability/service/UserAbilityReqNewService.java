@@ -38,7 +38,7 @@ public interface UserAbilityReqNewService extends IService<UserAbilityReqNew> {
     /**
      * 分页查询人员能力要求
      */
-    PageResult<UserAbilityReqNewVO> pageUserAbilityReqs(PageRequest pageRequest);
+    PageResult<UserAbilityReqNewVO> pageUserAbilityReqs(PageRequest pageRequest, Integer year);
 
     /**
      * 根据人员ID查询能力要求

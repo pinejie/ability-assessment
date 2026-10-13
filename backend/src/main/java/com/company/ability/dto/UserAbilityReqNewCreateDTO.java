@@ -20,6 +20,16 @@ public class UserAbilityReqNewCreateDTO {
     private String description;
 
     /**
+     * 年度，缺省为当前年份
+     */
+    private Integer assessYear;
+
+    /**
+     * 是否同步到测评汇总页面，缺省为 true（新增时始终生成页面）
+     */
+    private Boolean syncAssess;
+
+    /**
      * 能力要素明细项
      */
     @Data

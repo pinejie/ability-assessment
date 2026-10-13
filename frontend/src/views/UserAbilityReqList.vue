@@ -5,7 +5,12 @@
         <h1 class="page-title">人员能力要求配置</h1>
         <p class="page-description">为人员配置能力要素要求等级，一主多从结构</p>
       </div>
-      <el-button type="primary" @click="handleAdd">新增配置</el-button>
+      <div class="toolbar-actions">
+        <el-select v-model="filterYear" placeholder="年度" style="width: 130px" @change="handleYearChange">
+          <el-option v-for="p in periods" :key="p.id" :label="`${p.year}年${p.status === 1 ? '（已关闭）' : ''}`" :value="p.year" />
+        </el-select>
+        <el-button type="primary" :disabled="!canAddInFilterYear" @click="handleAdd">新增配置</el-button>
+      </div>
     </div>
 
     <div class="stat-grid">
@@ -53,6 +58,12 @@
         </el-table-column>
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="resourceLastName" label="人员" width="150" />
+        <el-table-column label="年度" width="100" align="center">
+          <template #default="{ row }">
+            {{ row.assessYear }}
+            <el-tag v-if="isClosed(row.assessYear)" type="info" size="small">已关闭</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="能力要素数" width="120" align="center">
           <template #default="{ row }">
             {{ row.items?.length || 0 }} 条
@@ -62,8 +73,8 @@
         <el-table-column prop="createTime" label="创建时间" width="170" />
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" :disabled="isClosed(row.assessYear)" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="danger" :disabled="isClosed(row.assessYear)" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -86,12 +97,18 @@
       :title="dialogTitle"
       width="860px"
       top="6vh"
+      class="req-dialog"
       :close-on-click-modal="false"
       destroy-on-close
     >
       <el-form ref="formRef" :model="formData" :rules="formRules" label-position="top">
         <div class="form-section">
           <h3 class="form-section-title">基本信息</h3>
+          <el-form-item label="年度" prop="assessYear">
+            <el-select v-model="formData.assessYear" placeholder="请选择年度" :disabled="!!formData.id" style="width: 200px">
+              <el-option v-for="p in openPeriods" :key="p.id" :label="`${p.year}年`" :value="p.year" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="人员" prop="resourceId">
             <ResourceAutocomplete
               v-model="formData.resourceId"
@@ -157,6 +174,8 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { pageUserAbilityReqs, createUserAbilityReq, updateUserAbilityReq, deleteUserAbilityReq } from '@/api/userAbilityReq'
+import { getPeriods } from '@/api/assessSheet'
+import type { PeriodItem } from '@/types/assessSheet'
 import { listAbilityElementLevelsByElementId } from '@/api/abilityElementLevel'
 import { getPositionAbilityReqByDeptAndJobTitle } from '@/api/positionAbilityReq'
 import type { UserAbilityReqVO } from '@/types/userAbilityReq'
@@ -244,20 +263,42 @@ const formRef = ref<FormInstance>()
 
 const formData = reactive({
   id: 0,
+  assessYear: undefined as number | undefined,
   resourceId: undefined as number | undefined,
   description: '',
   items: [] as ItemConfig[],
 })
 
 const formRules: FormRules = {
+  assessYear: [
+    { required: true, message: '请选择年度', trigger: 'change' },
+  ],
   resourceId: [
     { required: true, message: '请选择人员', trigger: 'change' },
   ],
 }
 
+const periods = ref<PeriodItem[]>([])
+const filterYear = ref<number>(new Date().getFullYear())
+const openPeriods = computed(() => periods.value.filter(p => p.status === 0))
+const isClosed = (year: number) => periods.value.some(p => p.year === year && p.status === 1)
+const canAddInFilterYear = computed(() => openPeriods.value.some(p => p.year === filterYear.value))
+
+const loadPeriods = async () => {
+  periods.value = await getPeriods()
+  if (periods.value.length > 0 && !periods.value.some(p => p.year === filterYear.value)) {
+    filterYear.value = periods.value[0].year
+  }
+}
+
+const handleYearChange = () => {
+  pagination.currentPage = 1
+  loadData()
+}
+
 const loadData = async () => {
   try {
-    const result = await pageUserAbilityReqs(pagination.currentPage, pagination.pageSize)
+    const result = await pageUserAbilityReqs(pagination.currentPage, pagination.pageSize, filterYear.value)
     reqList.value = result.list || []
     pagination.total = result.total
   } catch (error) {
@@ -320,12 +361,15 @@ const getLevelRequirement = (levelId: number | undefined): string => {
 const handleAdd = async () => {
   dialogTitle.value = '新增配置'
   await resetForm()
+  const defaultYear = openPeriods.value.find(p => p.year === filterYear.value) ?? openPeriods.value[0]
+  formData.assessYear = defaultYear?.year
   dialogVisible.value = true
 }
 
 const handleEdit = async (row: UserAbilityReqVO) => {
   dialogTitle.value = '编辑配置'
   formData.id = row.id
+  formData.assessYear = row.assessYear
   formData.resourceId = row.resourceId
   formData.description = row.description || ''
 
@@ -385,9 +429,22 @@ const handleSubmit = async () => {
     }
 
     if (formData.id) {
+      // 编辑时询问是否同步到测评汇总页面
+      let syncAssess = true
+      try {
+        await ElMessageBox.confirm(
+          '是否同步到测评汇总？同步：已有评级的要素保留，结构按新要求更新。不同步：页面数据不动，并标记为与人员能力要求不一致。',
+          '同步测评汇总',
+          { confirmButtonText: '同步', cancelButtonText: '不同步', distinguishCancelAndClose: true, type: 'warning' },
+        )
+      } catch (action) {
+        if (action === 'close') return
+        syncAssess = false
+      }
       await updateUserAbilityReq({
         id: formData.id,
         resourceId: formData.resourceId,
+        syncAssess,
         description: formData.description,
         items: formData.items.map(item => ({
           categoryId: item.categoryId,
@@ -400,6 +457,7 @@ const handleSubmit = async () => {
     } else {
       await createUserAbilityReq({
         resourceId: formData.resourceId,
+        assessYear: formData.assessYear as number,
         description: formData.description,
         items: formData.items.map(item => ({
           categoryId: item.categoryId,
@@ -420,6 +478,7 @@ const handleSubmit = async () => {
 
 const resetForm = async () => {
   formData.id = 0
+  formData.assessYear = undefined
   formData.resourceId = undefined
   formData.description = ''
   formData.items = []
@@ -427,12 +486,19 @@ const resetForm = async () => {
   formRef.value?.resetFields()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await loadPeriods()
   loadData()
 })
 </script>
 
 <style scoped>
+.toolbar-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 .expand-content {
   padding: 8px 16px 12px;
 }
@@ -500,5 +566,14 @@ onMounted(() => {
   font-size: 13px;
   color: var(--color-text-secondary);
   line-height: 1.6;
+}
+</style>
+
+<!-- 弹窗通过 Teleport 挂到 body 下，scoped 样式匹配不到，因此单独写非 scoped 样式 -->
+<style>
+.req-dialog .el-dialog__body {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 16px;
 }
 </style>

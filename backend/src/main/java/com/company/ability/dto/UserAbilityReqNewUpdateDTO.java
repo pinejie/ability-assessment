@@ -21,6 +21,11 @@ public class UserAbilityReqNewUpdateDTO {
     private String description;
 
     /**
+     * 是否同步到已生成的测评汇总页面，缺省为 true。false 时页面数据不动，仅标记"与人员能力要求不一致"
+     */
+    private Boolean syncAssess;
+
+    /**
      * 能力要素明细项
      */
     @Data

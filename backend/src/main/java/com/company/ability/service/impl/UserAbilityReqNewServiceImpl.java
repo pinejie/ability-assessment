@@ -15,6 +15,7 @@ import com.company.ability.entity.UserAbilityReqItem;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.mapper.UserAbilityReqNewMapper;
 import com.company.ability.service.AbilityElementLevelService;
+import com.company.ability.service.AssessSheetSyncService;
 import com.company.ability.service.AbilityElementService;
 import com.company.ability.service.UserAbilityReqNewService;
 import com.company.ability.service.UserAbilityReqItemService;
@@ -27,6 +28,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -44,6 +46,7 @@ public class UserAbilityReqNewServiceImpl
     private final AbilityElementService abilityElementService;
     private final AbilityElementLevelService abilityElementLevelService;
     private final UserAbilityReqItemService itemService;
+    private final AssessSheetSyncService assessSheetSyncService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -55,6 +58,7 @@ public class UserAbilityReqNewServiceImpl
         UserAbilityReqNew req = new UserAbilityReqNew();
         req.setResourceId(dto.getResourceId());
         req.setDescription(dto.getDescription());
+        req.setAssessYear(dto.getAssessYear() != null ? dto.getAssessYear() : LocalDate.now().getYear());
         save(req);
 
         // 创建明细记录
@@ -87,6 +91,9 @@ public class UserAbilityReqNewServiceImpl
         for (UserAbilityReqItem item : items) {
             itemService.save(item);
         }
+
+        // 同步测评汇总页面结构（与保存同一事务，失败则整体回滚）
+        assessSheetSyncService.syncRequirement(req.getResourceId(), req.getAssessYear(), true);
 
         log.info("创建人员能力要求成功，ID: {}, 人员ID: {}, 明细数: {}",
                 req.getId(), dto.getResourceId(), items.size());
@@ -142,6 +149,10 @@ public class UserAbilityReqNewServiceImpl
             }
         }
 
+        // 同步测评汇总页面结构；syncAssess=false 时仅标记与人员能力要求不一致
+        boolean syncAssess = dto.getSyncAssess() == null || dto.getSyncAssess();
+        assessSheetSyncService.syncRequirement(req.getResourceId(), req.getAssessYear(), syncAssess);
+
         log.info("更新人员能力要求成功，ID: {}", dto.getId());
     }
 
@@ -152,6 +163,9 @@ public class UserAbilityReqNewServiceImpl
         if (req == null) {
             throw new BusinessException("人员能力要求不存在");
         }
+
+        // 测评侧校验：年度已关闭、已有评价数据时拒绝；无评价数据时同时删除测评页面
+        assessSheetSyncService.removeRequirement(req.getResourceId(), req.getAssessYear());
 
         // 删除明细
         LambdaQueryWrapper<UserAbilityReqItem> deleteWrapper = new LambdaQueryWrapper<>();
@@ -173,10 +187,13 @@ public class UserAbilityReqNewServiceImpl
     }
 
     @Override
-    public PageResult<UserAbilityReqNewVO> pageUserAbilityReqs(PageRequest pageRequest) {
+    public PageResult<UserAbilityReqNewVO> pageUserAbilityReqs(PageRequest pageRequest, Integer year) {
         pageRequest.validate();
         Page<UserAbilityReqNew> page = new Page<>(pageRequest.getPageNum(), pageRequest.getPageSize());
         QueryWrapper<UserAbilityReqNew> wrapper = new QueryWrapper<>();
+        if (year != null) {
+            wrapper.eq("assess_year", year);
+        }
         wrapper.orderByAsc("id");
         Page<UserAbilityReqNew> result = page(page, wrapper);
         List<UserAbilityReqNewVO> voList = result.getRecords().stream()

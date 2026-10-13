@@ -38,6 +38,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '人员能力要求配置' },
   },
   {
+    path: '/assess-periods',
+    name: 'AssessPeriods',
+    component: () => import('@/views/AssessPeriodList.vue'),
+    meta: { title: '年度设置' },
+  },
+  {
+    path: '/assess-sheets',
+    name: 'AssessSheets',
+    component: () => import('@/views/AssessSheetList.vue'),
+    meta: { title: '测评汇总' },
+  },
+  {
     path: '/assess-config',
     name: 'AssessConfig',
     component: () => import('@/views/AssessConfigList.vue'),

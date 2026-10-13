@@ -33,8 +33,8 @@ export const getUserAbilityReqById = (id: number): Promise<UserAbilityReqVO> => 
 /**
  * 分页查询所有人员能力要求
  */
-export const pageUserAbilityReqs = (pageNum = 1, pageSize = 10): Promise<PageResult<UserAbilityReqVO>> => {
-  return request.get('/user-ability-reqs-new', { params: { pageNum, pageSize } })
+export const pageUserAbilityReqs = (pageNum = 1, pageSize = 10, year?: number): Promise<PageResult<UserAbilityReqVO>> => {
+  return request.get('/user-ability-reqs-new', { params: { pageNum, pageSize, year } })
 }
 
 /**

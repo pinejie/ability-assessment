@@ -54,6 +54,8 @@ const menuItems = [
   { path: '/position-ability-reqs', title: '岗位能力要求', icon: '💼' },
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
   { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
+  { path: '/assess-periods', title: '年度设置', icon: '📅' },
+  { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
 ]
 
 const currentPath = computed(() => route.path)

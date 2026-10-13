@@ -43,26 +43,9 @@
         <span><em>部门</em>{{ report.departmentName || '—' }}</span>
         <span><em>职务</em>{{ report.jobTitleName || '—' }}</span>
         <span><em>年龄</em>{{ report.age ?? '—' }}</span>
-        <span class="annual">
+        <span>
           <em>年度分</em>
-          <el-input-number
-            v-model="annualInput"
-            :min="0"
-            :max="100"
-            :precision="2"
-            :controls="false"
-            :disabled="report.closed"
-            size="small"
-            style="width: 110px"
-          />
-          <el-button
-            v-if="!report.closed"
-            size="small"
-            type="primary"
-            :loading="savingAnnual"
-            :disabled="annualInput === report.annualScore"
-            @click="saveAnnual"
-          >保存</el-button>
+          <span :class="{ pending: report.annualScore == null }">{{ report.annualScore == null ? '未写入' : fmt(report.annualScore) }}</span>
         </span>
       </div>
 
@@ -148,12 +131,11 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts/core'
 import { BarChart, GaugeChart, RadarChart } from 'echarts/charts'
 import { GridComponent, MarkLineComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { getSheetReport, updateAnnualScore } from '@/api/assessSheet'
+import { getSheetReport } from '@/api/assessSheet'
 import type { ReportCategory, SheetReport } from '@/types/assessSheet'
 
 echarts.use([BarChart, RadarChart, GaugeChart, GridComponent, MarkLineComponent, TooltipComponent, CanvasRenderer])
@@ -164,8 +146,6 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
 const loading = ref(false)
 const report = ref<SheetReport | null>(null)
 const loadError = ref('')
-const annualInput = ref<number | null>(null)
-const savingAnnual = ref(false)
 const chartEl = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
 const chartType = ref<'bar' | 'radar' | 'gauge'>('radar')
@@ -379,24 +359,11 @@ const load = async () => {
   loadError.value = ''
   try {
     report.value = await getSheetReport(props.sheetId)
-    annualInput.value = report.value.annualScore
   } catch (e) {
     report.value = null
     loadError.value = e instanceof Error && e.message ? e.message : '请稍后重试'
   } finally {
     loading.value = false
-  }
-}
-
-const saveAnnual = async () => {
-  if (props.sheetId == null) return
-  savingAnnual.value = true
-  try {
-    await updateAnnualScore(props.sheetId, annualInput.value)
-    ElMessage.success('年度分已保存')
-    await load()
-  } finally {
-    savingAnnual.value = false
   }
 }
 

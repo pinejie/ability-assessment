@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  * 个人测评报告。
  * - 年度开放：实时计算，读取页面表、评级表、意见表。
  * - 年度关闭：读取冻结快照（关闭时写入 uf_assess_report_snapshot）。
- * - 年度分为人工录入，年度关闭后只读。
+ * - 年度分由泛微钩子写入（usp_assess_annual_score），测评侧只读。
  */
 @Slf4j
 @Service
@@ -52,19 +52,6 @@ public class AssessReportService {
             }
         }
         return build(sheetId);
-    }
-
-    /** 年度分：年度关闭后只读。传 null 表示清空。 */
-    public void updateAnnualScore(long sheetId, BigDecimal annualScore) {
-        Integer status = periodStatusOfSheet(sheetId);
-        if (status == 1) {
-            throw new BusinessException("年度已关闭，年度分只读");
-        }
-        if (annualScore != null && (annualScore.signum() < 0 || annualScore.compareTo(BigDecimal.valueOf(100)) > 0)) {
-            throw new BusinessException("年度分应在 0–100 之间");
-        }
-        jdbc.update("UPDATE uf_assess_sheet SET annual_score = ?, update_time = SYSDATETIME() WHERE id = ?",
-                annualScore == null ? null : annualScore.setScale(2, RoundingMode.HALF_UP), sheetId);
     }
 
     /**

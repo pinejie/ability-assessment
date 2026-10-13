@@ -7,6 +7,7 @@
       @blur="handleBlur"
       @input="handleInput"
       @keydown="handleKeydown"
+      @clear="handleClear"
       clearable
     >
       <template #prefix>
@@ -250,6 +251,11 @@ const handleSelect = async (resource: Resource) => {
   saveToRecent(selectedResource)
   emit('update:modelValue', selectedResource.id)
   emit('change', selectedResource.id, selectedResource)
+}
+
+// 清空搜索框：通知父组件取消选择
+const handleClear = () => {
+  emit('update:modelValue', undefined)
 }
 
 // 监听 modelValue 变化，更新显示

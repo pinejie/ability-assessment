@@ -81,3 +81,51 @@ export interface PageResultLike<T> {
   pageNum: number
   pageSize: number
 }
+
+/** 个人测评报告：类别行 */
+export interface ReportCategory {
+  categoryName: string
+  weight: number | null
+  standardScore: number | null
+  leaderScore: number | null
+  clientScore: number | null
+  selfScore: number | null
+  actualScore: number | null
+  scoreRate: number | null
+  gradeName: string | null
+}
+
+/** 个人测评报告：等级区间 */
+export interface ReportGradeBand {
+  levelName: string
+  lowerBound: number | null
+  upperBound: number | null
+}
+
+/** 个人测评报告 */
+export interface SheetReport {
+  sheetId: number
+  year: number
+  companyName: string | null
+  resourceName: string | null
+  departmentName: string | null
+  jobTitleName: string | null
+  age: number | null
+  closed: boolean
+  frozen: boolean
+  annualScore: number | null
+  complete: boolean
+  categories: ReportCategory[]
+  total: {
+    standardScore: number | null
+    leaderScore: number | null
+    clientScore: number | null
+    selfScore: number | null
+    actualScore: number | null
+    scoreRate: number | null
+    gradeName: string | null
+  }
+  gradeBands: ReportGradeBand[]
+  leaderComment: string | null
+  clientComment: string | null
+}

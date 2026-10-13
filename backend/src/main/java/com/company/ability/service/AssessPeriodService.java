@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +20,7 @@ import java.util.Map;
 public class AssessPeriodService {
 
     private final JdbcTemplate jdbc;
+    private final AssessReportService reportService;
 
     @Value("${assess.company-id:1}")
     private long companyId;
@@ -36,7 +38,11 @@ public class AssessPeriodService {
                 "VALUES (?, ?, 0, SYSDATETIME(), SYSDATETIME())", companyId, year);
     }
 
-    /** @param status 0 进行中 1 已关闭 */
+    /**
+     * 关闭：冻结该年所有页面的报告快照；重新开启：删除快照，恢复实时计算。
+     * @param status 0 进行中 1 已关闭
+     */
+    @Transactional
     public void changeStatus(long id, int status) {
         if (status != 0 && status != 1) {
             throw new BusinessException("状态不合法");
@@ -47,6 +53,11 @@ public class AssessPeriodService {
             throw new BusinessException("年度不存在");
         }
         jdbc.update("UPDATE uf_assess_period SET status = ?, update_time = SYSDATETIME() WHERE id = ?", status, id);
+        if (status == 1) {
+            reportService.freezePeriod(id);
+        } else {
+            reportService.unfreezePeriod(id);
+        }
     }
 
     public List<AssessSheetVO.PeriodItem> list() {

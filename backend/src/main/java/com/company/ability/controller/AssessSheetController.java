@@ -1,7 +1,9 @@
 package com.company.ability.controller;
 
+import com.company.ability.dto.AssessAnnualScoreDTO;
 import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
+import com.company.ability.service.AssessReportService;
 import com.company.ability.service.AssessSheetQueryService;
 import com.company.ability.vo.AssessSheetVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -11,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 
 /**
- * 测评汇总页面（只读）。评级与得分只由泛微钩子写入，本接口不提供写入。
+ * 测评汇总页面（只读）。评级与得分只由泛微钩子写入；本接口唯一的写入是人工录入的年度分。
  */
 @Tag(name = "测评汇总", description = "测评汇总页面列表与详情（只读）")
 @RestController
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 public class AssessSheetController {
 
     private final AssessSheetQueryService queryService;
+    private final AssessReportService reportService;
 
     @Operation(summary = "测评汇总列表（分页）")
     @GetMapping("/sheets")
@@ -37,5 +40,18 @@ public class AssessSheetController {
     @GetMapping("/sheets/{id}")
     public Result<AssessSheetVO.Detail> detail(@PathVariable Long id) {
         return Result.success(queryService.detail(id));
+    }
+
+    @Operation(summary = "个人测评报告（弹窗）")
+    @GetMapping("/sheets/{id}/report")
+    public Result<AssessSheetVO.Report> report(@PathVariable Long id) {
+        return Result.success(reportService.get(id));
+    }
+
+    @Operation(summary = "录入年度分（年度关闭后只读）")
+    @PutMapping("/sheets/{id}/annual-score")
+    public Result<Void> annualScore(@PathVariable Long id, @RequestBody AssessAnnualScoreDTO dto) {
+        reportService.updateAnnualScore(id, dto.getAnnualScore());
+        return Result.success();
     }
 }

@@ -16,6 +16,7 @@ public class UserAbilityReqNewVO {
     private Long resourceId;
 
     private String resourceLastName;
+    private Integer assessYear;
 
     private String description;
 

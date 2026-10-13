@@ -16,6 +16,7 @@ export interface UserAbilityReqVO {
   id: number
   resourceId: number
   resourceLastName: string
+  assessYear: number
   description: string
   items: UserAbilityReqItemVO[]
   createTime: string
@@ -32,6 +33,7 @@ export interface UserAbilityElementConfig {
 // 人员能力要求创建 DTO（一主多从）
 export interface UserAbilityReqCreateDTO {
   resourceId: number
+  assessYear: number
   items: {
     elementId: number
     levelId?: number | null
@@ -44,6 +46,7 @@ export interface UserAbilityReqCreateDTO {
 export interface UserAbilityReqUpdateDTO {
   id: number
   resourceId?: number
+  syncAssess?: boolean
   items?: {
     elementId: number
     levelId?: number | null

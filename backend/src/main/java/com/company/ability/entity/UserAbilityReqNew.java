@@ -28,6 +28,11 @@ public class UserAbilityReqNew {
     private String description;
 
     /**
+     * 年度（人员能力要求按年）
+     */
+    private Integer assessYear;
+
+    /**
      * 创建时间
      */
     private LocalDateTime createTime;

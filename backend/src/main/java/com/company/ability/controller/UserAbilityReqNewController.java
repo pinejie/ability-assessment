@@ -58,11 +58,12 @@ public class UserAbilityReqNewController {
     @GetMapping
     public Result<PageResult<UserAbilityReqNewVO>> pageUserAbilityReqs(
             @RequestParam(defaultValue = "1") Integer pageNum,
-            @RequestParam(defaultValue = "10") Integer pageSize) {
+            @RequestParam(defaultValue = "10") Integer pageSize,
+            @RequestParam(required = false) Integer year) {
         PageRequest pageRequest = new PageRequest();
         pageRequest.setPageNum(pageNum);
         pageRequest.setPageSize(pageSize);
-        return Result.success(userAbilityReqNewService.pageUserAbilityReqs(pageRequest));
+        return Result.success(userAbilityReqNewService.pageUserAbilityReqs(pageRequest, year));
     }
 
     @Operation(summary = "根据人员ID查询能力要求")

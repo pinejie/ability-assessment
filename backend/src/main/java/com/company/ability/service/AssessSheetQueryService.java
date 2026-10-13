@@ -166,6 +166,20 @@ public class AssessSheetQueryService {
                 row.getClients().add(c);
             }
         }
+        // 每个客户在有效要素上的得分合计（合计行直接使用，不在前端加总）
+        java.util.Set<Long> activeIds = new java.util.HashSet<>();
+        for (AssessSheetVO.Row r : rows) activeIds.add(r.getElementId());
+        List<BigDecimal> seqTotals = new ArrayList<>();
+        for (Integer seq : seqs) {
+            BigDecimal sum = BigDecimal.ZERO;
+            for (Map<String, Object> r : ratingRows) {
+                if (!seq.equals(r.get("client_seq")) || r.get("score") == null) continue;
+                if (!activeIds.contains(((Number) r.get("element_id")).longValue())) continue;
+                sum = sum.add((BigDecimal) r.get("score"));
+            }
+            seqTotals.add(sum.setScale(2, java.math.RoundingMode.HALF_UP));
+        }
+        d.setClientSeqTotals(seqTotals);
         d.setRows(rows);
         return d;
     }

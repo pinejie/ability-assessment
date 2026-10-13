@@ -10,6 +10,7 @@
         <el-select v-model="query.year" placeholder="年度" style="width: 140px" @change="onFilterChange">
           <el-option v-for="p in periods" :key="p.id" :label="`${p.year}年${p.status === 1 ? '（已关闭）' : ''}`" :value="p.year" />
         </el-select>
+        <ResourceAutocomplete v-model="query.resourceId" placeholder="搜索人员（姓名/拼音）" style="width: 220px" />
         <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="待评价" :value="0" />
           <el-option label="评价中" :value="1" />
@@ -249,10 +250,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getPeriods, getSheetDetail, getSheetPage } from '@/api/assessSheet'
 import AssessReportDialog from '@/components/AssessReportDialog.vue'
+import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
 import { getGradeLevels } from '@/api/assessConfig'
 import type { PeriodItem, SheetDetail, SheetListItem } from '@/types/assessSheet'
 
@@ -269,6 +271,7 @@ const loading = ref(false)
 
 const query = reactive({
   year: new Date().getFullYear(),
+  resourceId: undefined as number | undefined,
   status: undefined as number | undefined,
   gradeName: undefined as string | undefined,
   pageNum: 1,
@@ -406,6 +409,7 @@ const loadList = async () => {
   try {
     const res = await getSheetPage({
       year: query.year,
+      resourceId: query.resourceId,
       status: query.status,
       gradeName: query.gradeName,
       pageNum: query.pageNum,
@@ -424,6 +428,9 @@ const onFilterChange = () => {
   query.pageNum = 1
   loadList()
 }
+
+// 人员搜索：选择或清空都会触发重新查询
+watch(() => query.resourceId, onFilterChange)
 
 const openReport = (id: number) => {
   reportSheetId.value = id

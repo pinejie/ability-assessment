@@ -29,7 +29,7 @@ public class AssessSheetQueryService {
         this.companyId = companyId;
     }
 
-    public PageResult<AssessSheetVO.ListItem> page(Integer year, Long departmentId, String gradeName,
+    public PageResult<AssessSheetVO.ListItem> page(Integer year, Long resourceId, Long departmentId, String gradeName,
                                                    Integer status, int pageNum, int pageSize) {
         if (year == null) throw new BusinessException("请选择年度");
         if (pageNum < 1 || pageSize < 1 || pageSize > 200) throw new BusinessException("分页参数不合法");
@@ -41,6 +41,7 @@ public class AssessSheetQueryService {
         List<Object> args = new ArrayList<>();
         args.add(companyId);
         args.add(year);
+        if (resourceId != null) { where.append(" AND s.resource_id = ?"); args.add(resourceId); }
         if (departmentId != null) { where.append(" AND s.department_id = ?"); args.add(departmentId); }
         if (gradeName != null && !gradeName.isBlank()) { where.append(" AND s.grade_name = ?"); args.add(gradeName); }
         if (status != null) { where.append(" AND s.status = ?"); args.add(status); }

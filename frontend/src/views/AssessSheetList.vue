@@ -64,9 +64,10 @@
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row.id)">查看</el-button>
+            <el-button link type="primary" @click="openReport(row.id)">查看报告</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -82,6 +83,9 @@
         @size-change="onFilterChange"
       />
     </el-card>
+
+    <!-- 个人测评报告弹窗 -->
+    <AssessReportDialog v-model="reportVisible" :sheet-id="reportSheetId" />
 
     <!-- 测评汇总弹窗：结构对齐 Excel 测评汇总 sheet -->
     <el-dialog
@@ -248,6 +252,7 @@
 import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getPeriods, getSheetDetail, getSheetPage } from '@/api/assessSheet'
+import AssessReportDialog from '@/components/AssessReportDialog.vue'
 import { getGradeLevels } from '@/api/assessConfig'
 import type { PeriodItem, SheetDetail, SheetListItem } from '@/types/assessSheet'
 
@@ -271,6 +276,8 @@ const query = reactive({
 })
 
 const dialogVisible = ref(false)
+const reportVisible = ref(false)
+const reportSheetId = ref<number | null>(null)
 const detailLoading = ref(false)
 const detail = ref<SheetDetail | null>(null)
 const dialogTitle = computed(() =>
@@ -416,6 +423,11 @@ const loadList = async () => {
 const onFilterChange = () => {
   query.pageNum = 1
   loadList()
+}
+
+const openReport = (id: number) => {
+  reportSheetId.value = id
+  reportVisible.value = true
 }
 
 const openDetail = async (id: number) => {

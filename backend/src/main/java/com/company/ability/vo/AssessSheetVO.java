@@ -94,4 +94,66 @@ public class AssessSheetVO {
         private Integer year;
         private Integer status;
     }
+
+    /** 个人测评报告（对齐 Excel "个人测评报告1.19"） */
+    @Data
+    public static class Report {
+        private Long sheetId;
+        private Integer year;
+        private String companyName;
+        private String resourceName;
+        private String departmentName;
+        private String jobTitleName;
+        private Integer age;
+        /** 年度已关闭 */
+        private Boolean closed;
+        /** 读取的是年度关闭时冻结的快照 */
+        private Boolean frozen;
+        /** 年度分（人工录入，留空） */
+        private BigDecimal annualScore;
+        /** 是否所有要素都已评级（否则合计与等级显示"未完成"） */
+        private Boolean complete;
+        private List<CategoryRow> categories;
+        private Total total;
+        /** 等级区间，用于图表参考线与文字 */
+        private List<GradeBand> gradeBands;
+        /** 上级评价（泛微钩子写入） */
+        private String leaderComment;
+        /** 客户评价（泛微钩子写入） */
+        private String clientComment;
+    }
+
+    /** 报告中的类别行 */
+    @Data
+    public static class CategoryRow {
+        private String categoryName;
+        private BigDecimal weight;
+        private BigDecimal standardScore;
+        private BigDecimal leaderScore;
+        private BigDecimal clientScore;
+        private BigDecimal selfScore;
+        private BigDecimal actualScore;
+        private BigDecimal scoreRate;
+        private String gradeName;
+    }
+
+    /** 报告合计行（取自页面头，与页面一致） */
+    @Data
+    public static class Total {
+        private BigDecimal standardScore;
+        private BigDecimal leaderScore;
+        private BigDecimal clientScore;
+        private BigDecimal selfScore;
+        private BigDecimal actualScore;
+        private BigDecimal scoreRate;
+        private String gradeName;
+    }
+
+    /** 等级区间：(lowerBound, upperBound]，null 表示无穷 */
+    @Data
+    public static class GradeBand {
+        private String levelName;
+        private BigDecimal lowerBound;
+        private BigDecimal upperBound;
+    }
 }

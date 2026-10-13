@@ -59,7 +59,10 @@
           <template #default="{ row }">{{ row.scoreRate == null ? '-' : `${fmt(row.scoreRate)}%` }}</template>
         </el-table-column>
         <el-table-column label="综合评定" width="120">
-          <template #default="{ row }">{{ row.gradeName ?? '-' }}</template>
+          <template #default="{ row }">
+            <el-tag v-if="row.gradeName" :type="gradeTagType(row.gradeName)" effect="light">{{ row.gradeName }}</el-tag>
+            <span v-else class="muted">-</span>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
@@ -81,77 +84,168 @@
     </el-card>
 
     <!-- 测评汇总弹窗：结构对齐 Excel 测评汇总 sheet -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="92%" top="4vh" destroy-on-close>
-      <div v-loading="detailLoading">
-        <template v-if="detail">
-          <el-alert v-if="detail.needRecalc" type="warning" show-icon :closable="false" style="margin-bottom: 8px"
-            title="人员能力要求已变更，得分待重算（待泛微流程钩子下次写入时更新）" />
-          <el-alert v-if="detail.reqChanged" type="error" show-icon :closable="false" style="margin-bottom: 8px"
-            title="编辑人员能力要求时选择了不同步，页面数据与当前人员能力要求不一致" />
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogTitle"
+      width="min(1200px, 96vw)"
+      top="3vh"
+      class="assess-detail-dialog"
+      destroy-on-close
+    >
+      <el-skeleton v-if="detailLoading" :rows="8" animated />
 
-          <div class="summary-line">
-            <span>直接领导：{{ detail.leaderName ?? '-' }}</span>
-            <span>标准分：{{ fmt(detail.standardScore) }}</span>
-            <span>直接领导得分：{{ fmt(detail.leaderScore) }}</span>
-            <span>客户得分：{{ fmt(detail.clientScore) }}</span>
-            <span>自评得分：{{ fmt(detail.selfScore) }}</span>
-            <span>实际得分：{{ fmt(detail.actualScore) }}</span>
-            <span>得分率：{{ detail.scoreRate == null ? '-' : `${fmt(detail.scoreRate)}%` }}</span>
-            <span>综合评定：{{ detail.gradeName ?? '-' }}</span>
+      <template v-else-if="detail">
+        <el-alert
+          v-if="detail.needRecalc || detail.reqChanged"
+          :type="detail.reqChanged ? 'error' : 'warning'"
+          show-icon
+          :closable="false"
+          class="sheet-alert"
+          :title="alertText"
+        />
+
+        <div class="info-row">
+          <span>姓名：<b>{{ detail.resourceName ?? '-' }}</b></span>
+          <span>年度：<b>{{ detail.year }}</b></span>
+          <span>直接领导：<b>{{ detail.leaderName ?? '-' }}</b></span>
+          <span>客户人数：<b>{{ detail.clientCount }}</b></span>
+          <span>
+            状态：
+            <el-tag v-if="detail.status === 0" type="info" size="small">待评价</el-tag>
+            <el-tag v-else-if="detail.status === 1" type="warning" size="small">评价中</el-tag>
+            <el-tag v-else type="success" size="small">已完成</el-tag>
+          </span>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric">
+            <div class="metric-label">岗位标准分</div>
+            <div class="metric-value">{{ fmtOr(detail.standardScore) }}</div>
           </div>
+          <div class="metric">
+            <div class="metric-label">直接领导得分</div>
+            <div class="metric-value">{{ fmtOr(detail.leaderScore) }}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">客户得分</div>
+            <div class="metric-value">{{ fmtOr(detail.clientScore) }}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">自评得分</div>
+            <div class="metric-value">{{ fmtOr(detail.selfScore) }}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">实际得分</div>
+            <div class="metric-value">{{ fmtOr(detail.actualScore) }}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">得分率</div>
+            <div class="metric-value">{{ detail.scoreRate == null ? '未完成' : `${fmt(detail.scoreRate)}%` }}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">综合评定</div>
+            <div class="metric-value">
+              <el-tag v-if="detail.gradeName" :type="gradeTagType(detail.gradeName)" effect="dark" size="large">
+                {{ detail.gradeName }}
+              </el-tag>
+              <span v-else class="muted">未完成</span>
+            </div>
+          </div>
+        </div>
 
-          <el-table :data="detail.rows" border :show-summary="true" :summary-method="summaryMethod" size="small">
-            <el-table-column prop="categoryName" label="类别" min-width="110" />
-            <el-table-column label="类别权重(%)" width="100" align="right">
-              <template #default="{ row }">{{ fmt(row.categoryWeight) }}</template>
-            </el-table-column>
-            <el-table-column prop="elementName" label="要素" min-width="160" />
-            <el-table-column label="要求等级" width="90" align="center">
-              <template #default="{ row }">{{ row.requiredLevelNo ?? '-' }}</template>
-            </el-table-column>
-            <el-table-column label="标准分" width="90" align="right">
-              <template #default="{ row }">{{ fmt(row.standardScore) }}</template>
-            </el-table-column>
+        <el-empty v-if="detail.rows.length === 0" description="暂无有效要素" />
 
-            <el-table-column label="直接领导" align="center">
-              <el-table-column label="评级" width="70" align="center">
-                <template #default="{ row }">{{ row.leaderLevelNo ?? '-' }}</template>
-              </el-table-column>
-              <el-table-column label="得分" width="80" align="right">
-                <template #default="{ row }">{{ fmt(row.leaderScore) }}</template>
-              </el-table-column>
-            </el-table-column>
+        <el-table
+          v-else
+          :data="detail.rows"
+          border
+          stripe
+          size="small"
+          max-height="58vh"
+          :span-method="spanMethod"
+          :show-summary="true"
+          :summary-method="summaryMethod"
+        >
+          <el-table-column prop="categoryName" label="类别" width="96" fixed="left" align="center" />
+          <el-table-column label="权重(%)" width="84" align="right" fixed="left">
+            <template #default="{ row }">
+              <span class="num">{{ fmt(row.categoryWeight) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="elementName" label="要素" width="190" fixed="left" show-overflow-tooltip />
+          <el-table-column label="要求等级" width="84" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain">{{ row.requiredLevelNo ?? '-' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="标准分" width="80" align="right">
+            <template #default="{ row }">
+              <span class="num">{{ fmt(row.standardScore) }}</span>
+            </template>
+          </el-table-column>
 
-            <el-table-column v-for="(seq, idx) in detail.clientSeqs" :key="seq" :label="`客户${seq}`" align="center">
-              <el-table-column label="评级" width="70" align="center">
-                <template #default="{ row }">{{ row.clients[idx]?.levelNo ?? '-' }}</template>
-              </el-table-column>
-              <el-table-column label="得分" width="80" align="right">
-                <template #default="{ row }">{{ fmt(row.clients[idx]?.score) }}</template>
-              </el-table-column>
+          <el-table-column label="直接领导" align="center" header-cell-class-name="grp-leader">
+            <el-table-column label="评级" width="60" align="center">
+              <template #default="{ row }">
+                <LevelCell :level="row.leaderLevelNo" />
+              </template>
             </el-table-column>
+            <el-table-column label="得分" width="72" align="right">
+              <template #default="{ row }">
+                <ScoreCell :score="row.leaderScore" />
+              </template>
+            </el-table-column>
+          </el-table-column>
 
-            <el-table-column label="客户平均得分" width="110" align="right">
-              <template #default="{ row }">{{ fmt(row.clientAvgScore) }}</template>
+          <el-table-column
+            v-for="(seq, idx) in detail.clientSeqs"
+            :key="seq"
+            label=""
+            align="center"
+            header-cell-class-name="grp-client"
+          >
+            <template #header>
+              <div class="grp-title">客户{{ seq }}</div>
+              <div class="grp-sub">已评 {{ ratedCount(idx) }}/{{ detail.rows.length }}</div>
+            </template>
+            <el-table-column label="评级" width="60" align="center">
+              <template #default="{ row }">
+                <LevelCell :level="row.clients[idx]?.levelNo" />
+              </template>
             </el-table-column>
+            <el-table-column label="得分" width="72" align="right">
+              <template #default="{ row }">
+                <ScoreCell :score="row.clients[idx]?.score" />
+              </template>
+            </el-table-column>
+          </el-table-column>
 
-            <el-table-column label="自评" align="center">
-              <el-table-column label="评级" width="70" align="center">
-                <template #default="{ row }">{{ row.selfLevelNo ?? '-' }}</template>
-              </el-table-column>
-              <el-table-column label="得分" width="80" align="right">
-                <template #default="{ row }">{{ fmt(row.selfScore) }}</template>
-              </el-table-column>
+          <el-table-column label="客户平均得分" width="120" align="right">
+            <template #default="{ row }">
+              <ScoreCell :score="row.clientAvgScore" />
+            </template>
+          </el-table-column>
+
+          <el-table-column label="自评" align="center" header-cell-class-name="grp-self">
+            <el-table-column label="评级" width="60" align="center">
+              <template #default="{ row }">
+                <LevelCell :level="row.selfLevelNo" />
+              </template>
             </el-table-column>
-          </el-table>
-        </template>
-      </div>
+            <el-table-column label="得分" width="72" align="right">
+              <template #default="{ row }">
+                <ScoreCell :score="row.selfScore" />
+              </template>
+            </el-table-column>
+          </el-table-column>
+        </el-table>
+      </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getPeriods, getSheetDetail, getSheetPage } from '@/api/assessSheet'
 import { getGradeLevels } from '@/api/assessConfig'
@@ -188,6 +282,102 @@ const fmt = (v: number | string | null | undefined): string => {
   if (v === null || v === undefined || v === '') return '-'
   const n = Number(v)
   return Number.isNaN(n) ? '-' : n.toFixed(2)
+}
+
+/** 合计与汇总值：为空表示尚未完整，显示"未完成" */
+const fmtOr = (v: number | string | null | undefined): string => (v == null ? '未完成' : fmt(v))
+
+/** 综合评定颜色，按等级名称区分 */
+const gradeTagType = (name: string): 'danger' | 'warning' | 'success' | 'primary' | 'info' => {
+  switch (name) {
+    case '不合格': return 'danger'
+    case '基本胜任': return 'warning'
+    case '胜任': return 'success'
+    case '优秀': return 'primary'
+    case '卓越': return 'success'
+    default: return 'info'
+  }
+}
+
+/** 评级单元格：空值显示"未评" */
+const LevelCell = defineComponent({
+  props: { level: { type: Number, default: null } },
+  setup(props) {
+    return () =>
+      props.level == null
+        ? h('span', { class: 'muted' }, '未评')
+        : h('span', { class: `level level-${props.level}` }, String(props.level))
+  },
+})
+
+/** 得分单元格：空值显示"—"，数字右对齐等宽 */
+const ScoreCell = defineComponent({
+  props: { score: { type: [Number, String], default: null } },
+  setup(props) {
+    return () =>
+      props.score == null || props.score === ''
+        ? h('span', { class: 'muted' }, '—')
+        : h('span', { class: 'num' }, fmt(props.score))
+  },
+})
+
+const ratedCount = (idx: number): number =>
+  detail.value ? detail.value.rows.filter((r) => r.clients[idx]?.levelNo != null).length : 0
+
+const alertText = computed(() => {
+  const parts: string[] = []
+  if (detail.value?.reqChanged) parts.push('编辑人员能力要求时选择了不同步，页面数据与当前人员能力要求不一致')
+  if (detail.value?.needRecalc) parts.push('人员能力要求已变更，得分待重算（待泛微流程钩子下次写入时更新）')
+  return parts.join('；')
+})
+
+/** 类别列合并：同一类别的连续行合并为一格 */
+const categorySpans = computed<number[]>(() => {
+  const rows = detail.value?.rows ?? []
+  const spans: number[] = []
+  rows.forEach((r, i) => {
+    if (i > 0 && rows[i - 1].categoryName === r.categoryName) {
+      spans.push(0)
+      return
+    }
+    let n = 1
+    for (let j = i + 1; j < rows.length && rows[j].categoryName === r.categoryName; j++) n++
+    spans.push(n)
+  })
+  return spans
+})
+
+const spanMethod = ({ rowIndex, columnIndex }: { rowIndex: number; columnIndex: number }) => {
+  if (columnIndex === 0 || columnIndex === 1) {
+    const span = categorySpans.value[rowIndex]
+    return { rowspan: span, colspan: span === 0 ? 0 : 1 }
+  }
+  return { rowspan: 1, colspan: 1 }
+}
+
+/**
+ * 合计行。列顺序：0 类别 1 权重 2 要素 3 要求等级 4 标准分 5 领导评级 6 领导得分
+ * 之后每个客户 2 列（评级、得分），再接 客户平均得分、自评评级、自评得分。
+ * 合计值全部来自后端，不在前端加总。
+ */
+const summaryMethod = ({ columns }: { columns: unknown[] }) => {
+  const sums: string[] = columns.map(() => '')
+  sums[0] = '合计'
+  const d = detail.value
+  if (!d) return sums
+  const n = d.clientSeqs.length
+  const clientStart = 7
+  const clientAvgIdx = clientStart + n * 2
+  const selfScoreIdx = clientAvgIdx + 2
+
+  sums[4] = fmtOr(d.standardScore)
+  sums[6] = fmtOr(d.leaderScore)
+  d.clientSeqs.forEach((_, i) => {
+    sums[clientStart + i * 2 + 1] = fmtOr(d.clientSeqTotals?.[i])
+  })
+  sums[clientAvgIdx] = fmtOr(d.clientScore)
+  sums[selfScoreIdx] = fmtOr(d.selfScore)
+  return sums
 }
 
 const loadPeriods = async () => {
@@ -249,36 +439,6 @@ const openDetail = async (id: number) => {
   }
 }
 
-/**
- * 合计行。列顺序：0 类别 1 类别权重 2 要素 3 要求等级 4 标准分 5 领导评级 6 领导得分
- * 之后每个客户 2 列（评级、得分），再接 客户平均得分、自评评级、自评得分
- */
-const summaryMethod = ({ columns, data }: { columns: unknown[]; data: SheetDetail['rows'] }) => {
-  const cols = columns as unknown[]
-  const sums: string[] = cols.map(() => '')
-  sums[0] = '合计'
-  const sumOf = (fn: (r: SheetDetail['rows'][number]) => number | null | undefined) =>
-    fmt(data.reduce((acc, r) => acc + (Number(fn(r)) || 0), 0))
-
-  const d = detail.value
-  if (!d) return sums
-  const n = d.clientSeqs.length
-  const standardIdx = 4
-  const leaderScoreIdx = 6
-  const clientStart = 7
-  const clientAvgIdx = clientStart + n * 2
-  const selfScoreIdx = clientAvgIdx + 2
-
-  sums[standardIdx] = fmt(d.standardScore)
-  sums[leaderScoreIdx] = fmt(d.leaderScore)
-  d.clientSeqs.forEach((_, i) => {
-    sums[clientStart + i * 2 + 1] = sumOf((r) => r.clients[i]?.score)
-  })
-  sums[clientAvgIdx] = fmt(d.clientScore)
-  sums[selfScoreIdx] = fmt(d.selfScore)
-  return sums
-}
-
 onMounted(async () => {
   await Promise.all([loadPeriods(), loadGradeOptions()])
   loadList()
@@ -299,11 +459,75 @@ onMounted(async () => {
   align-items: center;
   flex-wrap: wrap;
 }
-.summary-line {
+.muted {
+  color: #aaa;
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.level {
+  display: inline-block;
+  min-width: 22px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.level-5 { background: #e1f3d8; color: #529b2e; }
+.level-4 { background: #d9ecff; color: #337ecc; }
+.level-3 { background: #f4f4f5; color: #606266; }
+.level-2 { background: #fdf6ec; color: #b88230; }
+.level-1 { background: #fef0f0; color: #c45656; }
+.sheet-alert {
+  margin-bottom: 12px;
+}
+.info-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 20px;
+  align-items: center;
   margin-bottom: 12px;
-  color: #333;
+  color: #444;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.metric {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fff;
+}
+.metric-label {
+  font-size: 12px;
+  color: #888;
+}
+.metric-value {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #303133;
+  font-variant-numeric: tabular-nums;
+  min-height: 28px;
+}
+</style>
+
+<!-- 弹窗通过 Teleport 挂到 body 下，表头分组颜色等需要非 scoped 样式 -->
+<style>
+.assess-detail-dialog .el-dialog__body {
+  padding: 12px 20px 16px;
+}
+.assess-detail-dialog .grp-leader .cell { background: #eef6ff; color: #1d4f91; }
+.assess-detail-dialog .grp-client .cell { background: #f0faf3; color: #1f6b3a; }
+.assess-detail-dialog .grp-self .cell { background: #fff6e8; color: #8a5a00; }
+.assess-detail-dialog .grp-title { font-weight: 600; }
+.assess-detail-dialog .grp-sub { font-size: 12px; font-weight: 400; color: #666; }
+.assess-detail-dialog .el-table__footer-wrapper .el-table__cell {
+  font-weight: 600;
+  background: #fafafa;
 }
 </style>

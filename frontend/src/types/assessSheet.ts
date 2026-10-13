@@ -70,6 +70,8 @@ export interface SheetDetail {
   scoreRate: number | null
   gradeName: string | null
   clientSeqs: number[]
+  /** 每个客户在有效要素上的得分合计，与 clientSeqs 顺序一致 */
+  clientSeqTotals: (number | null)[]
   rows: SheetRow[]
 }
 

@@ -57,6 +57,8 @@ public class AssessSheetVO {
         private String gradeName;
         /** 客户序号列表，用于动态生成"客户N"列 */
         private List<Integer> clientSeqs;
+        /** 每个客户在有效要素上的得分合计，与 clientSeqs 顺序一致（合计行使用） */
+        private List<BigDecimal> clientSeqTotals;
         private List<Row> rows;
     }
 

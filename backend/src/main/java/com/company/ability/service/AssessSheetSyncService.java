@@ -6,6 +6,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -151,6 +153,9 @@ public class AssessSheetSyncService {
                 "UPDATE uf_assess_sheet_row SET active = 0 WHERE sheet_id = ? AND element_id NOT IN (" + placeholders + ")",
                 args);
 
+        // 5b. 基础数据：类别权重、要素标准分、岗位标准分（由配置与要求等级算出，不依赖评级）
+        writeBaseScores(sheetId, items);
+
         // 6. 日志
         writeLog(sheetId, action, String.format(
                 "{\"elements\":%d,\"deactivated\":%d}", elementIds.size(), deactivated));
@@ -192,6 +197,49 @@ public class AssessSheetSyncService {
         jdbc.update("DELETE FROM uf_assess_sheet_row WHERE sheet_id = ?", sheetId);
         jdbc.update("DELETE FROM uf_assess_sheet WHERE id = ?", sheetId);
         log.info("删除人员能力要求，同时删除无评价数据的测评页面，sheetId={}", sheetId);
+    }
+
+    /**
+     * 写入基础数据：类别权重、要素标准分 S(e) 与岗位标准分。
+     * S(e) = 等级分值(要求等级) ÷ 10 × 类别权重 ÷ 类别要素数。配置缺失时对应字段置空。
+     */
+    private void writeBaseScores(long sheetId, List<Map<String, Object>> items) {
+        Map<Long, BigDecimal> catWeight = new java.util.HashMap<>();
+        for (Map<String, Object> m : jdbc.queryForList(
+                "SELECT category_id, weight FROM uf_assess_weight_ability WHERE company_id = ?", companyId)) {
+            catWeight.put(num(m.get("category_id")), (BigDecimal) m.get("weight"));
+        }
+        Map<Integer, BigDecimal> levelScore = new java.util.HashMap<>();
+        for (Map<String, Object> m : jdbc.queryForList(
+                "SELECT level_no, score FROM uf_assess_level_score WHERE company_id = ?", companyId)) {
+            levelScore.put((int) num(m.get("level_no")), (BigDecimal) m.get("score"));
+        }
+        Map<Long, Long> countByCat = items.stream().collect(
+                Collectors.groupingBy(m -> num(m.get("category_id")), Collectors.counting()));
+
+        BigDecimal total = BigDecimal.ZERO;
+        boolean complete = true;
+        for (Map<String, Object> m : items) {
+            long elementId = num(m.get("element_id"));
+            long categoryId = num(m.get("category_id"));
+            int levelNo = (int) num(m.get("level_no"));
+            BigDecimal weight = catWeight.get(categoryId);
+            BigDecimal score = levelScore.get(levelNo);
+            BigDecimal standard = null;
+            if (weight != null && score != null) {
+                standard = score.divide(BigDecimal.TEN, 10, RoundingMode.HALF_UP)
+                        .multiply(weight)
+                        .divide(BigDecimal.valueOf(countByCat.get(categoryId)), 4, RoundingMode.HALF_UP);
+                total = total.add(standard);
+            } else {
+                complete = false;
+            }
+            jdbc.update(
+                    "UPDATE uf_assess_sheet_row SET category_weight = ?, standard_score = ? WHERE sheet_id = ? AND element_id = ?",
+                    weight, standard, sheetId, elementId);
+        }
+        jdbc.update("UPDATE uf_assess_sheet SET standard_score = ? WHERE id = ?",
+                complete ? total.setScale(2, RoundingMode.HALF_UP) : null, sheetId);
     }
 
     private void writeLog(long sheetId, String action, String detailJson) {

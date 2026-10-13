@@ -96,12 +96,12 @@
 
       <template v-else-if="detail">
         <el-alert
-          v-if="detail.needRecalc || detail.reqChanged"
-          :type="detail.reqChanged ? 'error' : 'warning'"
+          v-if="detail.reqChanged"
+          type="error"
           show-icon
           :closable="false"
           class="sheet-alert"
-          :title="alertText"
+          title="编辑人员能力要求时选择了不同步，页面数据与当前人员能力要求不一致"
         />
 
         <div class="info-row">
@@ -120,27 +120,27 @@
         <div class="metric-grid">
           <div class="metric">
             <div class="metric-label">岗位标准分</div>
-            <div class="metric-value">{{ fmtOr(detail.standardScore) }}</div>
+            <div class="metric-value" :class="{ pending: detail.standardScore == null }">{{ fmtOr(detail.standardScore) }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">直接领导得分</div>
-            <div class="metric-value">{{ fmtOr(detail.leaderScore) }}</div>
+            <div class="metric-value" :class="{ pending: detail.leaderScore == null }">{{ fmtOr(detail.leaderScore) }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">客户得分</div>
-            <div class="metric-value">{{ fmtOr(detail.clientScore) }}</div>
+            <div class="metric-value" :class="{ pending: detail.clientScore == null }">{{ fmtOr(detail.clientScore) }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">自评得分</div>
-            <div class="metric-value">{{ fmtOr(detail.selfScore) }}</div>
+            <div class="metric-value" :class="{ pending: detail.selfScore == null }">{{ fmtOr(detail.selfScore) }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">实际得分</div>
-            <div class="metric-value">{{ fmtOr(detail.actualScore) }}</div>
+            <div class="metric-value" :class="{ pending: detail.actualScore == null }">{{ fmtOr(detail.actualScore) }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">得分率</div>
-            <div class="metric-value">{{ detail.scoreRate == null ? '未完成' : `${fmt(detail.scoreRate)}%` }}</div>
+            <div class="metric-value" :class="{ pending: detail.scoreRate == null }">{{ detail.scoreRate == null ? '未完成' : `${fmt(detail.scoreRate)}%` }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">综合评定</div>
@@ -148,7 +148,7 @@
               <el-tag v-if="detail.gradeName" :type="gradeTagType(detail.gradeName)" effect="dark" size="large">
                 {{ detail.gradeName }}
               </el-tag>
-              <span v-else class="muted">未完成</span>
+              <span v-else class="pending">未完成</span>
             </div>
           </div>
         </div>
@@ -323,13 +323,6 @@ const ScoreCell = defineComponent({
 
 const ratedCount = (idx: number): number =>
   detail.value ? detail.value.rows.filter((r) => r.clients[idx]?.levelNo != null).length : 0
-
-const alertText = computed(() => {
-  const parts: string[] = []
-  if (detail.value?.reqChanged) parts.push('编辑人员能力要求时选择了不同步，页面数据与当前人员能力要求不一致')
-  if (detail.value?.needRecalc) parts.push('人员能力要求已变更，得分待重算（待泛微流程钩子下次写入时更新）')
-  return parts.join('；')
-})
 
 /** 类别列合并：同一类别的连续行合并为一格 */
 const categorySpans = computed<number[]>(() => {
@@ -513,6 +506,12 @@ onMounted(async () => {
   color: #303133;
   font-variant-numeric: tabular-nums;
   min-height: 28px;
+}
+.metric-value.pending,
+.pending {
+  font-size: 14px;
+  font-weight: 400;
+  color: #bbb;
 }
 </style>
 

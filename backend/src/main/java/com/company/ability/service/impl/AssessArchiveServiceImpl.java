@@ -1,0 +1,430 @@
+package com.company.ability.service.impl;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.company.ability.dto.AssessArchiveDTO;
+import com.company.ability.entity.*;
+import com.company.ability.exception.BusinessException;
+import com.company.ability.mapper.*;
+import com.company.ability.service.AssessArchiveService;
+import com.company.ability.vo.AssessSubjectVO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * 测评归档计算实现
+ *
+ * 要素分 = 等级分值 ÷ 10 × 类别权重(%) ÷ 类别要素数
+ * 实际得分 = 直接领导 × 领导权重% + 客户均分 × 客户权重% + 自评 × 自评权重%
+ * 得分率 = 实际得分 ÷ 岗位标准分 × 100（百分比）
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AssessArchiveServiceImpl implements AssessArchiveService {
+
+    static final int ERR_NO_CLIENT = 40101;
+    static final int ERR_RATING_INCOMPLETE = 40102;
+    static final int ERR_LEVEL_INVALID = 40103;
+    static final int ERR_NO_REQUIREMENT = 40104;
+    static final int ERR_CONFIG_INCOMPLETE = 40105;
+    static final int ERR_PERIOD_CLOSED = 40107;
+
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
+    private static final BigDecimal TEN = new BigDecimal("10");
+    private static final int CALC_SCALE = 6;
+
+    private final AssessPeriodMapper periodMapper;
+    private final AssessSubjectMapper subjectMapper;
+    private final AssessSubjectItemMapper subjectItemMapper;
+    private final AssessSubjectClientMapper subjectClientMapper;
+    private final AssessWeightAbilityMapper abilityWeightMapper;
+    private final AssessWeightAssessorMapper assessorWeightMapper;
+    private final AssessLevelScoreMapper levelScoreMapper;
+    private final AssessGradeLevelMapper gradeMapper;
+    private final UserAbilityReqNewMapper reqNewMapper;
+    private final UserAbilityReqItemMapper reqItemMapper;
+    private final AbilityElementLevelMapper elementLevelMapper;
+    private final AbilityElementMapper elementMapper;
+    private final AbilityCategoryMapper categoryMapper;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public AssessSubjectVO archive(AssessArchiveDTO.ArchiveRequest req) {
+        // 1. 幂等：已归档则直接返回
+        AssessSubject existing = subjectMapper.selectOne(new LambdaQueryWrapper<AssessSubject>()
+                .eq(AssessSubject::getWorkflowRequestId, req.getWorkflowRequestId()));
+        if (existing != null) {
+            log.info("流程 {} 已归档，返回已有结果", req.getWorkflowRequestId());
+            return getSubjectDetail(existing.getId());
+        }
+
+        // 2. 期次必须存在且未关闭
+        AssessPeriod period = periodMapper.selectById(req.getPeriodId());
+        if (period == null || !Objects.equals(period.getCompanyId(), req.getCompanyId())
+                || (period.getStatus() != null && period.getStatus() == 1)) {
+            throw new BusinessException(ERR_PERIOD_CLOSED, "测评期次不存在或已关闭");
+        }
+
+        // 3. 评价人校验
+        List<AssessArchiveDTO.RaterRatings> clients = req.getClients() == null ? List.of() : req.getClients();
+        if (clients.isEmpty()) {
+            throw new BusinessException(ERR_NO_CLIENT, "缺少客户评价人，无法生成测评结果");
+        }
+        if (req.getLeader() == null || req.getSelf() == null) {
+            throw new BusinessException(ERR_RATING_INCOMPLETE, "缺少直接领导或自评的评级");
+        }
+
+        // 4. 人员能力要求：要素集合与要求等级
+        List<UserAbilityReqItem> reqItems = loadRequirementItems(req.getResourceId());
+        Map<Long, Integer> requiredLevel = new LinkedHashMap<>();
+        Map<Long, Long> elementCategory = new HashMap<>();
+        for (UserAbilityReqItem ri : reqItems) {
+            if (ri.getLevelId() == null) {
+                throw new BusinessException(ERR_NO_REQUIREMENT, "要素 " + ri.getElementId() + " 缺少要求等级");
+            }
+            AbilityElementLevel lv = elementLevelMapper.selectById(ri.getLevelId());
+            if (lv == null || lv.getLevel() == null) {
+                throw new BusinessException(ERR_NO_REQUIREMENT, "要素 " + ri.getElementId() + " 的要求等级无效");
+            }
+            requiredLevel.put(ri.getElementId(), lv.getLevel());
+            elementCategory.put(ri.getElementId(), ri.getCategoryId());
+        }
+
+        // 5. 配置快照
+        Config cfg = loadConfig(req.getCompanyId());
+
+        // 6. 评级覆盖校验
+        checkCoverage(requiredLevel.keySet(), req.getLeader());
+        checkCoverage(requiredLevel.keySet(), req.getSelf());
+        for (AssessArchiveDTO.RaterRatings c : clients) {
+            checkCoverage(requiredLevel.keySet(), c);
+        }
+
+        // 7. 类别要素数，用于按要素平分类别权重
+        Map<Long, Long> categoryCount = elementCategory.values().stream()
+                .collect(Collectors.groupingBy(c -> c, Collectors.counting()));
+        for (Long categoryId : categoryCount.keySet()) {
+            if (!cfg.abilityWeight.containsKey(categoryId)) {
+                throw new BusinessException(ERR_CONFIG_INCOMPLETE, "类别 " + categoryId + " 未配置能力类型权重");
+            }
+        }
+
+        // 8. 计算
+        Map<Long, Integer> leaderLevel = toLevelMap(req.getLeader());
+        Map<Long, Integer> selfLevel = toLevelMap(req.getSelf());
+
+        BigDecimal standardTotal = BigDecimal.ZERO;
+        BigDecimal leaderTotal = BigDecimal.ZERO;
+        BigDecimal selfTotal = BigDecimal.ZERO;
+        List<AssessSubjectItem> itemRows = new ArrayList<>();
+        for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
+            Long elementId = e.getKey();
+            Long categoryId = elementCategory.get(elementId);
+            BigDecimal unitWeight = cfg.abilityWeight.get(categoryId);
+            long n = categoryCount.get(categoryId);
+
+            BigDecimal std = unitScore(cfg.levelScore, e.getValue(), unitWeight, n);
+            BigDecimal leaderS = unitScore(cfg.levelScore, leaderLevel.get(elementId), unitWeight, n);
+            BigDecimal selfS = unitScore(cfg.levelScore, selfLevel.get(elementId), unitWeight, n);
+            standardTotal = standardTotal.add(std);
+            leaderTotal = leaderTotal.add(leaderS);
+            selfTotal = selfTotal.add(selfS);
+
+            AssessSubjectItem row = new AssessSubjectItem();
+            row.setCategoryId(categoryId);
+            row.setCategoryName(nameOfCategory(categoryId));
+            row.setElementId(elementId);
+            row.setElementName(nameOfElement(elementId));
+            row.setRequiredLevelNo(e.getValue());
+            row.setStandardScore(round2(std));
+            row.setLeaderLevelNo(leaderLevel.get(elementId));
+            row.setLeaderScore(round2(leaderS));
+            row.setSelfLevelNo(selfLevel.get(elementId));
+            row.setSelfScore(round2(selfS));
+            itemRows.add(row);
+        }
+
+        // 客户：每人单独算合计，再取平均
+        List<AssessSubjectClient> clientRows = new ArrayList<>();
+        BigDecimal clientSum = BigDecimal.ZERO;
+        for (int i = 0; i < clients.size(); i++) {
+            AssessArchiveDTO.RaterRatings c = clients.get(i);
+            Map<Long, Integer> levels = toLevelMap(c);
+            BigDecimal personTotal = BigDecimal.ZERO;
+            for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
+                Long elementId = e.getKey();
+                Long categoryId = elementCategory.get(elementId);
+                BigDecimal s = unitScore(cfg.levelScore, levels.get(elementId),
+                        cfg.abilityWeight.get(categoryId), categoryCount.get(categoryId));
+                personTotal = personTotal.add(s);
+
+                AssessSubjectClient cr = new AssessSubjectClient();
+                cr.setClientResourceId(c.getResourceId());
+                cr.setClientSeq(i + 1);
+                cr.setElementId(elementId);
+                cr.setLevelNo(levels.get(elementId));
+                cr.setScore(round2(s));
+                clientRows.add(cr);
+            }
+            clientSum = clientSum.add(personTotal);
+        }
+        BigDecimal clientAvg = clientSum.divide(BigDecimal.valueOf(clients.size()), CALC_SCALE, RoundingMode.HALF_UP);
+
+        BigDecimal actual = leaderTotal.multiply(cfg.wLeader).add(clientAvg.multiply(cfg.wClient))
+                .add(selfTotal.multiply(cfg.wSelf)).divide(HUNDRED, CALC_SCALE, RoundingMode.HALF_UP);
+        if (standardTotal.signum() <= 0) {
+            throw new BusinessException(ERR_NO_REQUIREMENT, "岗位标准分为 0，无法计算得分率");
+        }
+        BigDecimal rate = actual.multiply(HUNDRED).divide(standardTotal, CALC_SCALE, RoundingMode.HALF_UP);
+        String grade = judgeGrade(rate, cfg.grades);
+
+        // 9. 快照
+        String snapshot = buildSnapshot(cfg);
+
+        // 10. 写入
+        AssessSubject subject = new AssessSubject();
+        subject.setCompanyId(req.getCompanyId());
+        subject.setPeriodId(req.getPeriodId());
+        subject.setResourceId(req.getResourceId());
+        subject.setDepartmentId(req.getDepartmentId());
+        subject.setJobTitleId(req.getJobTitleId());
+        subject.setWorkflowRequestId(req.getWorkflowRequestId());
+        subject.setStatus(0);
+        subject.setStandardScore(round2(standardTotal));
+        subject.setLeaderScore(round2(leaderTotal));
+        subject.setClientScore(round2(clientAvg));
+        subject.setSelfScore(round2(selfTotal));
+        subject.setActualScore(round2(actual));
+        subject.setScoreRate(rate.divide(HUNDRED, 4, RoundingMode.HALF_UP));
+        subject.setGradeName(grade);
+        subject.setSnapshotJson(snapshot);
+        subject.setArchivedBy(req.getArchivedBy());
+        subject.setArchiveTime(LocalDateTime.now());
+        subject.setRevision(0);
+        subjectMapper.insert(subject);
+
+        for (AssessSubjectItem row : itemRows) {
+            row.setSubjectId(subject.getId());
+            subjectItemMapper.insert(row);
+        }
+        for (AssessSubjectClient cr : clientRows) {
+            cr.setSubjectId(subject.getId());
+            subjectClientMapper.insert(cr);
+        }
+
+        log.info("归档测评成功，subjectId: {}, 流程: {}, 实际得分: {}, 得分率: {}%",
+                subject.getId(), req.getWorkflowRequestId(), actual, rate);
+        return getSubjectDetail(subject.getId());
+    }
+
+    @Override
+    public AssessSubjectVO getSubjectDetail(Long subjectId) {
+        AssessSubject s = subjectMapper.selectById(subjectId);
+        if (s == null) {
+            throw new BusinessException("测评结果不存在");
+        }
+        AssessSubjectVO vo = new AssessSubjectVO();
+        vo.setId(s.getId());
+        vo.setPeriodId(s.getPeriodId());
+        vo.setResourceId(s.getResourceId());
+        vo.setWorkflowRequestId(s.getWorkflowRequestId());
+        vo.setStandardScore(s.getStandardScore());
+        vo.setLeaderScore(s.getLeaderScore());
+        vo.setClientScore(s.getClientScore());
+        vo.setSelfScore(s.getSelfScore());
+        vo.setActualScore(s.getActualScore());
+        vo.setScoreRate(s.getScoreRate() == null ? null
+                : s.getScoreRate().multiply(HUNDRED).setScale(2, RoundingMode.HALF_UP));
+        vo.setGradeName(s.getGradeName());
+        vo.setArchiveTime(s.getArchiveTime());
+
+        List<AssessSubjectItem> items = subjectItemMapper.selectList(new LambdaQueryWrapper<AssessSubjectItem>()
+                .eq(AssessSubjectItem::getSubjectId, subjectId)
+                .orderByAsc(AssessSubjectItem::getId));
+        vo.setItems(items.stream().map(i -> {
+            AssessSubjectVO.ItemVO iv = new AssessSubjectVO.ItemVO();
+            iv.setElementId(i.getElementId());
+            iv.setCategoryName(i.getCategoryName());
+            iv.setElementName(i.getElementName());
+            iv.setRequiredLevelNo(i.getRequiredLevelNo());
+            iv.setStandardScore(i.getStandardScore());
+            iv.setLeaderLevelNo(i.getLeaderLevelNo());
+            iv.setLeaderScore(i.getLeaderScore());
+            iv.setSelfLevelNo(i.getSelfLevelNo());
+            iv.setSelfScore(i.getSelfScore());
+            return iv;
+        }).collect(Collectors.toList()));
+
+        List<AssessSubjectClient> clientRows = subjectClientMapper.selectList(new LambdaQueryWrapper<AssessSubjectClient>()
+                .eq(AssessSubjectClient::getSubjectId, subjectId));
+        Map<Integer, List<AssessSubjectClient>> byClient = clientRows.stream()
+                .collect(Collectors.groupingBy(AssessSubjectClient::getClientSeq, TreeMap::new, Collectors.toList()));
+        List<AssessSubjectVO.ClientVO> clientVOs = new ArrayList<>();
+        for (Map.Entry<Integer, List<AssessSubjectClient>> e : byClient.entrySet()) {
+            AssessSubjectVO.ClientVO cv = new AssessSubjectVO.ClientVO();
+            cv.setClientSeq(e.getKey());
+            cv.setClientResourceId(e.getValue().get(0).getClientResourceId());
+            cv.setTotalScore(round2(e.getValue().stream().map(AssessSubjectClient::getScore)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)));
+            clientVOs.add(cv);
+        }
+        vo.setClients(clientVOs);
+        return vo;
+    }
+
+    // ==================== 私有方法 ====================
+
+    private List<UserAbilityReqItem> loadRequirementItems(Long resourceId) {
+        UserAbilityReqNew req = reqNewMapper.selectOne(new LambdaQueryWrapper<UserAbilityReqNew>()
+                .eq(UserAbilityReqNew::getResourceId, resourceId)
+                .orderByDesc(UserAbilityReqNew::getId)
+                .last("OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY"));
+        if (req == null) {
+            throw new BusinessException(ERR_NO_REQUIREMENT, "被测人未配置人员能力要求");
+        }
+        List<UserAbilityReqItem> items = reqItemMapper.selectList(new LambdaQueryWrapper<UserAbilityReqItem>()
+                .eq(UserAbilityReqItem::getReqId, req.getId()));
+        if (items.isEmpty()) {
+            throw new BusinessException(ERR_NO_REQUIREMENT, "被测人的人员能力要求为空");
+        }
+        return items;
+    }
+
+    private void checkCoverage(Set<Long> elementIds, AssessArchiveDTO.RaterRatings rater) {
+        if (rater == null || rater.getRatings() == null) {
+            throw new BusinessException(ERR_RATING_INCOMPLETE, "评价人缺少评级");
+        }
+        Set<Long> rated = new HashSet<>();
+        for (AssessArchiveDTO.RatingItem r : rater.getRatings()) {
+            if (r.getLevelNo() == null || r.getLevelNo() < 1 || r.getLevelNo() > 5) {
+                throw new BusinessException(ERR_LEVEL_INVALID, "等级必须为 1-5");
+            }
+            if (!elementIds.contains(r.getElementId())) {
+                throw new BusinessException(ERR_RATING_INCOMPLETE, "评级包含不在人员能力要求中的要素: " + r.getElementId());
+            }
+            rated.add(r.getElementId());
+        }
+        if (!rated.containsAll(elementIds)) {
+            throw new BusinessException(ERR_RATING_INCOMPLETE, "评价人 " + rater.getResourceId() + " 的评级不完整");
+        }
+    }
+
+    private Map<Long, Integer> toLevelMap(AssessArchiveDTO.RaterRatings rater) {
+        Map<Long, Integer> m = new HashMap<>();
+        for (AssessArchiveDTO.RatingItem r : rater.getRatings()) {
+            m.put(r.getElementId(), r.getLevelNo());
+        }
+        return m;
+    }
+
+    /** 要素得分 = 等级分值 ÷ 10 × 类别权重(%) ÷ 类别要素数 */
+    private BigDecimal unitScore(Map<Integer, BigDecimal> levelScore, Integer levelNo,
+                                 BigDecimal categoryWeightPct, long categoryElementCount) {
+        BigDecimal ls = levelScore.get(levelNo);
+        return ls.divide(TEN, CALC_SCALE, RoundingMode.HALF_UP)
+                .multiply(categoryWeightPct)
+                .divide(BigDecimal.valueOf(categoryElementCount), CALC_SCALE, RoundingMode.HALF_UP);
+    }
+
+    /** 左开右闭 (lower, upper]，null 为无穷 */
+    private String judgeGrade(BigDecimal ratePct, List<AssessGradeLevel> grades) {
+        for (AssessGradeLevel g : grades) {
+            boolean aboveLower = g.getLowerBound() == null || ratePct.compareTo(g.getLowerBound()) > 0;
+            boolean belowUpper = g.getUpperBound() == null || ratePct.compareTo(g.getUpperBound()) <= 0;
+            if (aboveLower && belowUpper) {
+                return g.getLevelName();
+            }
+        }
+        return null;
+    }
+
+    private BigDecimal round2(BigDecimal v) {
+        return v == null ? null : v.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String nameOfCategory(Long categoryId) {
+        AbilityCategory c = categoryMapper.selectById(categoryId);
+        return c == null ? null : c.getCategoryName();
+    }
+
+    private String nameOfElement(Long elementId) {
+        AbilityElement e = elementMapper.selectById(elementId);
+        return e == null ? null : e.getElementName();
+    }
+
+    private Config loadConfig(Long companyId) {
+        Config cfg = new Config();
+        cfg.abilityWeight = new HashMap<>();
+        for (AssessWeightAbility w : abilityWeightMapper.selectList(new LambdaQueryWrapper<AssessWeightAbility>()
+                .eq(AssessWeightAbility::getCompanyId, companyId))) {
+            if (w.getWeight() != null) cfg.abilityWeight.put(w.getCategoryId(), w.getWeight());
+        }
+
+        Map<String, BigDecimal> assessor = new HashMap<>();
+        for (AssessWeightAssessor w : assessorWeightMapper.selectList(new LambdaQueryWrapper<AssessWeightAssessor>()
+                .eq(AssessWeightAssessor::getCompanyId, companyId))) {
+            assessor.put(w.getAssessorCode(), w.getWeight());
+        }
+        cfg.wLeader = assessor.get("LEADER");
+        cfg.wClient = assessor.get("CLIENT");
+        cfg.wSelf = assessor.get("SELF");
+        if (cfg.wLeader == null || cfg.wClient == null || cfg.wSelf == null) {
+            throw new BusinessException(ERR_CONFIG_INCOMPLETE, "测评对象权重未配置完整");
+        }
+
+        cfg.levelScore = new HashMap<>();
+        for (AssessLevelScore l : levelScoreMapper.selectList(new LambdaQueryWrapper<AssessLevelScore>()
+                .eq(AssessLevelScore::getCompanyId, companyId))) {
+            cfg.levelScore.put(l.getLevelNo(), l.getScore());
+        }
+        if (cfg.levelScore.size() != 5) {
+            throw new BusinessException(ERR_CONFIG_INCOMPLETE, "等级分值未配置完整（需 1-5 级）");
+        }
+
+        cfg.grades = gradeMapper.selectList(new LambdaQueryWrapper<AssessGradeLevel>()
+                .eq(AssessGradeLevel::getCompanyId, companyId)
+                .orderByAsc(AssessGradeLevel::getSortOrder));
+        if (cfg.grades.isEmpty()) {
+            throw new BusinessException(ERR_CONFIG_INCOMPLETE, "等级标准未配置");
+        }
+        return cfg;
+    }
+
+    private String buildSnapshot(Config cfg) {
+        Map<String, Object> snap = new LinkedHashMap<>();
+        snap.put("abilityWeights", cfg.abilityWeight);
+        snap.put("assessorWeights", Map.of("LEADER", cfg.wLeader, "CLIENT", cfg.wClient, "SELF", cfg.wSelf));
+        snap.put("levelScores", cfg.levelScore);
+        snap.put("gradeLevels", cfg.grades.stream().map(g -> Map.of(
+                "levelName", g.getLevelName(),
+                "lowerBound", g.getLowerBound() == null ? "" : g.getLowerBound().toPlainString(),
+                "upperBound", g.getUpperBound() == null ? "" : g.getUpperBound().toPlainString())).collect(Collectors.toList()));
+        snap.put("generatedAt", LocalDateTime.now().toString());
+        try {
+            return objectMapper.writeValueAsString(snap);
+        } catch (JsonProcessingException ex) {
+            throw new BusinessException("快照生成失败");
+        }
+    }
+
+    /** 本次计算所用的配置（归档时读取，即快照内容） */
+    private static class Config {
+        Map<Long, BigDecimal> abilityWeight;
+        BigDecimal wLeader;
+        BigDecimal wClient;
+        BigDecimal wSelf;
+        Map<Integer, BigDecimal> levelScore;
+        List<AssessGradeLevel> grades;
+    }
+}

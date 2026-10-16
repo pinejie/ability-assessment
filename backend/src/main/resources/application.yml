@@ -34,6 +34,9 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
+assess:
+  company-id: 1          # 测评数据所属公司（配置表按 company_id 隔离）
+
 jwt:
   secret: ${JWT_SECRET:your-secret-key-must-be-at-least-32-characters-long}
   expiration: 7200  # 2小时（秒）

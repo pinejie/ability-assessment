@@ -1,0 +1,19 @@
+# v1 测评结果表测试数据备份 2026-10-13_01:46:00
+## uf_assess_period
+id | company_id | period_name | status | create_time | update_time | 
+1 | 1 | 2025年度 | 0 | 2026-10-12 16:33:32.2566667 | 2026-10-12 16:33:32.2566667 | 
+## uf_assess_subject
+id | company_id | period_id | resource_id | department_id | job_title_id | workflow_request_id | status | standard_score | leader_score | client_score | self_score | actual_score | score_rate | grade_name | snapshot_json | archived_by | archive_time | revision | create_time | 
+1 | 1 | 1 | 2505 | null | null | 900001 | 0 | 17.00 | 21.00 | 21.00 | 21.00 | 21.00 | 1.2353 | 卓越 | {"abilityWeights":{"6":0.00,"7":10.00,"8":10.00,"9":10.00,"10":10.00,"11":30.00,"12":30.00},"assessorWeights":{"CLIENT":25.00,"SELF":5.00,"LEADER":70.00},"levelScores":{"1":2.00,"2":3.00,"3":5.00,"4":7.00,"5":10.00},"gradeLevels":[{"levelName":"不合格","upperBound":"80.00","lowerBound":""},{"levelName":"基本胜任","upperBound":"95.00","lowerBound":"80.00"},{"levelName":"胜任","upperBound":"110.00","lowerBound":"95.00"},{"levelName":"优秀","upperBound":"120.00","lowerBound":"110.00"},{"levelName":"卓越","upperBound":"","lowerBound":"120.00"}],"generatedAt":"2026-10-13T00:05:28.220954301"} | 1 | 2026-10-13 00:05:28.2300513 | 0 | 2026-10-13 00:05:28.2368378 | 
+## uf_assess_subject_item
+id | subject_id | category_id | category_name | element_id | element_name | required_level_no | standard_score | leader_level_no | leader_score | self_level_no | self_score | 
+1 | 1 | 6 | 能力标准 | 5 | 能力素质模型建立能力 | 1 | 0.00 | 1 | 0.00 | 1 | 0.00 | 
+2 | 1 | 7 | 通用知识 | 6 | 企业文化知识 | 2 | 3.00 | 4 | 7.00 | 4 | 7.00 | 
+3 | 1 | 8 | 通用能力 | 7 | 人际交往能力 | 4 | 7.00 | 4 | 7.00 | 4 | 7.00 | 
+4 | 1 | 9 | 管理能力 | 12 | 自我管理能力 | 4 | 7.00 | 4 | 7.00 | 4 | 7.00 | 
+## uf_assess_subject_client
+id | subject_id | client_resource_id | client_seq | element_id | level_no | score | 
+1 | 1 | 2101 | 1 | 5 | 1 | 0.00 | 
+2 | 1 | 2101 | 1 | 6 | 4 | 7.00 | 
+3 | 1 | 2101 | 1 | 7 | 4 | 7.00 | 
+4 | 1 | 2101 | 1 | 12 | 4 | 7.00 | 

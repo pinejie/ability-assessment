@@ -1,8 +1,10 @@
--- 10 测评计算与写入存储过程（v2）
+-- 10 测评计算与写入存储过程（v3）
 -- 数据库：SQL Server 2016 RTM。使用 IF OBJECT_ID + DROP + CREATE（2016 RTM 不支持 CREATE OR ALTER）。
 -- 配置按 company_id 读取（uf_assess_weight_ability / uf_assess_weight_assessor / uf_assess_level_score / uf_assess_grade_level）。
--- usp_assess_rate  ：泛微钩子唯一写入入口（写评级 + 调用计算）
+-- usp_assess_rate  ：泛微钩子唯一写入入口（写评级 + 客户名单整体覆盖 + 调用计算）
 -- usp_assess_recalc：计算得分，只由 usp_assess_rate 调用
+-- v3（2026-10-16）：usp_assess_rate 新增 @client_ids_json——以流程 cpkh 为准，
+--   删除不在本次客户名单中的历史客户评级，重新触发后客户评级与最新选择一致。
 
 IF OBJECT_ID('dbo.usp_assess_recalc', 'P') IS NOT NULL DROP PROCEDURE dbo.usp_assess_recalc;
 GO
@@ -163,7 +165,8 @@ CREATE PROCEDURE dbo.usp_assess_rate
     @rater_type          VARCHAR(10),
     @rater_resource_id   BIGINT,
     @workflow_request_id BIGINT,
-    @ratings_json        NVARCHAR(MAX)
+    @ratings_json        NVARCHAR(MAX),
+    @client_ids_json     NVARCHAR(MAX) = NULL   -- 本次客户名单（流程 cpkh），如 [3785,2381]；NULL 不做客户名单覆盖
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -222,7 +225,16 @@ BEGIN
         THROW 50103, N'等级值不合法', 1;
     END
 
-    -- 6. 客户序号：同一客户沿用原序号，新客户取最大序号+1
+    -- 6. 客户名单覆盖：传入名单时，删除不在本次名单中的历史客户评级。
+    --    名单来自流程 cpkh，同批次每个评价人的调用传同一份，重复执行幂等；
+    --    传空数组 [] 表示本次未选任何客户，清空该页面全部客户评级。
+    IF @client_ids_json IS NOT NULL
+        DELETE FROM dbo.uf_assess_sheet_rating
+        WHERE sheet_id = @sheet_id AND rater_type = 'CLIENT'
+          AND rater_resource_id NOT IN (SELECT client_id FROM OPENJSON(@client_ids_json)
+                                        WITH (client_id BIGINT '$'));
+
+    -- 7. 客户序号：同一客户沿用原序号，新客户取最大序号+1
     IF @rater_type = 'CLIENT'
     BEGIN
         SELECT @seq = MAX(client_seq) FROM dbo.uf_assess_sheet_rating
@@ -233,7 +245,7 @@ BEGIN
             WHERE sheet_id = @sheet_id AND rater_type = 'CLIENT';
     END
 
-    -- 7a. 领导评级：同一要素只保留一条，新领导的评级覆盖旧评级（已确认）
+    -- 8a. 领导评级：同一要素只保留一条，新领导的评级覆盖旧评级（已确认）
     IF @rater_type = 'LEADER'
         DELETE FROM dbo.uf_assess_sheet_rating
         WHERE sheet_id = @sheet_id AND rater_type = 'LEADER'
@@ -241,7 +253,7 @@ BEGIN
           AND element_id IN (SELECT j.element_id FROM OPENJSON(@ratings_json)
                              WITH (element_id BIGINT '$.elementId') j);
 
-    -- 7b. 按唯一键 upsert 评级（覆盖式）
+    -- 8b. 按唯一键 upsert 评级（覆盖式）
     MERGE dbo.uf_assess_sheet_rating AS t
     USING (
         SELECT j.element_id, j.level_no
@@ -258,18 +270,21 @@ BEGIN
         VALUES (@sheet_id, s.element_id, @rater_type, @rater_resource_id,
                 CASE WHEN @rater_type = 'CLIENT' THEN @seq END, s.level_no, @workflow_request_id, SYSDATETIME());
 
-    -- 8. 计算得分（同一事务）
+    -- 9. 计算得分（同一事务）
     EXEC dbo.usp_assess_recalc @sheet_id = @sheet_id;
 
-    -- 9. 日志
+    -- 10. 日志（记录本次客户名单，便于追溯覆盖情况）
     INSERT dbo.uf_assess_sheet_log (sheet_id, action, operator_resource_id, detail_json, create_time)
     VALUES (@sheet_id, 'RATE', @rater_resource_id,
             CONCAT(N'{"raterType":"', @rater_type, N'","workflowRequestId":', @workflow_request_id,
-                   N',"count":', (SELECT COUNT(*) FROM OPENJSON(@ratings_json)), N'}'), SYSDATETIME());
+                   N',"count":', (SELECT COUNT(*) FROM OPENJSON(@ratings_json)),
+                   CASE WHEN @client_ids_json IS NOT NULL
+                        THEN CONCAT(N',"clientList":', @client_ids_json) ELSE N'' END,
+                   N'}'), SYSDATETIME());
 
     COMMIT;
 
-    -- 10. 返回页面当前状态
+    -- 11. 返回页面当前状态
     SELECT id AS sheetId, status, need_recalc, client_count, standard_score, leader_score,
            client_score, self_score, actual_score, score_rate, grade_name
     FROM dbo.uf_assess_sheet WHERE id = @sheet_id;

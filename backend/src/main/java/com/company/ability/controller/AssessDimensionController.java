@@ -4,6 +4,7 @@ import com.company.ability.dto.AssessDimensionCreateDTO;
 import com.company.ability.dto.AssessDimensionUpdateDTO;
 import com.company.ability.dto.DimensionAuthItemDTO;
 import com.company.ability.dto.Result;
+import com.company.ability.security.UserContext;
 import com.company.ability.service.AssessDimensionService;
 import com.company.ability.vo.AssessDimensionAuthVO;
 import com.company.ability.vo.AssessDimensionVO;
@@ -40,11 +41,14 @@ public class AssessDimensionController {
         return Result.success(assessDimensionService.listAll());
     }
 
-    @Operation(summary = "查询指定人员可用的维度（顶栏切换器；不传 resourceId 返回全部启用维度）")
+    @Operation(summary = "查询当前登录用户可用的维度（顶栏切换器）")
     @GetMapping("/authorized")
     public Result<List<AssessDimensionVO>> authorized(
             @RequestParam(required = false) Long resourceId) {
-        return Result.success(assessDimensionService.authorized(resourceId));
+        // SSO 登录后身份取自 JWT（服务端权威，不可伪造）；无登录态时回退查询参数（宽松兼容旧调用）
+        Long currentResourceId = UserContext.currentResourceIdOrNull();
+        return Result.success(assessDimensionService.authorized(
+                currentResourceId != null ? currentResourceId : resourceId));
     }
 
     @Operation(summary = "创建维度")

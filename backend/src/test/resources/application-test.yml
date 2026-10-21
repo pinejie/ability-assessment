@@ -9,6 +9,11 @@ spring:
       mode: always
       schema-locations: classpath:schema-test.sql
 
+assess:
+  auth:
+    # 测试环境不配置 oa.sso.*，关闭强校验让 SsoConfigValidator 跳过（业务用例不依赖登录）
+    enforced: false
+
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

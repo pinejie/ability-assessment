@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS uf_ability_category (
     description VARCHAR(500),
     status INT DEFAULT 1,
     sort INT DEFAULT 0,
+    dimension_id BIGINT DEFAULT 1,
     create_by BIGINT,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_by BIGINT,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS uf_ability_element (
     element_code VARCHAR(50),
     category_id BIGINT NOT NULL,
     description VARCHAR(500),
+    allow_client_assess INT DEFAULT 0,
     status INT DEFAULT 1,
     sort INT DEFAULT 0,
     create_by BIGINT,
@@ -52,7 +54,7 @@ CREATE TABLE IF NOT EXISTS uf_org_ability_req (
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 岗位能力要求表
+-- 岗位能力要求表（旧版，保留兼容）
 CREATE TABLE IF NOT EXISTS uf_position_ability_req (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     job_title_id BIGINT NOT NULL,
@@ -60,6 +62,25 @@ CREATE TABLE IF NOT EXISTS uf_position_ability_req (
     description VARCHAR(500),
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 岗位能力要求主表（新版，实体 PositionAbilityReq）
+CREATE TABLE IF NOT EXISTS uf_position_ability_req_new (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    department_id BIGINT,
+    job_title_id BIGINT NOT NULL,
+    description VARCHAR(500),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 岗位能力要求明细（新版，实体 PositionAbilityReqItem）
+CREATE TABLE IF NOT EXISTS uf_position_ability_req_item (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    req_id BIGINT NOT NULL,
+    category_id BIGINT,
+    element_id BIGINT NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 人员能力要求表

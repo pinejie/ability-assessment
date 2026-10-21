@@ -7,14 +7,19 @@ spring:
   application:
     name: ability-assessment
 
+  # 本地敏感配置（数据库账号、oa.sso.client-secret、jwt.secret），文件已 gitignore，不提交
+  config:
+    import: "optional:file:./config/secret.yml"
+
   profiles:
     active: dev
 
+  # 账号口令来自 config/secret.yml（开发）或环境变量（部署），二者皆缺失则启动失败
   datasource:
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
-    url: jdbc:sqlserver://172.18.28.108:1433;databaseName=ecology;encrypt=false
-    username: sa
-    password: (REDACTED-BY-FILTER-REPO-20261022)
+    url: ${OA_DB_URL:jdbc:sqlserver://172.18.28.108:1433;databaseName=ecology;encrypt=false}
+    username: ${OA_DB_USER}
+    password: ${OA_DB_PASSWORD}
 
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
@@ -36,6 +41,19 @@ mybatis-plus:
 
 assess:
   company-id: 1          # 测评数据所属公司（配置表按 company_id 隔离）
+  auth:
+    enforced: true       # 业务接口强制登录（false 仅限开发调试回退，禁止公网）
+
+# 泛微 OAuth2 单点登录（契约见《异构系统接入OAuth2认证开发说明》v4.0）
+oa:
+  sso:
+    base-url: http://xcx.zhongda.cn:8080
+    client-id: 1feab8b2-bd67-42da-8a31-2dce003fc73a   # 泛微注册应用 CBA（weaver_sso_app.id=5）
+    # client-secret 由 backend/config/secret.yml 提供
+    redirect-uri: http://172.18.28.206:3000/sso/callback   # 开发环境=本机前端；正式部署需同步改泛微注册
+    connect-timeout: 5000
+    read-timeout: 10000
+    state-ttl-seconds: 300
 
 jwt:
   secret: ${JWT_SECRET:your-secret-key-must-be-at-least-32-characters-long}

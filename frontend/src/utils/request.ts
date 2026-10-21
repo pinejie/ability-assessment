@@ -2,6 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { DIMENSION_STORAGE_KEY } from './dimensionKey'
+import { clearAuth, getToken, redirectToSsoLogin } from './auth'
 
 interface ApiResult<T> {
   code: number
@@ -18,8 +19,8 @@ const service: AxiosInstance = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   (config) => {
-    // 从 localStorage 获取 token
-    const token = localStorage.getItem('token')
+    // 登录 JWT（SSO 回调成功后由 utils/auth 写入）
+    const token = getToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -50,6 +51,12 @@ service.interceptors.response.use(
     }
   },
   (error) => {
+    // HTTP 401：登录态缺失/过期 → 清理本地凭证并重新发起泛微 SSO（工具内置循环保护）
+    if (error.response?.status === 401) {
+      clearAuth()
+      redirectToSsoLogin()
+      return Promise.reject(error)
+    }
     console.error('响应错误:', error)
     ElMessage.error(error.message || '网络错误')
     return Promise.reject(error)

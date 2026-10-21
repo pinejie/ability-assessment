@@ -1,11 +1,24 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { getToken, isAuthExpired, redirectToSsoLogin } from '@/utils/auth'
 
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'Home',
     redirect: '/ability-categories',
+  },
+  {
+    path: '/sso/callback',
+    name: 'SsoCallback',
+    component: () => import('@/views/SsoCallback.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/sso/error',
+    name: 'SsoError',
+    component: () => import('@/views/SsoError.vue'),
+    meta: { public: true },
   },
   {
     path: '/assess-dimensions',
@@ -66,6 +79,17 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+/**
+ * 全局登录守卫：无登录态的页面访问整页跳转后端发起泛微 SSO。
+ * 10 秒内已自动跳转过仍未拿到登录态时落到错误提示页，避免死循环。
+ */
+router.beforeEach((to) => {
+  if (to.meta.public || (getToken() && !isAuthExpired())) {
+    return true
+  }
+  return redirectToSsoLogin(to.fullPath) ? false : { name: 'SsoError' }
 })
 
 export default router

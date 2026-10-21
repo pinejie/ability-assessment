@@ -44,7 +44,14 @@
               :value="d.id"
             />
           </el-select>
-          <span class="user-name">管理员</span>
+          <el-dropdown trigger="click" @command="handleUserCommand">
+            <span class="user-name">{{ displayName }} <span class="user-caret">▾</span></span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </header>
 
@@ -59,14 +66,39 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useDimensionStore } from '@/stores/dimension'
+import { useUserStore } from '@/stores/user'
+import { requestLogout } from '@/api/auth'
+import { getToken } from '@/utils/auth'
 
 const route = useRoute()
 const dimensionStore = useDimensionStore()
+const userStore = useUserStore()
 
 onMounted(() => {
-  dimensionStore.load()
+  // 仅在已有登录态时拉取维度列表（SSO 回调页首次挂载无 token，避免 401 触发跳转循环）
+  if (getToken()) {
+    dimensionStore.load()
+  }
 })
+
+const displayName = computed(() => userStore.user?.name ?? '未登录')
+
+/** 顶栏用户下拉菜单命令 */
+const handleUserCommand = async (command: string) => {
+  if (command !== 'logout') return
+  try {
+    const { logoutUrl } = await requestLogout()
+    userStore.clear()
+    // 跳转泛微统一注销（同时结束本系统与 OA 会话）
+    window.location.assign(logoutUrl)
+  } catch {
+    userStore.clear()
+    ElMessage.success('已退出本系统登录')
+    window.location.reload()
+  }
+}
 
 /** 切换维度：持久化选择后整页刷新，让所有列表按新维度重新加载 */
 const handleDimensionChange = (id: number) => {
@@ -239,6 +271,13 @@ body {
 .user-name {
   font-size: 14px;
   color: #4E5969;
+  cursor: pointer;
+  outline: none;
+}
+
+.user-caret {
+  font-size: 12px;
+  color: #86909C;
 }
 
 /* 页面内容 */

@@ -197,6 +197,20 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
         return result;
     }
 
+    @Override
+    public boolean isAuthorizedForUser(Long dimensionId, Long resourceId) {
+        List<AssessDimensionAuth> auths = authMapper.selectList(
+                new LambdaQueryWrapper<AssessDimensionAuth>()
+                        .eq(AssessDimensionAuth::getDimensionId, dimensionId));
+        if (auths.isEmpty() || resourceId == null) {
+            return true;
+        }
+        List<Long> subs = jdbc.queryForList(
+                "SELECT subcompanyid1 FROM HrmResource WHERE id = ?", Long.class, resourceId);
+        Long subcompanyId = subs.isEmpty() ? null : subs.get(0);
+        return isAuthorizedFor(dimensionId, auths, resourceId, subcompanyId);
+    }
+
     /**
      * 无授权行 = 所有人可用；提供 resourceId 时要求命中「人员精确授权」或「人员所属分部授权」。
      * resourceId 为空（系统尚无统一登录）：宽松模式不过滤——否则配了授权的维度连管理入口都不可达；

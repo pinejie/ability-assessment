@@ -48,4 +48,10 @@ public interface AssessDimensionService {
      * resourceId 为空时返回全部启用维度（当前系统无统一登录，未传用户时不做过滤）。
      */
     List<AssessDimensionVO> authorized(Long resourceId);
+
+    /**
+     * 判断人员对指定维度是否有访问权（请求级越权校验用）。
+     * 与 authorized() 同一套规则：无授权行 = 所有人可用。
+     */
+    boolean isAuthorizedForUser(Long dimensionId, Long resourceId);
 }

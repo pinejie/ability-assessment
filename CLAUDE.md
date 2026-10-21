@@ -123,6 +123,7 @@ ability-assessment/
 | 人员能力要求 | `/api/v1/user-ability-reqs-new` | 人员能力要求 | 按人员配置，记录岗位来源，被引用时禁止删除 |
 | 能力测评配置 | `/api/v1/assess-config` | 能力测评配置 | 能力类型权重、测评对象权重、等级标准、等级分值 |
 | 泛微组织数据 | `/api/v1/sub-companies`、`/departments`、`/job-titles`、`/resources`、`/search/*` 等 | 各选择器组件 | 通过 `JdbcTemplate` 只读查询泛微 `Hr*` 表 |
+| 认证（SSO） | `/api/v1/auth/sso/login`、`/sso/callback`、`/me`、`/logout` | SsoCallback/SsoError 页、路由守卫 | 泛微 OAuth2 单点登录，JWT 签发校验（详见 SSO 一节） |
 
 **能力测评配置（`/api/v1/assess-config`）接口：**
 
@@ -169,11 +170,12 @@ ability-assessment/
   - 维度与授权：`uf_assess_dimension` / `uf_assess_dimension_auth`（分部/人员，无授权行=所有人可用），接口 `/api/v1/assess-dimensions`。详见 `project/能力测评/02-架构设计.md` 第十三节。
 - **客户评价开关：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
 
-### 认证与权限（现状与规划）
+### 认证与权限（2026-10-21 已落地）
 
-- **现状：** `SecurityConfig` 中 `anyRequest().permitAll()`，CSRF 与 Session 已关闭，**接口当前未做登录校验**。
-- **规划：** 泛微账号密码（HrmResource 表）+ JWT Token；权限在泛微端维护，系统只读取。
-- 在规划的认证方案落地前，请勿将服务暴露到公网。
+- **登录：** 泛微 OAuth2 单点登录（weaversso 认证中心，详见「单点登录（SSO）」一节与 `project/能力测评/02-架构设计.md` 第七节）。授权码换 JWT：`AuthController`（/api/v1/auth/sso/*、/me、/logout）→ `SsoLoginService` → `OaSsoClient` → HrmResource（loginid，status=1 在职）。
+- **鉴权：** `assess.auth.enforced=true`（默认）时业务接口全部要求 `Authorization: Bearer <JWT>`；`JwtAuthFilter` 解析、未认证统一返回 401 JSON。设 false 回退匿名（仅开发调试，禁止公网）。
+- **权限：** 账号与组织权威在泛微端，本系统只读；维度授权已升级为按 JWT 人员身份强制过滤（`UserContext`）。请求级越权：`DimensionContextFilter` 对已登录用户的 `X-Dimension-Id` 按授权表校验，无权维度直接 403（`AssessDimensionService.isAuthorizedForUser`）；无登录身份的内部调用维持宽松。
+- 备用「Ecology 账密校验」方案（`登录密码校验方案.md`）未启用。
 
 ---
 
@@ -206,7 +208,8 @@ ability-assessment/
 - `uf_position_ability_req_item`（岗位能力要求明细）
 - `uf_ability_element_level`（能力要素等级）
 
-**规划中、尚未在代码中使用的表：** `uf_assessment_task`、`uf_assessment_score`、`uf_sso_token`、`uf_jwt_token`、`uf_sys_config`。
+**规划中、尚未在代码中使用的表：** `uf_assessment_task`、`uf_assessment_score`、`uf_sys_config`。
+**已作废（不再创建）：** `uf_sso_token`、`uf_jwt_token`——SSO 改走 OAuth2 后 ticket/JWT 均不落库。
 
 **泛微只读表：** `HrmSubCompany`、`HrmDepartment`、`HrmJobGroups`、`HrmJobActivities`、`HrmJobTitles`、`HrmResource`。
 
@@ -220,9 +223,15 @@ ability-assessment/
 |--------|------|
 | `server.port` | 8080 |
 | `spring.profiles.active` | dev |
-| `spring.datasource.url` / `username` / `password` | SQL Server 连接信息（当前直接写在 yml 中，见「安全事项」） |
-| `jwt.secret` | 环境变量 `JWT_SECRET`，缺省值仅供开发，至少 32 字符 |
+| `spring.datasource.url` / `username` / `password` | SQL Server 连接信息。口令经 `config/secret.yml`（开发）或环境变量 `OA_DB_USER`/`OA_DB_PASSWORD`（部署）注入，两者皆缺则启动失败 |
+| `jwt.secret` | 环境变量 `JWT_SECRET` 或 `config/secret.yml`；开发实际值在 secret.yml |
 | `jwt.expiration` | 7200 秒（2 小时） |
+| `oa.sso.*` | 泛微 OAuth2：base-url/client-id/redirect-uri/超时/state TTL |
+| `assess.auth.enforced` | 业务接口强制登录开关（默认 true） |
+
+**本地敏感配置 `backend/config/secret.yml`**（已 gitignore，经 `spring.config.import` 加载）：
+`spring.datasource.username/password`、`oa.sso.client-secret`、`jwt.secret`。缺失且
+`assess.auth.enforced=true` 时 `SsoConfigValidator` 会拒绝启动并给出指引。新克隆需先创建该文件。
 
 ### 前端（`frontend/.env.development`）
 
@@ -232,31 +241,43 @@ VITE_API_BASE_URL=/api/v1   # 开发时经 Vite 代理转发到 http://localhost
 
 ---
 
-## 单点登录（SSO）— 设计目标，尚未实现
+## 单点登录（SSO）— 已实现（泛微 OAuth2 / weaversso）
 
-**目标流程：**
-1. 用户在泛微登录后，点击"能力测评系统"菜单
-2. 泛微生成 SSO Token，存储到 uf_sso_token 表
-3. 泛微跳转到独立应用：http://localhost:8080/sso?token=xxx
-4. 独立应用接收 Token，调用泛微 SSO 验证接口
-5. 验证通过，从 HrmResource 表获取用户信息，生成 JWT Token
-6. 前端存储 JWT Token，自动登录，跳转到首页
+**对接依据：** 泛微官方《异构系统接入 OAuth2 认证开发说明》v4.0。
+**认证中心：** `http://xcx.zhongda.cn:8080`（接口 `/sso/oauth2.0/authorize|accessToken|profile`、`/sso/logout`）。
+**应用注册：** 泛微 `weaver_sso_app` id=5「CBA」，client_id `1feab8b2-bd67-42da-8a31-2dce003fc73a`。
+
+**实际流程：**
+1. 用户访问前端任意页 → 无 JWT → 路由守卫整页跳 `GET /api/v1/auth/sso/login?from=<原页面>`
+2. 后端签发 state（16 位随机短凭证，回跳地址存服务端内存映射、一次性消费）→ 302 到 OA
+   authorize；OA 已登录则直接回跳 `/sso/callback?ticket=ST-…&state=…`（ticket 60 秒一次有效）
+3. 回调页 POST `/api/v1/auth/sso/callback {ticket,state}` → 后端验 state、
+   ticket 换 access_token（参数名 code）、取 profile.id（=OA loginid）
+4. loginid 查 HrmResource（status=1）→ 签发 JWT（2h）→ 前端存 localStorage + Pinia → 回原页面
+
+**要点：**
+- ticket 在 URL 中参数名为 `ticket`、换 token 时参数名为 `code`（同一个值）
+- 账号规则为同名映射：`apploginid = loginid`，无需 relatedAccount/映射表
+- 原设计的 `uf_sso_token`/`uf_jwt_token` 落库方案**已作废**（无状态，不落库）
+- 前端有 10 秒 SSO 跳转循环保护；回跳仅允许站内相对路径
 
 ---
 
 ## 安全事项
 
-- **数据库密码明文存放于 `application.yml`，且已提交到 Git 历史。** 应改为环境变量或外部配置文件，并轮换该密码。
-- `jwt.secret` 缺省值为占位字符串，生产环境必须通过 `JWT_SECRET` 注入强随机密钥。
-- 接口当前无鉴权（见「认证与权限」）。
-- `.env.*` 文件不要提交；`.gitignore` 已忽略 `.env`、`.env.local`、`.env.production`。
+- ~~数据库密码明文存放于 `application.yml`~~（2026-10-21 已迁移至 `config/secret.yml`/环境变量）。**遗留：旧口令仍在 Git 历史，轮换该数据库密码待办。**
+- `jwt.secret` 与 `oa.sso.client-secret` 走 `backend/config/secret.yml`（已 gitignore）；生产用环境变量注入亦可。
+- 业务接口已强制 JWT 登录（`assess.auth.enforced`）；**SSO 联调期若需匿名访问，临时置 false 后务必改回**。
+- 残余风险（已知并接受）：OA 认证中心为公网 IP + 明文 HTTP；JWT 无黑名单，签发后 2 小时内有效；`.env.*` 与 secret.yml 不入 Git。
 
 ---
 
 ## 已知问题
 
-- **后端测试无法编译：** `backend/src/test/.../ScoreWeightServiceTest.java` 与 `UserAbilityReqServiceTest.java` 仍引用已删除的旧类（`ScoreWeight*`、`UserAbilityReq*`），`mvn test` 会失败。需要改写为针对 `AssessConfigService` 与 `UserAbilityReqNew*` 的测试，或删除过时用例。
+- **工具输出掩码可污染字符串字面量（2026-10-21 实际踩过）：** 本工作环境会把形似密钥的字符串以 `***` 掩码展示；若照抄掩码结果写回文件，会把真实值毁成字面 `***`（曾使 `utils/auth.ts` 三个 localStorage key 同名，token 被 user 覆盖 → SSO 登录成功但请求永远 401 循环）。用 `awk 'NR==x{print length($0)}'` 按字节长度核验文件真实内容，勿凭显示值断言；给密钥类字面量取名避开 token/jwt/secret 等词。
 - **建表脚本不完整：** 见「数据库设计」中的三张待补充表。
+- **Maven 不在 PATH：** 本机使用 `~/apache-maven-3.9.16/bin/mvn`（下文命令中的 `mvn` 均指该路径）。
+- ~~后端测试无法编译~~（已解决：过时用例已删除；2026-10-21 修复 H2 测试库 `schema-test.sql` 与维度/客户评价/新版岗位表实体字段漂移，`mvn test` 全量 42 用例通过）。
 - **安全：** 见「安全事项」。
 
 ---

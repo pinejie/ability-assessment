@@ -1,6 +1,7 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.AssessConfigDTO;
 import com.company.ability.entity.AbilityCategory;
 import com.company.ability.entity.AssessGradeLevel;
@@ -56,6 +57,10 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     private static final Map<String, String> ASSESSOR_NAMES = Map.of(
             "LEADER", "直接领导", "CLIENT", "客户评分", "SELF", "自评分");
     private static final BigDecimal HUNDRED = new BigDecimal("100");
+    /** 等级分值固定为 1-5 级（读取端补骨架、保存端校验共用此不变量） */
+    private static final int MAX_LEVEL_NO = 5;
+    /** 分值物理上限：列类型 DECIMAL(5,2)（sql/08），超出会触发算术溢出 500，提前拦成业务提示 */
+    private static final BigDecimal MAX_LEVEL_SCORE = new BigDecimal("999.99");
 
     private final AbilityCategoryService abilityCategoryService;
     private final AssessWeightAbilityMapper abilityMapper;
@@ -63,18 +68,32 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     private final AssessGradeLevelMapper gradeMapper;
     private final AssessLevelScoreMapper levelScoreMapper;
 
+    /**
+     * 当前维度：配置读写一律显式带上（无请求头时回落默认维度 1），
+     * 不依赖租户拦截器——拦截器在无头时跳过过滤，先删后插的模式会跨维度误删。
+     * 有头时与拦截器追加的条件同值，重复无害。
+     */
+    private static long currentDim() {
+        return DimensionContext.getOrDefault();
+    }
+
     // ==================== 能力类型权重 ====================
 
     @Override
     public List<AssessConfigVO.AbilityWeightVO> getAbilityWeights(Long companyId) {
+        long dim = currentDim();
         Map<Long, BigDecimal> saved = abilityMapper.selectList(
-                new LambdaQueryWrapper<AssessWeightAbility>().eq(AssessWeightAbility::getCompanyId, companyId))
+                new LambdaQueryWrapper<AssessWeightAbility>()
+                        .eq(AssessWeightAbility::getCompanyId, companyId)
+                        .eq(AssessWeightAbility::getDimensionId, dim))
                 .stream().collect(Collectors.toMap(AssessWeightAbility::getCategoryId,
                         w -> w.getWeight() == null ? BigDecimal.ZERO : w.getWeight(), (a, b) -> a, HashMap::new));
 
         List<AssessConfigVO.AbilityWeightVO> result = new ArrayList<>();
         for (AbilityCategory c : abilityCategoryService.list(
-                new LambdaQueryWrapper<AbilityCategory>().orderByAsc(AbilityCategory::getSort))) {
+                new LambdaQueryWrapper<AbilityCategory>()
+                        .eq(AbilityCategory::getDimensionId, dim)
+                        .orderByAsc(AbilityCategory::getSort))) {
             AssessConfigVO.AbilityWeightVO vo = new AssessConfigVO.AbilityWeightVO();
             vo.setCategoryId(c.getId());
             vo.setCategoryName(c.getCategoryName());
@@ -89,8 +108,10 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     @Transactional(rollbackFor = Exception.class)
     public void saveAbilityWeights(AssessConfigDTO.AbilityWeightSaveDTO dto) {
         List<AssessConfigDTO.AbilityWeightItem> items = dto.getItems() == null ? List.of() : dto.getItems();
+        long dim = currentDim();
 
-        Map<Long, AbilityCategory> categories = abilityCategoryService.list().stream()
+        Map<Long, AbilityCategory> categories = abilityCategoryService.list(
+                        new LambdaQueryWrapper<AbilityCategory>().eq(AbilityCategory::getDimensionId, dim)).stream()
                 .collect(Collectors.toMap(AbilityCategory::getId, c -> c));
         Set<Long> enabledIds = categories.values().stream()
                 .filter(c -> c.getStatus() != null && c.getStatus() == 1)
@@ -118,24 +139,30 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         }
 
         abilityMapper.delete(new LambdaQueryWrapper<AssessWeightAbility>()
-                .eq(AssessWeightAbility::getCompanyId, dto.getCompanyId()));
+                .eq(AssessWeightAbility::getCompanyId, dto.getCompanyId())
+                .eq(AssessWeightAbility::getDimensionId, dim));
         for (AssessConfigDTO.AbilityWeightItem item : items) {
             AssessWeightAbility e = new AssessWeightAbility();
             e.setCompanyId(dto.getCompanyId());
+            e.setDimensionId(dim);
             e.setCategoryId(item.getCategoryId());
             e.setWeight(item.getWeight());
             abilityMapper.insert(e);
         }
-        log.info("保存能力类型权重成功，companyId: {}, 条数: {}", dto.getCompanyId(), items.size());
+        log.info("保存能力类型权重成功，companyId: {}, dimensionId: {}, 条数: {}", dto.getCompanyId(), dim, items.size());
     }
 
     // ==================== 测评对象权重 ====================
 
     @Override
     public List<AssessConfigVO.AssessorWeightVO> getAssessorWeights(Long companyId) {
+        // merge 函数防重复键抛 IllegalStateException（toMap 无 merge 时遇重复键直接 500）
         Map<String, BigDecimal> saved = assessorMapper.selectList(
-                new LambdaQueryWrapper<AssessWeightAssessor>().eq(AssessWeightAssessor::getCompanyId, companyId))
-                .stream().collect(Collectors.toMap(AssessWeightAssessor::getAssessorCode, AssessWeightAssessor::getWeight));
+                new LambdaQueryWrapper<AssessWeightAssessor>()
+                        .eq(AssessWeightAssessor::getCompanyId, companyId)
+                        .eq(AssessWeightAssessor::getDimensionId, currentDim()))
+                .stream().collect(Collectors.toMap(AssessWeightAssessor::getAssessorCode,
+                        AssessWeightAssessor::getWeight, (a, b) -> a));
         List<AssessConfigVO.AssessorWeightVO> result = new ArrayList<>();
         for (String code : ASSESSOR_CODES) {
             AssessConfigVO.AssessorWeightVO vo = new AssessConfigVO.AssessorWeightVO();
@@ -151,6 +178,7 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     @Transactional(rollbackFor = Exception.class)
     public void saveAssessorWeights(AssessConfigDTO.AssessorWeightSaveDTO dto) {
         List<AssessConfigDTO.AssessorWeightItem> items = dto.getItems() == null ? List.of() : dto.getItems();
+        long dim = currentDim();
 
         Map<String, BigDecimal> sent = new HashMap<>();
         for (AssessConfigDTO.AssessorWeightItem item : items) {
@@ -171,15 +199,17 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         }
 
         assessorMapper.delete(new LambdaQueryWrapper<AssessWeightAssessor>()
-                .eq(AssessWeightAssessor::getCompanyId, dto.getCompanyId()));
+                .eq(AssessWeightAssessor::getCompanyId, dto.getCompanyId())
+                .eq(AssessWeightAssessor::getDimensionId, dim));
         for (String code : ASSESSOR_CODES) {
             AssessWeightAssessor e = new AssessWeightAssessor();
             e.setCompanyId(dto.getCompanyId());
+            e.setDimensionId(dim);
             e.setAssessorCode(code);
             e.setWeight(sent.get(code));
             assessorMapper.insert(e);
         }
-        log.info("保存测评对象权重成功，companyId: {}", dto.getCompanyId());
+        log.info("保存测评对象权重成功，companyId: {}, dimensionId: {}", dto.getCompanyId(), dim);
     }
 
     // ==================== 等级标准 ====================
@@ -189,6 +219,7 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         List<AssessConfigVO.GradeLevelVO> result = new ArrayList<>();
         for (AssessGradeLevel g : gradeMapper.selectList(new LambdaQueryWrapper<AssessGradeLevel>()
                 .eq(AssessGradeLevel::getCompanyId, companyId)
+                .eq(AssessGradeLevel::getDimensionId, currentDim())
                 .orderByAsc(AssessGradeLevel::getSortOrder))) {
             AssessConfigVO.GradeLevelVO vo = new AssessConfigVO.GradeLevelVO();
             vo.setLevelName(g.getLevelName());
@@ -204,6 +235,7 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     @Transactional(rollbackFor = Exception.class)
     public void saveGradeLevels(AssessConfigDTO.GradeLevelSaveDTO dto) {
         List<AssessConfigDTO.GradeLevelItem> items = dto.getItems() == null ? List.of() : dto.getItems();
+        long dim = currentDim();
         if (items.isEmpty()) {
             throw new BusinessException(ERR_GRADE_EMPTY, "等级标准至少保留一行");
         }
@@ -240,31 +272,43 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         }
 
         gradeMapper.delete(new LambdaQueryWrapper<AssessGradeLevel>()
-                .eq(AssessGradeLevel::getCompanyId, dto.getCompanyId()));
+                .eq(AssessGradeLevel::getCompanyId, dto.getCompanyId())
+                .eq(AssessGradeLevel::getDimensionId, dim));
         for (int i = 0; i < items.size(); i++) {
             AssessConfigDTO.GradeLevelItem item = items.get(i);
             AssessGradeLevel e = new AssessGradeLevel();
             e.setCompanyId(dto.getCompanyId());
+            e.setDimensionId(dim);
             e.setLevelName(item.getLevelName());
             e.setLowerBound(item.getLowerBound());
             e.setUpperBound(item.getUpperBound());
             e.setSortOrder(i + 1);
             gradeMapper.insert(e);
         }
-        log.info("保存等级标准成功，companyId: {}, 行数: {}", dto.getCompanyId(), items.size());
+        log.info("保存等级标准成功，companyId: {}, dimensionId: {}, 行数: {}", dto.getCompanyId(), dim, items.size());
     }
 
     // ==================== 等级分值 ====================
 
+    /**
+     * 固定返回 1-5 级骨架：未配置的级 score 为 null。
+     * 新维度（库里无行）页面也能直接出现 5 行供填写保存，避免"空表无法初始化"死锁。
+     */
     @Override
     public List<AssessConfigVO.LevelScoreVO> getLevelScores(Long companyId) {
-        List<AssessConfigVO.LevelScoreVO> result = new ArrayList<>();
+        Map<Integer, BigDecimal> saved = new HashMap<>();
         for (AssessLevelScore e : levelScoreMapper.selectList(new LambdaQueryWrapper<AssessLevelScore>()
                 .eq(AssessLevelScore::getCompanyId, companyId)
-                .orderByAsc(AssessLevelScore::getLevelNo))) {
+                .eq(AssessLevelScore::getDimensionId, currentDim()))) {
+            if (e.getLevelNo() != null && e.getScore() != null) {
+                saved.put(e.getLevelNo(), e.getScore());
+            }
+        }
+        List<AssessConfigVO.LevelScoreVO> result = new ArrayList<>();
+        for (int levelNo = 1; levelNo <= MAX_LEVEL_NO; levelNo++) {
             AssessConfigVO.LevelScoreVO vo = new AssessConfigVO.LevelScoreVO();
-            vo.setLevelNo(e.getLevelNo());
-            vo.setScore(e.getScore());
+            vo.setLevelNo(levelNo);
+            vo.setScore(saved.get(levelNo));
             result.add(vo);
         }
         return result;
@@ -274,11 +318,12 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     @Transactional(rollbackFor = Exception.class)
     public void saveLevelScores(AssessConfigDTO.LevelScoreSaveDTO dto) {
         List<AssessConfigDTO.LevelScoreItem> items = dto.getItems() == null ? List.of() : dto.getItems();
+        long dim = currentDim();
 
         // 必须正好 1-5 级各一行
         Map<Integer, BigDecimal> byLevel = new HashMap<>();
         for (AssessConfigDTO.LevelScoreItem item : items) {
-            if (item.getLevelNo() == null || item.getLevelNo() < 1 || item.getLevelNo() > 5) {
+            if (item.getLevelNo() == null || item.getLevelNo() < 1 || item.getLevelNo() > MAX_LEVEL_NO) {
                 throw new BusinessException(ERR_LEVEL_SCORE, "等级序号必须为 1-5");
             }
             if (byLevel.containsKey(item.getLevelNo())) {
@@ -287,13 +332,16 @@ public class AssessConfigServiceImpl implements AssessConfigService {
             if (item.getScore() == null || item.getScore().compareTo(BigDecimal.ZERO) <= 0) {
                 throw new BusinessException(ERR_LEVEL_SCORE, "等级 " + item.getLevelNo() + " 的分值必须大于 0");
             }
+            if (item.getScore().compareTo(MAX_LEVEL_SCORE) > 0) {
+                throw new BusinessException(ERR_LEVEL_SCORE, "等级 " + item.getLevelNo() + " 的分值不能超过 999.99");
+            }
             byLevel.put(item.getLevelNo(), item.getScore());
         }
-        if (byLevel.size() != 5) {
+        if (byLevel.size() != MAX_LEVEL_NO) {
             throw new BusinessException(ERR_LEVEL_SCORE, "等级分值必须同时配置 1-5 级");
         }
         // 分值须随等级升高严格递增
-        for (int level = 2; level <= 5; level++) {
+        for (int level = 2; level <= MAX_LEVEL_NO; level++) {
             if (byLevel.get(level).compareTo(byLevel.get(level - 1)) <= 0) {
                 throw new BusinessException(ERR_LEVEL_SCORE,
                         "等级 " + level + " 的分值必须大于等级 " + (level - 1) + " 的分值");
@@ -301,14 +349,16 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         }
 
         levelScoreMapper.delete(new LambdaQueryWrapper<AssessLevelScore>()
-                .eq(AssessLevelScore::getCompanyId, dto.getCompanyId()));
-        for (int level = 1; level <= 5; level++) {
+                .eq(AssessLevelScore::getCompanyId, dto.getCompanyId())
+                .eq(AssessLevelScore::getDimensionId, dim));
+        for (int level = 1; level <= MAX_LEVEL_NO; level++) {
             AssessLevelScore e = new AssessLevelScore();
             e.setCompanyId(dto.getCompanyId());
+            e.setDimensionId(dim);
             e.setLevelNo(level);
             e.setScore(byLevel.get(level));
             levelScoreMapper.insert(e);
         }
-        log.info("保存等级分值成功，companyId: {}", dto.getCompanyId());
+        log.info("保存等级分值成功，companyId: {}, dimensionId: {}", dto.getCompanyId(), dim);
     }
 }

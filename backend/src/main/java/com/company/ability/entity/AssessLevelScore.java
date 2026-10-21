@@ -17,6 +17,9 @@ public class AssessLevelScore {
 
     private Long companyId;
 
+    /** 所属维度（类租户） */
+    private Long dimensionId;
+
     private Integer levelNo;
 
     private BigDecimal score;

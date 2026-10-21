@@ -17,6 +17,9 @@ public class AssessWeightAssessor {
 
     private Long companyId;
 
+    /** 所属维度（类租户） */
+    private Long dimensionId;
+
     private String assessorCode;
 
     private BigDecimal weight;

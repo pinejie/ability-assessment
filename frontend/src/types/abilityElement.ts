@@ -6,6 +6,8 @@ export interface AbilityElementVO {
   categoryId: number
   categoryName: string
   description: string
+  // 是否允许客户评价：1-允许，0-不允许（不允许时客户分按 0 计入加权总分）
+  allowClientAssess?: number
   status: number
   sort: number
   createBy: number
@@ -20,6 +22,7 @@ export interface AbilityElementCreateDTO {
   elementCode?: string
   categoryId: number
   description?: string
+  allowClientAssess?: number
   status?: number
   sort?: number
 }
@@ -31,6 +34,7 @@ export interface AbilityElementUpdateDTO {
   elementCode?: string
   categoryId?: number
   description?: string
+  allowClientAssess?: number
   status?: number
   sort?: number
 }

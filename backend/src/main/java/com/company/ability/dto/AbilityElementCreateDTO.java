@@ -37,6 +37,11 @@ public class AbilityElementCreateDTO {
     private String description;
 
     /**
+     * 是否允许客户评价：1-允许，0-不允许
+     */
+    private Integer allowClientAssess = 1;
+
+    /**
      * 状态：1-启用，0-禁用
      */
     private Integer status = 1;

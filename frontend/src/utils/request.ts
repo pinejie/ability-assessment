@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
+import { DIMENSION_STORAGE_KEY } from './dimensionKey'
 
 interface ApiResult<T> {
   code: number
@@ -22,6 +23,10 @@ service.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+    // 当前维度（类租户），后端据此过滤业务数据。
+    // 冷启动时 localStorage 尚未写入（维度列表在布局挂载后才加载），必须兜底默认维度 1，
+    // 否则请求无头 → 后端宽松模式跨维度读数据。与后端 DimensionContext.getOrDefault 口径一致。
+    config.headers['X-Dimension-Id'] = localStorage.getItem(DIMENSION_STORAGE_KEY) || '1'
     return config
   },
   (error) => {

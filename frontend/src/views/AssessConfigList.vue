@@ -76,7 +76,7 @@
         <div class="block-header">
           <span>3. 等级标准（区间为左开右闭 (下限, 上限]）</span>
           <div>
-            <el-button :disabled="gradeRows.length < 2" @click="insertGradeRow">新增区间</el-button>
+            <el-button @click="insertGradeRow">新增区间</el-button>
             <el-button type="primary" :disabled="!gradeCanSave" :loading="savingGrade" @click="saveGrade">保存</el-button>
           </div>
         </div>
@@ -108,7 +108,7 @@
         </el-table-column>
         <el-table-column label="操作" width="140">
           <template #default="{ $index }">
-            <el-button link type="primary" :disabled="gradeRows.length <= 1" @click="removeGradeRow($index)">删除</el-button>
+            <el-button link type="primary" @click="removeGradeRow($index)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -116,7 +116,6 @@
         {{ gradeHint }}
       </div>
     </el-card>
-  </div>
 
     <!-- 4. 等级分值 -->
     <el-card class="config-block" v-loading="loadingLevel">
@@ -132,7 +131,7 @@
         </el-table-column>
         <el-table-column label="分值" width="200">
           <template #default="{ row }">
-            <el-input-number v-model="row.score" :min="0" :precision="2" controls-position="right" placeholder="必填" style="width: 160px" />
+            <el-input-number v-model="row.score" :min="0" :max="999.99" :precision="2" controls-position="right" placeholder="必填" style="width: 160px" />
           </template>
         </el-table-column>
       </el-table>
@@ -140,6 +139,7 @@
         {{ levelOk ? '分值校验通过（随等级升高而递增）' : levelError }}
       </div>
     </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -294,7 +294,7 @@ const saveAssessor = async () => {
 /** 校验等级标准，返回第一个错误信息，无错误返回空串 */
 const gradeError = computed(() => {
   const rows = gradeRows.value
-  if (rows.length === 0) return '等级标准至少保留一行'
+  if (rows.length < 2) return '等级标准至少需要两行（负无穷～上限，下限～正无穷），点「新增区间」初始化'
   const last = rows.length - 1
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]
@@ -323,7 +323,12 @@ const onUpperChange = (index: number) => {
 /** 删除一行：首行删除则下一行变首行；末行删除则上一行变末行；中间行删除则并入下一行 */
 const removeGradeRow = (index: number) => {
   const rows = gradeRows.value
-  if (rows.length <= 1) return
+  if (rows.length === 0) return
+  if (rows.length === 1) {
+    // 允许删空：保存校验会拦（至少两行），「新增区间」可一键重建骨架
+    rows.splice(index, 1)
+    return
+  }
   if (index === 0) {
     rows[1].lowerBound = null
   } else if (index === rows.length - 1) {
@@ -334,10 +339,24 @@ const removeGradeRow = (index: number) => {
   rows.splice(index, 1)
 }
 
-/** 新增区间：插入到末行之前，末行保持为正无穷；新行上限需用户填写 */
+/**
+ * 新增区间：按钮始终可点，行为按当前行数自适应——
+ * 空表初始化首尾两行骨架；单行补足为骨架（单行上限被正无穷占位永远填不合法）；
+ * 两行及以上插入到末行之前，末行保持为正无穷。填写是否合法由保存校验兜底。
+ */
 const insertGradeRow = () => {
   const rows = gradeRows.value
-  if (rows.length < 2) return
+  if (rows.length === 0) {
+    gradeRows.value = [
+      { levelName: '', lowerBound: null, upperBound: null },
+      { levelName: '', lowerBound: null, upperBound: null },
+    ]
+    return
+  }
+  if (rows.length === 1) {
+    rows.push({ levelName: '', lowerBound: null, upperBound: null })
+    return
+  }
   const last = rows[rows.length - 1]
   rows.splice(rows.length - 1, 0, { levelName: '', lowerBound: last.lowerBound, upperBound: null })
 }
@@ -383,8 +402,11 @@ const saveGrade = async () => {
 
 const levelError = computed(() => {
   const rows = levelRows.value
-  if (rows.length !== 5) return '必须同时配置 1-5 级'
-  if (rows.some(r => r.score === null || r.score <= 0)) return '分值必须大于 0'
+  // 后端固定返回 1-5 级骨架（空维度为 5 行 null）；行数不对只可能是接口异常/旧版本
+  if (rows.length !== 5) return '等级分值应固定为 1-5 级共 5 行，请刷新页面重试'
+  // 未填：后端缺字段/用户清空输入（null 与 undefined 都落在这）
+  if (rows.some(r => !Number.isFinite(r.score as number))) return '请填写 1-5 级分值'
+  if (rows.some(r => (r.score as number) <= 0)) return '分值必须大于 0'
   for (let i = 1; i < rows.length; i++) {
     if ((rows[i].score as number) <= (rows[i - 1].score as number)) {
       return `${rows[i].levelNo} 级分值必须大于 ${rows[i - 1].levelNo} 级`
@@ -398,7 +420,9 @@ const levelCanSave = computed(() => levelOk.value && !savingLevel.value)
 const loadLevel = async () => {
   loadingLevel.value = true
   try {
-    levelRows.value = (await getLevelScores(COMPANY_ID)).map(v => ({ ...v }))
+    const list = await getLevelScores(COMPANY_ID)
+    // 未配置的级后端返回缺 score（JSON 省略 null），归一为 null，避免 undefined 绕过校验
+    levelRows.value = list.map(v => ({ levelNo: v.levelNo, score: v.score ?? null }))
   } catch (e) {
     console.error('加载等级分值失败:', e)
   } finally {

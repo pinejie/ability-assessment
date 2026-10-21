@@ -16,9 +16,20 @@ public class AssessPeriod {
 
     private Long companyId;
 
+    /**
+     * 表无此列，仅历史保留（修复 selectById 报 Invalid column name 'period_name' 的隐性 bug）
+     */
+    @TableField(exist = false)
     private String periodName;
 
+    private Integer year;
+
     private Integer status;
+
+    /**
+     * 所属维度（类租户）
+     */
+    private Long dimensionId;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;

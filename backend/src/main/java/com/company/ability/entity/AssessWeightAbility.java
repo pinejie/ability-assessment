@@ -17,6 +17,9 @@ public class AssessWeightAbility {
 
     private Long companyId;
 
+    /** 所属维度（类租户） */
+    private Long dimensionId;
+
     private Long categoryId;
 
     /** 权重（百分比），null 表示未填写 */

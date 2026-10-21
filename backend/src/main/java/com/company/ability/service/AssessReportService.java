@@ -60,17 +60,19 @@ public class AssessReportService {
      * 该页面没有快照，之后读取时走实时计算（仍为只读）。
      */
     public void freezePeriod(long periodId) {
-        List<Long> sheetIds = jdbc.queryForList(
-                "SELECT id FROM uf_assess_sheet WHERE period_id = ?", Long.class, periodId);
-        for (Long sheetId : sheetIds) {
+        List<Map<String, Object>> sheets = jdbc.queryForList(
+                "SELECT id, ISNULL(dimension_id, 1) AS dimension_id FROM uf_assess_sheet WHERE period_id = ?", periodId);
+        for (Map<String, Object> sheet : sheets) {
+            Long sheetId = ((Number) sheet.get("id")).longValue();
+            Long dimensionId = ((Number) sheet.get("dimension_id")).longValue();
             try {
                 AssessSheetVO.Report r = build(sheetId);
                 r.setClosed(true);
                 r.setFrozen(false);
                 String json = writeJson(r);
                 jdbc.update("DELETE FROM uf_assess_report_snapshot WHERE sheet_id = ?", sheetId);
-                jdbc.update("INSERT INTO uf_assess_report_snapshot (sheet_id, report_json, freeze_time) " +
-                        "VALUES (?, ?, SYSDATETIME())", sheetId, json);
+                jdbc.update("INSERT INTO uf_assess_report_snapshot (sheet_id, report_json, freeze_time, dimension_id) " +
+                        "VALUES (?, ?, SYSDATETIME(), ?)", sheetId, json, dimensionId);
             } catch (RuntimeException e) {
                 log.warn("年度关闭时报告快照失败，已跳过，sheetId={}，原因：{}", sheetId, e.getMessage());
                 jdbc.update("INSERT INTO uf_assess_sheet_log (sheet_id, action, operator_resource_id, detail_json, create_time) " +
@@ -102,19 +104,24 @@ public class AssessReportService {
         r.setResourceName(d.getResourceName());
         fillHeader(sheetId, r);
 
+        // 配置按页面所属维度读取（与存储过程 usp_assess_recalc 口径一致）
+        Long dimensionId = jdbc.queryForObject(
+                "SELECT ISNULL(dimension_id, 1) FROM uf_assess_sheet WHERE id = ?", Long.class, sheetId);
+
         Map<String, BigDecimal> weights = new LinkedHashMap<>();
         for (Map<String, Object> m : jdbc.queryForList(
-                "SELECT assessor_code, weight FROM uf_assess_weight_assessor WHERE company_id = ?", companyId)) {
+                "SELECT assessor_code, weight FROM uf_assess_weight_assessor WHERE company_id = ? AND dimension_id = ?",
+                companyId, dimensionId)) {
             weights.put((String) m.get("assessor_code"), (BigDecimal) m.get("weight"));
         }
         BigDecimal wLeader = weights.get("LEADER");
         BigDecimal wClient = weights.get("CLIENT");
         BigDecimal wSelf = weights.get("SELF");
         if (wLeader == null || wClient == null || wSelf == null) {
-            throw new BusinessException("评分权重配置不完整，无法生成报告");
+            throw new BusinessException("评分权重配置不完整，无法生成报告（请检查当前维度下的测评配置）");
         }
 
-        List<AssessSheetVO.GradeBand> bands = loadBands();
+        List<AssessSheetVO.GradeBand> bands = loadBands(dimensionId);
         r.setGradeBands(bands);
 
         // 按类别汇总（保持页面的类别顺序）
@@ -211,17 +218,17 @@ public class AssessReportService {
         }
     }
 
-    private List<AssessSheetVO.GradeBand> loadBands() {
+    private List<AssessSheetVO.GradeBand> loadBands(Long dimensionId) {
         return jdbc.query(
                 "SELECT level_name, lower_bound, upper_bound FROM uf_assess_grade_level" +
-                " WHERE company_id = ? ORDER BY sort_order",
+                " WHERE company_id = ? AND dimension_id = ? ORDER BY sort_order",
                 (rs, i) -> {
                     AssessSheetVO.GradeBand b = new AssessSheetVO.GradeBand();
                     b.setLevelName(rs.getString("level_name"));
                     b.setLowerBound(rs.getBigDecimal("lower_bound"));
                     b.setUpperBound(rs.getBigDecimal("upper_bound"));
                     return b;
-                }, companyId);
+                }, companyId, dimensionId);
     }
 
     private Integer periodStatusOfSheet(long sheetId) {

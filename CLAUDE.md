@@ -114,6 +114,7 @@ ability-assessment/
 
 | 模块 | 后端入口 | 前端页面 | 说明 |
 |------|----------|----------|------|
+| 维度管理（类租户） | `/api/v1/assess-dimensions` | 维度管理 | 维度 CRUD、分部/人员授权配置、顶栏维度切换（`/authorized`） |
 | 能力类别管理 | `/api/v1/ability-categories` | 能力类别管理 | 能力类别 CRUD，删除前校验引用 |
 | 能力要素管理 | `/api/v1/ability-elements` | 能力要素管理 | 要素 CRUD，启用要素时自动启用所属类别 |
 | 能力等级 | `/api/v1/ability-element-levels` | 能力要素等级弹窗 | 要素的等级定义 |
@@ -161,7 +162,12 @@ ability-assessment/
 
 - **分层架构：** Controller → Service → Mapper
 - **泛微数据访问：** 组织架构数据（`HrmSubCompany`、`HrmDepartment`、`HrmJobTitles`、`HrmResource` 等）通过 `JdbcTemplate` 只读访问，不做写入
-- **数据隔离：** 业务表按 `company_id` 过滤（目标约定，新表需遵守）
+- **数据隔离：** 业务表按 `dimension_id`（维度，类租户）+ `company_id` 过滤。
+  - 维度机制：前端顶栏切换维度 → 请求头 `X-Dimension-Id` → `DimensionContextFilter` → `DimensionContext`（ThreadLocal）→ MyBatis-Plus 租户拦截器（`MyBatisPlusConfig.TENANT_TABLES` 清单内的表自动拼 `WHERE dimension_id=?` 并在 INSERT 自动填充）；JdbcTemplate 原生 SQL（AssessPeriodService / AssessSheet* / AssessReportService）手动拼过滤，未列入清单的表（平台表、钩子直写子表）不拦截。
+  - 上下文缺失（泛微钩子等）为宽松模式：拦截跳过、原生 SQL 回落默认维度（id=1）。新增表参与隔离时同步维护 `TENANT_TABLES` 清单。前端 `request.ts` 对 `X-Dimension-Id` 缺省兜底 `'1'`，UI 请求永远带头。
+  - **「先删后插」的整表覆盖式保存禁止只靠拦截器隔离**：写路径必须显式带 `dimension_id`（delete 加 eq、insert set），否则宽松模式下 delete 跨维度误删。落点：`AssessConfigServiceImpl`（四组配置 getter/save 显式带维度，读取返回固定骨架）。
+  - 维度与授权：`uf_assess_dimension` / `uf_assess_dimension_auth`（分部/人员，无授权行=所有人可用），接口 `/api/v1/assess-dimensions`。详见 `project/能力测评/02-架构设计.md` 第十三节。
+- **客户评价开关：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
 
 ### 认证与权限（现状与规划）
 
@@ -179,6 +185,8 @@ ability-assessment/
 
 | 表 | 说明 |
 |----|------|
+| uf_assess_dimension | 测评维度（类租户），id=1 为默认维度 |
+| uf_assess_dimension_auth | 维度授权（auth_type 1-分部 2-人员；无授权行=所有人可用） |
 | uf_ability_category | 能力类别 |
 | uf_ability_element | 能力要素 |
 | uf_org_ability_req | 组织能力要求 |

@@ -8,6 +8,12 @@ const routes: RouteRecordRaw[] = [
     redirect: '/ability-categories',
   },
   {
+    path: '/assess-dimensions',
+    name: 'AssessDimensions',
+    component: () => import('@/views/AssessDimensionList.vue'),
+    meta: { title: '测评维度管理' },
+  },
+  {
     path: '/ability-categories',
     name: 'AbilityCategories',
     component: () => import('@/views/AbilityCategoryList.vue'),

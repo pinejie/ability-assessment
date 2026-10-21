@@ -38,6 +38,11 @@ public class AbilityElement {
     private String description;
 
     /**
+     * 是否允许客户评价：1-允许，0-不允许（不允许时客户分按 0 计入加权总分）
+     */
+    private Integer allowClientAssess;
+
+    /**
      * 状态：1-启用，0-禁用
      */
     private Integer status;

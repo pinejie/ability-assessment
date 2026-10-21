@@ -16,6 +16,11 @@ public class AssessSubjectClient {
 
     private Long subjectId;
 
+    /**
+     * 所属维度（类租户），与主表一致
+     */
+    private Long dimensionId;
+
     private Long clientResourceId;
 
     private Integer clientSeq;

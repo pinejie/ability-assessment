@@ -17,6 +17,9 @@ public class AssessGradeLevel {
 
     private Long companyId;
 
+    /** 所属维度（类租户） */
+    private Long dimensionId;
+
     private String levelName;
 
     private BigDecimal lowerBound;

@@ -1,6 +1,7 @@
 package com.company.ability.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.AssessArchiveDTO;
 import com.company.ability.entity.*;
 import com.company.ability.exception.BusinessException;
@@ -76,6 +77,10 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             throw new BusinessException(ERR_PERIOD_CLOSED, "测评期次不存在或已关闭");
         }
 
+        // 2b. 维度由期次传导（钩子调用不带维度头，所有取数/落库按此维度过滤）
+        long dimensionId = period.getDimensionId() != null
+                ? period.getDimensionId() : DimensionContext.DEFAULT_DIMENSION_ID;
+
         // 3. 评价人校验
         List<AssessArchiveDTO.RaterRatings> clients = req.getClients() == null ? List.of() : req.getClients();
         if (clients.isEmpty()) {
@@ -85,8 +90,8 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             throw new BusinessException(ERR_RATING_INCOMPLETE, "缺少直接领导或自评的评级");
         }
 
-        // 4. 人员能力要求：要素集合与要求等级
-        List<UserAbilityReqItem> reqItems = loadRequirementItems(req.getResourceId());
+        // 4. 人员能力要求：要素集合与要求等级（限定当期次所属维度）
+        List<UserAbilityReqItem> reqItems = loadRequirementItems(req.getResourceId(), dimensionId);
         Map<Long, Integer> requiredLevel = new LinkedHashMap<>();
         Map<Long, Long> elementCategory = new HashMap<>();
         for (UserAbilityReqItem ri : reqItems) {
@@ -97,18 +102,30 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             if (lv == null || lv.getLevel() == null) {
                 throw new BusinessException(ERR_NO_REQUIREMENT, "要素 " + ri.getElementId() + " 的要求等级无效");
             }
+            // 要求等级范围与同步服务（AssessSheetSyncService）同口径：越界会查不到等级分值，
+            // 存储过程对同数据是静默算错（join 不上），Java 侧显式报错
+            if (lv.getLevel() < 1 || lv.getLevel() > 5) {
+                throw new BusinessException(ERR_LEVEL_INVALID,
+                        "要素 " + ri.getElementId() + " 的要求等级 " + lv.getLevel() + " 超出 1-5 范围");
+            }
             requiredLevel.put(ri.getElementId(), lv.getLevel());
             elementCategory.put(ri.getElementId(), ri.getCategoryId());
         }
 
-        // 5. 配置快照
-        Config cfg = loadConfig(req.getCompanyId());
+        // 4b. 要素是否允许客户评价（做法 B：不允许的要素，客户分按 0 计入加权总分）
+        Map<Long, Boolean> allowClientAssess = loadAllowClientAssess(requiredLevel.keySet());
 
-        // 6. 评级覆盖校验
+        // 5. 配置快照（限定当期次所属维度）
+        Config cfg = loadConfig(req.getCompanyId(), dimensionId);
+
+        // 6. 评级覆盖校验（领导/自评须评全；客户只需评「允许客户评价」的要素，禁止项按 0 计）
         checkCoverage(requiredLevel.keySet(), req.getLeader());
         checkCoverage(requiredLevel.keySet(), req.getSelf());
+        Set<Long> clientRequired = requiredLevel.keySet().stream()
+                .filter(id -> !Boolean.FALSE.equals(allowClientAssess.get(id)))
+                .collect(Collectors.toSet());
         for (AssessArchiveDTO.RaterRatings c : clients) {
-            checkCoverage(requiredLevel.keySet(), c);
+            checkClientCoverage(clientRequired, requiredLevel.keySet(), c);
         }
 
         // 7. 类别要素数，用于按要素平分类别权重
@@ -165,8 +182,11 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
                 Long elementId = e.getKey();
                 Long categoryId = elementCategory.get(elementId);
-                BigDecimal s = unitScore(cfg.levelScore, levels.get(elementId),
-                        cfg.abilityWeight.get(categoryId), categoryCount.get(categoryId));
+                // 禁止客户评价的要素：客户分记 0（评级记录保留，便于追溯）
+                BigDecimal s = Boolean.FALSE.equals(allowClientAssess.get(elementId))
+                        ? BigDecimal.ZERO
+                        : unitScore(cfg.levelScore, levels.get(elementId),
+                                cfg.abilityWeight.get(categoryId), categoryCount.get(categoryId));
                 personTotal = personTotal.add(s);
 
                 AssessSubjectClient cr = new AssessSubjectClient();
@@ -196,6 +216,7 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         AssessSubject subject = new AssessSubject();
         subject.setCompanyId(req.getCompanyId());
         subject.setPeriodId(req.getPeriodId());
+        subject.setDimensionId(dimensionId);
         subject.setResourceId(req.getResourceId());
         subject.setDepartmentId(req.getDepartmentId());
         subject.setJobTitleId(req.getJobTitleId());
@@ -216,10 +237,12 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
 
         for (AssessSubjectItem row : itemRows) {
             row.setSubjectId(subject.getId());
+            row.setDimensionId(dimensionId);
             subjectItemMapper.insert(row);
         }
         for (AssessSubjectClient cr : clientRows) {
             cr.setSubjectId(subject.getId());
+            cr.setDimensionId(dimensionId);
             subjectClientMapper.insert(cr);
         }
 
@@ -285,9 +308,10 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
 
     // ==================== 私有方法 ====================
 
-    private List<UserAbilityReqItem> loadRequirementItems(Long resourceId) {
+    private List<UserAbilityReqItem> loadRequirementItems(Long resourceId, long dimensionId) {
         UserAbilityReqNew req = reqNewMapper.selectOne(new LambdaQueryWrapper<UserAbilityReqNew>()
                 .eq(UserAbilityReqNew::getResourceId, resourceId)
+                .eq(UserAbilityReqNew::getDimensionId, dimensionId)
                 .orderByDesc(UserAbilityReqNew::getId)
                 .last("OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY"));
         if (req == null) {
@@ -320,6 +344,32 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         }
     }
 
+    /**
+     * 客户评级覆盖校验：允许出现全部要求要素范围内的额外评级（含被禁止评价但客户仍提交的，按 0 计），
+     * 但「允许客户评价」的要素必须全部有评级。
+     */
+    private void checkClientCoverage(Set<Long> clientRequired, Set<Long> allRequired,
+                                     AssessArchiveDTO.RaterRatings rater) {
+        if (rater == null || rater.getRatings() == null) {
+            throw new BusinessException(ERR_RATING_INCOMPLETE, "评价人缺少评级");
+        }
+        Set<Long> rated = new HashSet<>();
+        for (AssessArchiveDTO.RatingItem r : rater.getRatings()) {
+            if (r.getLevelNo() == null || r.getLevelNo() < 1 || r.getLevelNo() > 5) {
+                throw new BusinessException(ERR_LEVEL_INVALID, "等级必须为 1-5");
+            }
+            if (!allRequired.contains(r.getElementId())) {
+                throw new BusinessException(ERR_RATING_INCOMPLETE,
+                        "评级包含不在人员能力要求中的要素: " + r.getElementId());
+            }
+            rated.add(r.getElementId());
+        }
+        if (!rated.containsAll(clientRequired)) {
+            throw new BusinessException(ERR_RATING_INCOMPLETE,
+                    "客户评价人 " + rater.getResourceId() + " 缺少允许评价要素的评级");
+        }
+    }
+
     private Map<Long, Integer> toLevelMap(AssessArchiveDTO.RaterRatings rater) {
         Map<Long, Integer> m = new HashMap<>();
         for (AssessArchiveDTO.RatingItem r : rater.getRatings()) {
@@ -328,10 +378,28 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         return m;
     }
 
+    /** 批量读取要素的客户评价开关（缺省按允许处理，兼容未迁移历史行） */
+    private Map<Long, Boolean> loadAllowClientAssess(Set<Long> elementIds) {
+        Map<Long, Boolean> map = new HashMap<>();
+        if (elementIds.isEmpty()) {
+            return map;
+        }
+        for (AbilityElement element : elementMapper.selectBatchIds(elementIds)) {
+            map.put(element.getId(),
+                    element.getAllowClientAssess() == null || element.getAllowClientAssess() != 0);
+        }
+        return map;
+    }
+
     /** 要素得分 = 等级分值 ÷ 10 × 类别权重(%) ÷ 类别要素数 */
     private BigDecimal unitScore(Map<Integer, BigDecimal> levelScore, Integer levelNo,
                                  BigDecimal categoryWeightPct, long categoryElementCount) {
-        BigDecimal ls = levelScore.get(levelNo);
+        // 兜底：前两层（要求等级范围、配置覆盖1-5）已挡住理论路径，此处防未知调用，报业务异常而非 NPE
+        BigDecimal ls = levelNo == null ? null : levelScore.get(levelNo);
+        if (ls == null) {
+            throw new BusinessException(ERR_CONFIG_INCOMPLETE,
+                    "等级 " + levelNo + " 的分值配置缺失，请检查当前维度的等级分值（需 1-5 级）");
+        }
         return ls.divide(TEN, CALC_SCALE, RoundingMode.HALF_UP)
                 .multiply(categoryWeightPct)
                 .divide(BigDecimal.valueOf(categoryElementCount), CALC_SCALE, RoundingMode.HALF_UP);
@@ -363,17 +431,19 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         return e == null ? null : e.getElementName();
     }
 
-    private Config loadConfig(Long companyId) {
+    private Config loadConfig(Long companyId, long dimensionId) {
         Config cfg = new Config();
         cfg.abilityWeight = new HashMap<>();
         for (AssessWeightAbility w : abilityWeightMapper.selectList(new LambdaQueryWrapper<AssessWeightAbility>()
-                .eq(AssessWeightAbility::getCompanyId, companyId))) {
+                .eq(AssessWeightAbility::getCompanyId, companyId)
+                .eq(AssessWeightAbility::getDimensionId, dimensionId))) {
             if (w.getWeight() != null) cfg.abilityWeight.put(w.getCategoryId(), w.getWeight());
         }
 
         Map<String, BigDecimal> assessor = new HashMap<>();
         for (AssessWeightAssessor w : assessorWeightMapper.selectList(new LambdaQueryWrapper<AssessWeightAssessor>()
-                .eq(AssessWeightAssessor::getCompanyId, companyId))) {
+                .eq(AssessWeightAssessor::getCompanyId, companyId)
+                .eq(AssessWeightAssessor::getDimensionId, dimensionId))) {
             assessor.put(w.getAssessorCode(), w.getWeight());
         }
         cfg.wLeader = assessor.get("LEADER");
@@ -385,15 +455,22 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
 
         cfg.levelScore = new HashMap<>();
         for (AssessLevelScore l : levelScoreMapper.selectList(new LambdaQueryWrapper<AssessLevelScore>()
-                .eq(AssessLevelScore::getCompanyId, companyId))) {
+                .eq(AssessLevelScore::getCompanyId, companyId)
+                .eq(AssessLevelScore::getDimensionId, dimensionId))) {
             cfg.levelScore.put(l.getLevelNo(), l.getScore());
         }
-        if (cfg.levelScore.size() != 5) {
-            throw new BusinessException(ERR_CONFIG_INCOMPLETE, "等级分值未配置完整（需 1-5 级）");
+        // 口径对齐存储过程 usp_assess_recalc：要求「键恰好覆盖 1-5」，而非「数量==5」。
+        // 脏数据（如 1,2,3,4,6 也是 5 行）若只查 size 会漏网，后续 unitScore.get(缺的级) 返回 null → NPE 500。
+        for (int level = 1; level <= 5; level++) {
+            if (cfg.levelScore.get(level) == null) {
+                throw new BusinessException(ERR_CONFIG_INCOMPLETE,
+                        "等级分值未配置完整（需 1-5 级，缺第 " + level + " 级）");
+            }
         }
 
         cfg.grades = gradeMapper.selectList(new LambdaQueryWrapper<AssessGradeLevel>()
                 .eq(AssessGradeLevel::getCompanyId, companyId)
+                .eq(AssessGradeLevel::getDimensionId, dimensionId)
                 .orderByAsc(AssessGradeLevel::getSortOrder));
         if (cfg.grades.isEmpty()) {
             throw new BusinessException(ERR_CONFIG_INCOMPLETE, "等级标准未配置");

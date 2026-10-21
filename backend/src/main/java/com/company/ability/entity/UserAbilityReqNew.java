@@ -23,6 +23,11 @@ public class UserAbilityReqNew {
     private Long resourceId;
 
     /**
+     * 所属维度（类租户）
+     */
+    private Long dimensionId;
+
+    /**
      * 描述
      */
     private String description;

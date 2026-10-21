@@ -29,6 +29,21 @@
           <span class="breadcrumb-current">{{ currentPageTitle }}</span>
         </div>
         <div class="user-info">
+          <!-- 维度（类租户）切换：全站数据按所选维度隔离 -->
+          <el-select
+            :model-value="dimensionStore.currentId"
+            class="dimension-select"
+            placeholder="选择维度"
+            :loading="dimensionStore.loading"
+            @change="handleDimensionChange"
+          >
+            <el-option
+              v-for="d in dimensionStore.dimensions"
+              :key="d.id"
+              :label="d.dimensionName"
+              :value="d.id"
+            />
+          </el-select>
           <span class="user-name">管理员</span>
         </div>
       </header>
@@ -42,12 +57,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useDimensionStore } from '@/stores/dimension'
 
 const route = useRoute()
+const dimensionStore = useDimensionStore()
+
+onMounted(() => {
+  dimensionStore.load()
+})
+
+/** 切换维度：持久化选择后整页刷新，让所有列表按新维度重新加载 */
+const handleDimensionChange = (id: number) => {
+  if (id === dimensionStore.currentId) return
+  dimensionStore.setCurrent(id)
+  window.location.reload()
+}
 
 const menuItems = [
+  { path: '/assess-dimensions', title: '维度管理', icon: '🏛' },
   { path: '/ability-categories', title: '能力类别管理', icon: '📋' },
   { path: '/ability-elements', title: '能力要素管理', icon: '🎯' },
   { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
@@ -200,6 +229,11 @@ body {
 .user-info {
   display: flex;
   align-items: center;
+  gap: 16px;
+}
+
+.dimension-select {
+  width: 160px;
 }
 
 .user-name {

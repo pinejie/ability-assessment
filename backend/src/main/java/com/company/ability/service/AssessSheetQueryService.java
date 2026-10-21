@@ -1,5 +1,6 @@
 package com.company.ability.service;
 
+import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.PageResult;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.vo.AssessSheetVO;
@@ -37,10 +38,11 @@ public class AssessSheetQueryService {
         StringBuilder where = new StringBuilder(
                 " FROM uf_assess_sheet s JOIN uf_assess_period p ON p.id = s.period_id" +
                 " LEFT JOIN HrmResource h ON h.id = s.resource_id" +
-                " WHERE s.company_id = ? AND p.year = ?");
+                " WHERE s.company_id = ? AND p.year = ? AND s.dimension_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(companyId);
         args.add(year);
+        args.add(DimensionContext.getOrDefault());
         if (resourceId != null) { where.append(" AND s.resource_id = ?"); args.add(resourceId); }
         if (departmentId != null) { where.append(" AND s.department_id = ?"); args.add(departmentId); }
         if (gradeName != null && !gradeName.isBlank()) { where.append(" AND s.grade_name = ?"); args.add(gradeName); }
@@ -91,7 +93,7 @@ public class AssessSheetQueryService {
                 " FROM uf_assess_sheet s JOIN uf_assess_period p ON p.id = s.period_id" +
                 " LEFT JOIN HrmResource r ON r.id = s.resource_id" +
                 " LEFT JOIN HrmResource l ON l.id = s.leader_resource_id" +
-                " WHERE s.id = ? AND s.company_id = ?",
+                " WHERE s.id = ? AND s.company_id = ? AND s.dimension_id = ?",
                 (rs, i) -> {
                     AssessSheetVO.Detail d = new AssessSheetVO.Detail();
                     d.setId(rs.getLong("id"));
@@ -113,7 +115,7 @@ public class AssessSheetQueryService {
                     d.setScoreRate(rs.getBigDecimal("score_rate"));
                     d.setGradeName(rs.getString("grade_name"));
                     return d;
-                }, sheetId, companyId);
+                }, sheetId, companyId, DimensionContext.getOrDefault());
         if (heads.isEmpty()) throw new BusinessException(404, "测评页面不存在，ID: " + sheetId);
         AssessSheetVO.Detail d = heads.get(0);
 

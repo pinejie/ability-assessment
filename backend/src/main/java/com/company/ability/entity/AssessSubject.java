@@ -19,6 +19,11 @@ public class AssessSubject {
 
     private Long periodId;
 
+    /**
+     * 所属维度（类租户），由期次传导写入
+     */
+    private Long dimensionId;
+
     private Long resourceId;
 
     private Long departmentId;

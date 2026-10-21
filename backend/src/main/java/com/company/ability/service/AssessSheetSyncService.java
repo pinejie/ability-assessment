@@ -1,5 +1,6 @@
 package com.company.ability.service;
 
+import com.company.ability.context.DimensionContext;
 import com.company.ability.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,11 +41,14 @@ public class AssessSheetSyncService {
      * @param syncAssess  编辑时是否同步到已存在的页面；false 时不动页面数据，仅标记 req_changed=1
      */
     public void syncRequirement(long resourceId, int year, boolean syncAssess) {
-        // 1. 年度必须存在且未关闭
+        long dimensionId = DimensionContext.getOrDefault();
+
+        // 1. 年度必须存在且未关闭（按维度隔离）
         List<Map<String, Object>> periods = jdbc.queryForList(
-                "SELECT id, status FROM uf_assess_period WHERE company_id = ? AND year = ?", companyId, year);
+                "SELECT id, status FROM uf_assess_period WHERE company_id = ? AND year = ? AND dimension_id = ?",
+                companyId, year, dimensionId);
         if (periods.isEmpty()) {
-            throw new BusinessException(year + "年度不存在，请先在年度设置中新增");
+            throw new BusinessException(year + "年度不存在，请先在当前维度下的年度设置中新增");
         }
         if (num(periods.get(0).get("status")) == 1) {
             throw new BusinessException(year + "年度已关闭，人员能力要求不允许修改");
@@ -60,8 +64,8 @@ public class AssessSheetSyncService {
                 "LEFT JOIN uf_ability_element e ON e.id = i.element_id " +
                 "LEFT JOIN uf_ability_category c ON c.id = COALESCE(i.category_id, e.category_id) " +
                 "LEFT JOIN uf_ability_element_level l ON l.id = i.level_id " +
-                "WHERE h.resource_id = ? AND h.assess_year = ? ORDER BY i.id",
-                resourceId, year);
+                "WHERE h.resource_id = ? AND h.assess_year = ? AND h.dimension_id = ? ORDER BY i.id",
+                resourceId, year, dimensionId);
 
         if (items.isEmpty()) {
             throw new BusinessException("人员能力要求为空，不允许保存（能力要素由岗位派生）");
@@ -102,9 +106,11 @@ public class AssessSheetSyncService {
         if (sheets.isEmpty()) {
             jdbc.update(
                     "INSERT INTO uf_assess_sheet (company_id, period_id, resource_id, department_id, job_title_id, " +
-                    "  leader_resource_id, status, need_recalc, req_changed, client_count, sync_time, create_time, update_time) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, 0, SYSDATETIME(), SYSDATETIME(), SYSDATETIME())",
-                    companyId, periodId, resourceId, hr.get("departmentid"), hr.get("jobtitle"), hr.get("managerid"));
+                    "  leader_resource_id, status, need_recalc, req_changed, client_count, dimension_id, " +
+                    "  sync_time, create_time, update_time) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, 0, ?, SYSDATETIME(), SYSDATETIME(), SYSDATETIME())",
+                    companyId, periodId, resourceId, hr.get("departmentid"), hr.get("jobtitle"), hr.get("managerid"),
+                    dimensionId);
             sheetId = num(jdbc.queryForObject(
                     "SELECT id FROM uf_assess_sheet WHERE period_id = ? AND resource_id = ?", Long.class, periodId, resourceId));
             action = "GENERATE";
@@ -112,7 +118,7 @@ public class AssessSheetSyncService {
             sheetId = num(sheets.get(0).get("id"));
             if (!syncAssess) {
                 jdbc.update("UPDATE uf_assess_sheet SET req_changed = 1, update_time = SYSDATETIME() WHERE id = ?", sheetId);
-                writeLog(sheetId, "SKIP_SYNC", "{\"reason\":\"user_choose_not_sync\"}");
+                writeLog(sheetId, "SKIP_SYNC", "{\"reason\":\"user_choose_not_sync\"}", dimensionId);
                 log.info("人员能力要求已保存，未同步测评页面，sheetId={}", sheetId);
                 return;
             }
@@ -139,8 +145,8 @@ public class AssessSheetSyncService {
             if (updated == 0) {
                 jdbc.update(
                         "INSERT INTO uf_assess_sheet_row (sheet_id, category_id, category_name, element_id, element_name, " +
-                        "  required_level_no, sort_no, active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-                        sheetId, categoryId, categoryName, elementId, elementName, levelNo, sortNo);
+                        "  required_level_no, sort_no, active, dimension_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                        sheetId, categoryId, categoryName, elementId, elementName, levelNo, sortNo, dimensionId);
             }
         }
 
@@ -154,11 +160,11 @@ public class AssessSheetSyncService {
                 args);
 
         // 5b. 基础数据：类别权重、要素标准分、岗位标准分（由配置与要求等级算出，不依赖评级）
-        writeBaseScores(sheetId, items);
+        writeBaseScores(sheetId, items, dimensionId);
 
         // 6. 日志
         writeLog(sheetId, action, String.format(
-                "{\"elements\":%d,\"deactivated\":%d}", elementIds.size(), deactivated));
+                "{\"elements\":%d,\"deactivated\":%d}", elementIds.size(), deactivated), dimensionId);
         log.info("测评页面{}完成，sheetId={}, 要素={}, 移除={}", action, sheetId, elementIds.size(), deactivated);
     }
 
@@ -170,8 +176,10 @@ public class AssessSheetSyncService {
      * 调用方应在同一事务中继续删除人员能力要求。
      */
     public void removeRequirement(long resourceId, int year) {
+        long dimensionId = DimensionContext.getOrDefault();
         List<Map<String, Object>> periods = jdbc.queryForList(
-                "SELECT id, status FROM uf_assess_period WHERE company_id = ? AND year = ?", companyId, year);
+                "SELECT id, status FROM uf_assess_period WHERE company_id = ? AND year = ? AND dimension_id = ?",
+                companyId, year, dimensionId);
         if (periods.isEmpty()) {
             return; // 年度不存在，说明没有对应页面
         }
@@ -203,15 +211,17 @@ public class AssessSheetSyncService {
      * 写入基础数据：类别权重、要素标准分 S(e) 与岗位标准分。
      * S(e) = 等级分值(要求等级) ÷ 10 × 类别权重 ÷ 类别要素数。配置缺失时对应字段置空。
      */
-    private void writeBaseScores(long sheetId, List<Map<String, Object>> items) {
+    private void writeBaseScores(long sheetId, List<Map<String, Object>> items, long dimensionId) {
         Map<Long, BigDecimal> catWeight = new java.util.HashMap<>();
         for (Map<String, Object> m : jdbc.queryForList(
-                "SELECT category_id, weight FROM uf_assess_weight_ability WHERE company_id = ?", companyId)) {
+                "SELECT category_id, weight FROM uf_assess_weight_ability WHERE company_id = ? AND dimension_id = ?",
+                companyId, dimensionId)) {
             catWeight.put(num(m.get("category_id")), (BigDecimal) m.get("weight"));
         }
         Map<Integer, BigDecimal> levelScore = new java.util.HashMap<>();
         for (Map<String, Object> m : jdbc.queryForList(
-                "SELECT level_no, score FROM uf_assess_level_score WHERE company_id = ?", companyId)) {
+                "SELECT level_no, score FROM uf_assess_level_score WHERE company_id = ? AND dimension_id = ?",
+                companyId, dimensionId)) {
             levelScore.put((int) num(m.get("level_no")), (BigDecimal) m.get("score"));
         }
         Map<Long, Long> countByCat = items.stream().collect(
@@ -242,10 +252,10 @@ public class AssessSheetSyncService {
                 complete ? total.setScale(2, RoundingMode.HALF_UP) : null, sheetId);
     }
 
-    private void writeLog(long sheetId, String action, String detailJson) {
+    private void writeLog(long sheetId, String action, String detailJson, long dimensionId) {
         jdbc.update(
-                "INSERT INTO uf_assess_sheet_log (sheet_id, action, operator_resource_id, detail_json, create_time) " +
-                "VALUES (?, ?, NULL, ?, SYSDATETIME())", sheetId, action, detailJson);
+                "INSERT INTO uf_assess_sheet_log (sheet_id, action, operator_resource_id, detail_json, create_time, dimension_id) " +
+                "VALUES (?, ?, NULL, ?, SYSDATETIME(), ?)", sheetId, action, detailJson, dimensionId);
     }
 
     private static long num(Object o) {

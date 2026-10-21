@@ -38,6 +38,12 @@ public class AbilityCategory {
     private Integer sort;
 
     /**
+     * 所属维度（类租户）。插入时由租户拦截器自动填充；
+     * 显式过滤场景（如无请求头时的兜底维度）供 Wrapper 使用。
+     */
+    private Long dimensionId;
+
+    /**
      * 创建人ID
      */
     @TableField(fill = FieldFill.INSERT)

@@ -50,3 +50,6 @@ temp/
 # 本地配置：含数据库凭据/个人权限，不提交
 .mcp.json
 .claude/settings.local.json
+
+# 本地敏感配置（SSO client-secret / JWT 密钥），勿提交
+backend/config/secret.yml

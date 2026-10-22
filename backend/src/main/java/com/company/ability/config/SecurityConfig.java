@@ -47,6 +47,8 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     // SSO 引导接口（发起跳转 / 回调换 token）
                     .requestMatchers("/api/v1/auth/sso/**").permitAll()
+                    // Agent 交付稿提交（内网 cp_server 调用，无 JWT；服务内强校验 X-Agent-Token）
+                    .requestMatchers(HttpMethod.POST, "/api/v1/agent/draft").permitAll()
                     // 接口文档
                     .requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**",
                             "/swagger-ui/**", "/swagger-ui.html", "/favicon.ico").permitAll();

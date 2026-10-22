@@ -47,6 +47,10 @@ export interface SheetRow {
   clientAvgScore: number | null
   selfLevelNo: number | null
   selfScore: number | null
+  /** 非流程要素行且有外部导入评级 */
+  external?: boolean
+  /** 外部导入的原始分（仅 external 行） */
+  originalScore?: number | null
 }
 
 /** 详情 */

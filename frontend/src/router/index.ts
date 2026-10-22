@@ -77,6 +77,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '测评汇总' },
   },
   {
+    path: '/external-scores',
+    name: 'ExternalScores',
+    component: () => import('@/views/ExternalScoreImport.vue'),
+    meta: { title: '外部评分导入' },
+  },
+  {
     path: '/assess-config',
     name: 'AssessConfig',
     component: () => import('@/views/AssessConfigList.vue'),

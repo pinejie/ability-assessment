@@ -78,6 +78,10 @@ public class AssessSheetVO {
         private BigDecimal clientAvgScore;
         private Integer selfLevelNo;
         private BigDecimal selfScore;
+        /** 非流程要素行且有外部导入评级（sql/25 外部导入通道） */
+        private Boolean external;
+        /** 外部导入的原始分（仅 external 行；页面显示"x 级（原始分 y）"） */
+        private BigDecimal originalScore;
     }
 
     @Data

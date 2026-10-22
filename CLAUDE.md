@@ -122,7 +122,7 @@ ability-assessment/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 │
-├── sql/                              # 建表/运维脚本 01-23（按序执行；22 为默认维度清理脚本，23 为要素「流程需评价」开关列）
+├── sql/                              # 建表/运维脚本 01-25（按序执行；22 默认维度清理，23 要素「流程需评价」开关列，25 外部评分导入：source/original_score、导入稿快照表、usp_assess_external_score/_clear、recalc v5）
 ├── docs/                             # 项目内补充文档
 ├── CLAUDE.md                         # 本文件
 └── README.md
@@ -142,6 +142,7 @@ ability-assessment/
 | 岗位能力要求 | `/api/v1/position-ability-reqs` | 岗位能力要求 | 按部门 + 岗位配置能力要求 |
 | 人员能力要求 | `/api/v1/user-ability-reqs-new` | 人员能力要求 | 按人员配置，记录岗位来源，被引用时禁止删除 |
 | 能力测评配置 | `/api/v1/assess-config` | 能力测评配置 | 能力类型权重、测评对象权重、等级标准、等级分值 |
+| 外部评分导入 | `/api/v1/external/*` | 外部评分导入 | 非流程要素评级与年度分导入通道：preview/commit（要素级 upsert）、refill 按上稿重填、clear 显式清空；全部经存储过程落库 |
 | 泛微组织数据 | `/api/v1/sub-companies`、`/departments`、`/job-titles`、`/resources`、`/search/*` 等 | 各选择器组件 | 通过 `JdbcTemplate` 只读查询泛微 `Hr*` 表 |
 | 认证（SSO） | `/api/v1/auth/sso/login`、`/sso/callback`、`/me`、`/logout` | SsoCallback/SsoError 页、路由守卫 | 泛微 OAuth2 单点登录，JWT 签发校验（详见 SSO 一节）；`/me` 含 `admin` 角色标记 |
 | 管理员配置 | `/api/v1/assess-admins` | 管理员配置（仅**超级**管理员） | 名单维护：新增按泛微在职人员、移除（配置超管与本人不可删）；普通管理员不可见本页 |
@@ -192,6 +193,7 @@ ability-assessment/
 - **客户评价开关（UI 名「需客户评价」）：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
 - **年度唯一激活（2026-10-22）：** 同一公司+维度下「进行中」（status=0）年度至多一个。`AssessPeriodService` 的 create（新增即激活）与 changeStatus(0)（激活）都会**先自动关闭**同维度其他进行中年度（复用关闭链路：status=1 + `reportService.freezePeriod` 报告快照冻结，先关后开以兼容唯一索引），再打开目标；库层兜底为筛选唯一索引 `UX_assess_period_active`（sql/24）。前端年度页在新增/激活确认框中列出将被自动关闭的年度。
 - **流程需评价开关（2026-10-22）：** `uf_ability_element.assess_in_flow`（1-需评价/0-不需评价，`sql/23`）。不需评价的要素：人员要求仍可选并记要求等级（任职标准），但**不进测评页面**——同步服务按「不在要求中」处理（行 `active=0`、评级保留），`n_c`/标准分/完整性校验只数需评价要素、同类权重自动接管（`usp_assess_recalc` 零改动）；归档（`AssessArchiveServiceImpl.loadAssessInFlow`）同口径过滤；全免评的需求拒绝同步/归档。联动：`assess_in_flow=0` 时服务端强制 `allow_client_assess=0`（`AbilityElementServiceImpl.normalizeAssessFlags`，非报错）。详见 `project/能力测评/02-架构设计.md` 第十五节。
+- **外部评分导入（2026-10-22，sql/25）：** `assess_in_flow=0` 的要素可经外部通道导入评级：`uf_assess_sheet_rating` 加 `source`（FLOW/EXTERNAL）与 `original_score`（原始分留存，不参与计算）；导入按**要素级 upsert** 写入（只覆盖本批人×要素，删除仅走显式 clear），每个要素展开到当前 领导/自评/全部客户；`usp_assess_recalc` **v5** 将「active=0 但有 EXTERNAL 评级」的行纳入标准分/完整性/客户计数（做法 B 置 0 对 EXTERNAL 要素豁免；无 EXTERNAL 评级的页面与 v4.1 逐位一致）。Java 侧同口径落点：`AssessArchiveServiceImpl`（EXTERNAL 评级并入归档载荷）、`AssessSheetQueryService`（明细展示外部行与原始分）。导入稿快照表 `uf_assess_external_import_log` 支撑"按上稿重填"与审计。方案：`project/能力测评/10-外部评分导入与Agent交互方案.md`。**注意：sql/25 尚未应用到 ecology 库（MCP 通道只读），应用前本功能接口会报对象名无效。**
 
 ### 认证与权限（2026-10-21 已落地）
 

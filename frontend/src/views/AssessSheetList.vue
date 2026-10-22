@@ -177,7 +177,14 @@
               <span class="num">{{ fmt(row.categoryWeight) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="elementName" label="要素" width="190" fixed="left" show-overflow-tooltip />
+          <el-table-column label="要素" width="230" fixed="left" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span>{{ row.elementName }}</span>
+              <el-tag v-if="row.external" size="small" type="warning" effect="plain" style="margin-left: 6px">
+                外部导入{{ row.originalScore != null ? `（原始分 ${row.originalScore}）` : '' }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="要求等级" width="84" align="center">
             <template #default="{ row }">
               <el-tag size="small" effect="plain">{{ row.requiredLevelNo ?? '-' }}</el-tag>

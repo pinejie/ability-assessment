@@ -163,6 +163,7 @@ const menuItems: MenuItem[] = [
   { path: '/assess-periods', title: '年度设置', icon: '📅' },
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
   { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
+  { path: '/external-scores', title: '外部评分导入', icon: '📥' },
   { path: '/assess-dimensions', title: '维度管理', icon: '🏛', adminOnly: true },
   { path: '/assess-admins', title: '管理员配置', icon: '🛡️', superOnly: true },
 ]

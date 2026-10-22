@@ -134,13 +134,21 @@ public class AssessSheetQueryService {
             byKey.put(r.get("element_id") + "#" + r.get("client_seq"), r);
         }
 
-        // 有效要素行（按排序）
+        // 有效要素行（按排序）：流程有效行 + 已获外部导入评级的非流程行（recalc v5 同口径）
         List<AssessSheetVO.Row> rows = jdbc.query(
-                "SELECT element_id, category_name, category_weight, element_name, required_level_no, standard_score," +
-                "       leader_level_no, leader_score, client_avg_score, self_level_no, self_score" +
-                " FROM uf_assess_sheet_row WHERE sheet_id = ? AND active = 1 ORDER BY sort_no, id",
+                "SELECT r.element_id, r.category_name, r.category_weight, r.element_name, r.required_level_no, r.standard_score," +
+                "       r.leader_level_no, r.leader_score, r.client_avg_score, r.self_level_no, r.self_score," +
+                "       CASE WHEN r.active = 0 THEN 1 ELSE 0 END AS is_external," +
+                "       (SELECT MAX(x.original_score) FROM uf_assess_sheet_rating x" +
+                "         WHERE x.sheet_id = r.sheet_id AND x.element_id = r.element_id AND x.source = 'EXTERNAL') AS original_score" +
+                " FROM uf_assess_sheet_row r" +
+                " WHERE r.sheet_id = ? AND (r.active = 1 OR EXISTS (SELECT 1 FROM uf_assess_sheet_rating x2" +
+                "        WHERE x2.sheet_id = r.sheet_id AND x2.element_id = r.element_id AND x2.source = 'EXTERNAL'))" +
+                " ORDER BY r.sort_no, r.id",
                 (rs, i) -> {
                     AssessSheetVO.Row row = new AssessSheetVO.Row();
+                    row.setExternal(rs.getInt("is_external") == 1);
+                    row.setOriginalScore(rs.getBigDecimal("original_score"));
                     row.setElementId(rs.getLong("element_id"));
                     row.setCategoryName(rs.getString("category_name"));
                     row.setCategoryWeight(rs.getBigDecimal("category_weight"));

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,6 +59,7 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
     private final AbilityElementMapper elementMapper;
     private final AbilityCategoryMapper categoryMapper;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbc;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -112,13 +114,18 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             elementCategory.put(ri.getElementId(), ri.getCategoryId());
         }
 
-        // 4a. 流程中不需评价的要素（assess_in_flow=0）不参与计分——与页面同步/重算存储过程同口径：
-        //     要求仍记录（任职标准），但归档得分、完整性校验、类别要素数只算需评价要素
+        // 4a. 流程中不需评价的要素（assess_in_flow=0）默认不参与计分（任职标准保留）；
+        //     但页面已有外部导入评级（source='EXTERNAL'，sql/25 通道）的非流程要素参与归档计分——
+        //     与 usp_assess_recalc v5 同口径
         Map<Long, Boolean> assessInFlow = loadAssessInFlow(requiredLevel.keySet());
-        requiredLevel.keySet().removeIf(id -> Boolean.FALSE.equals(assessInFlow.get(id)));
-        elementCategory.keySet().removeIf(id -> Boolean.FALSE.equals(assessInFlow.get(id)));
+        ExternalRatings external = loadExternalRatings(req.getPeriodId(), req.getResourceId());
+        requiredLevel.keySet().removeIf(id -> Boolean.FALSE.equals(assessInFlow.get(id))
+                && !external.elements.contains(id));
+        elementCategory.keySet().removeIf(id -> Boolean.FALSE.equals(assessInFlow.get(id))
+                && !external.elements.contains(id));
         if (requiredLevel.isEmpty()) {
-            throw new BusinessException(ERR_NO_REQUIREMENT, "人员能力要求的要素均设置了「流程中不评价」，无法归档测评结果");
+            throw new BusinessException(ERR_NO_REQUIREMENT,
+                    "人员能力要求的要素均设置了「流程中不评价」且无外部导入评级，无法归档测评结果");
         }
 
         // 4b. 要素是否允许客户评价（做法 B：不允许的要素，客户分按 0 计入加权总分）
@@ -127,11 +134,12 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         // 5. 配置快照（限定当期次所属维度）
         Config cfg = loadConfig(req.getCompanyId(), dimensionId);
 
-        // 6. 评级覆盖校验（领导/自评须评全；客户只需评「允许客户评价」的要素，禁止项按 0 计）
-        checkCoverage(requiredLevel.keySet(), req.getLeader());
-        checkCoverage(requiredLevel.keySet(), req.getSelf());
+        // 6. 评级覆盖校验：请求载荷先校验取值（1-5、在要求内），合并 EXTERNAL 评级后再校验完整性
+        //    （非流程要素不在流程载荷里，其评级由外部导入通道写入 uf_assess_sheet_rating）
+        checkLevels(requiredLevel.keySet(), req.getLeader());
+        checkLevels(requiredLevel.keySet(), req.getSelf());
         Set<Long> clientRequired = requiredLevel.keySet().stream()
-                .filter(id -> !Boolean.FALSE.equals(allowClientAssess.get(id)))
+                .filter(id -> !Boolean.FALSE.equals(allowClientAssess.get(id)) && !external.elements.contains(id))
                 .collect(Collectors.toSet());
         for (AssessArchiveDTO.RaterRatings c : clients) {
             checkClientCoverage(clientRequired, requiredLevel.keySet(), c);
@@ -146,9 +154,11 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             }
         }
 
-        // 8. 计算
-        Map<Long, Integer> leaderLevel = toLevelMap(req.getLeader());
-        Map<Long, Integer> selfLevel = toLevelMap(req.getSelf());
+        // 8. 计算（合并 EXTERNAL 评级后校验完整性；同名要素以流程载荷优先）
+        Map<Long, Integer> leaderLevel = mergeLevels(toLevelMap(req.getLeader()), external.leader);
+        Map<Long, Integer> selfLevel = mergeLevels(toLevelMap(req.getSelf()), external.self);
+        checkComplete(requiredLevel.keySet(), leaderLevel, "直接领导");
+        checkComplete(requiredLevel.keySet(), selfLevel, "自评");
 
         BigDecimal standardTotal = BigDecimal.ZERO;
         BigDecimal leaderTotal = BigDecimal.ZERO;
@@ -186,13 +196,23 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         BigDecimal clientSum = BigDecimal.ZERO;
         for (int i = 0; i < clients.size(); i++) {
             AssessArchiveDTO.RaterRatings c = clients.get(i);
-            Map<Long, Integer> levels = toLevelMap(c);
+            Map<Long, Integer> levels = mergeLevels(toLevelMap(c),
+                    external.clients.getOrDefault(c.getResourceId(), Map.of()));
+            for (Long eid : requiredLevel.keySet()) {
+                if (external.elements.contains(eid) && !levels.containsKey(eid)) {
+                    throw new BusinessException(ERR_RATING_INCOMPLETE,
+                            "客户评价人 " + c.getResourceId() + " 缺少外部导入要素 " + eid
+                                    + " 的评级，请先完成导入或按上稿重填");
+                }
+            }
             BigDecimal personTotal = BigDecimal.ZERO;
             for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
                 Long elementId = e.getKey();
                 Long categoryId = elementCategory.get(elementId);
-                // 禁止客户评价的要素：客户分记 0（评级记录保留，便于追溯）
-                BigDecimal s = Boolean.FALSE.equals(allowClientAssess.get(elementId))
+                // 禁止客户评价的要素：客户分记 0（评级记录保留，便于追溯）；
+                // EXTERNAL 要素豁免——外部导入的客户评级正常计分（与 recalc v5 做法 B 一致）
+                BigDecimal s = (!external.elements.contains(elementId)
+                                && Boolean.FALSE.equals(allowClientAssess.get(elementId)))
                         ? BigDecimal.ZERO
                         : unitScore(cfg.levelScore, levels.get(elementId),
                                 cfg.abilityWeight.get(categoryId), categoryCount.get(categoryId));
@@ -334,11 +354,14 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         return items;
     }
 
-    private void checkCoverage(Set<Long> elementIds, AssessArchiveDTO.RaterRatings rater) {
+    /**
+     * 流程载荷取值校验：非空、1-5、要素在要求范围内。
+     * 完整性不在此校验——EXTERNAL 评级（外部导入要素）在合并后由 checkComplete 统一把关。
+     */
+    private void checkLevels(Set<Long> elementIds, AssessArchiveDTO.RaterRatings rater) {
         if (rater == null || rater.getRatings() == null) {
             throw new BusinessException(ERR_RATING_INCOMPLETE, "评价人缺少评级");
         }
-        Set<Long> rated = new HashSet<>();
         for (AssessArchiveDTO.RatingItem r : rater.getRatings()) {
             if (r.getLevelNo() == null || r.getLevelNo() < 1 || r.getLevelNo() > 5) {
                 throw new BusinessException(ERR_LEVEL_INVALID, "等级必须为 1-5");
@@ -346,11 +369,52 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             if (!elementIds.contains(r.getElementId())) {
                 throw new BusinessException(ERR_RATING_INCOMPLETE, "评级包含不在人员能力要求中的要素: " + r.getElementId());
             }
-            rated.add(r.getElementId());
         }
-        if (!rated.containsAll(elementIds)) {
-            throw new BusinessException(ERR_RATING_INCOMPLETE, "评价人 " + rater.getResourceId() + " 的评级不完整");
+    }
+
+    /** 合并外部评级后的完整性校验：每个计分要素必须有等级 */
+    private void checkComplete(Set<Long> elementIds, Map<Long, Integer> levels, String raterName) {
+        List<Long> missing = elementIds.stream().filter(id -> !levels.containsKey(id)).collect(Collectors.toList());
+        if (!missing.isEmpty()) {
+            throw new BusinessException(ERR_RATING_INCOMPLETE,
+                    raterName + " 的评级不完整，缺少要素 " + missing + "（非流程要素需先外部导入）");
         }
+    }
+
+    /** 页面外部导入评级（uf_assess_sheet_rating source='EXTERNAL'；同要素后写覆盖先写） */
+    private static final class ExternalRatings {
+        final Set<Long> elements = new HashSet<>();
+        final Map<Long, Integer> leader = new HashMap<>();
+        final Map<Long, Integer> self = new HashMap<>();
+        final Map<Long, Map<Long, Integer>> clients = new HashMap<>();
+    }
+
+    private ExternalRatings loadExternalRatings(Long periodId, Long resourceId) {
+        ExternalRatings ext = new ExternalRatings();
+        for (Map<String, Object> r : jdbc.queryForList(
+                "SELECT rt.element_id, rt.rater_type, rt.rater_resource_id, rt.level_no" +
+                " FROM uf_assess_sheet_rating rt" +
+                " JOIN uf_assess_sheet s ON s.id = rt.sheet_id" +
+                " WHERE s.period_id = ? AND s.resource_id = ? AND rt.source = 'EXTERNAL'" +
+                " ORDER BY rt.id", periodId, resourceId)) {
+            long elementId = ((Number) r.get("element_id")).longValue();
+            String raterType = (String) r.get("rater_type");
+            long raterId = ((Number) r.get("rater_resource_id")).longValue();
+            Integer levelNo = r.get("level_no") == null ? null : ((Number) r.get("level_no")).intValue();
+            ext.elements.add(elementId);
+            switch (raterType) {
+                case "LEADER" -> ext.leader.put(elementId, levelNo);
+                case "SELF" -> ext.self.put(elementId, levelNo);
+                default -> ext.clients.computeIfAbsent(raterId, k -> new HashMap<>()).put(elementId, levelNo);
+            }
+        }
+        return ext;
+    }
+
+    private static Map<Long, Integer> mergeLevels(Map<Long, Integer> base, Map<Long, Integer> externalLevels) {
+        Map<Long, Integer> merged = new HashMap<>(base);
+        externalLevels.forEach(merged::putIfAbsent);
+        return merged;
     }
 
     /**

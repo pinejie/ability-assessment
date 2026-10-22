@@ -53,7 +53,7 @@ public interface AssessDimensionService {
     /**
      * 判断人员对指定维度是否有访问权（请求级越权校验用）。
      * 与 authorized() 同一套规则：无授权行 = 仅管理员（管理员由调用方先行豁免）；
-     * 配置授权后按「人员 ID 或一级分部」精确命中。
+     * 配置授权后按「人员 ID 命中，或 人员分部沿上级链命中授权分部（子树语义）」。
      */
     boolean isAuthorizedForUser(Long dimensionId, Long resourceId);
 }

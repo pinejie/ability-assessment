@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -188,16 +189,16 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
                     .collect(Collectors.toList());
         }
 
-        Long subcompanyId = null;
+        Set<Long> subcompanyChain = Collections.emptySet();
         if (resourceId != null) {
             List<Long> subs = jdbc.queryForList(
                     "SELECT subcompanyid1 FROM HrmResource WHERE id = ?", Long.class, resourceId);
-            subcompanyId = subs.isEmpty() ? null : subs.get(0);
+            subcompanyChain = subcompanyChainWithAncestors(subs.isEmpty() ? null : subs.get(0));
         }
 
         List<AssessDimensionVO> result = new ArrayList<>();
         for (AssessDimension d : dimensions) {
-            if (isAuthorizedFor(d.getId(), authByDimension.get(d.getId()), resourceId, subcompanyId)) {
+            if (isAuthorizedFor(d.getId(), authByDimension.get(d.getId()), resourceId, subcompanyChain)) {
                 result.add(toVO(d, authByDimension.getOrDefault(d.getId(), List.of()).size()));
             }
         }
@@ -214,18 +215,19 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
                         .eq(AssessDimensionAuth::getDimensionId, dimensionId));
         List<Long> subs = jdbc.queryForList(
                 "SELECT subcompanyid1 FROM HrmResource WHERE id = ?", Long.class, resourceId);
-        Long subcompanyId = subs.isEmpty() ? null : subs.get(0);
-        return isAuthorizedFor(dimensionId, auths, resourceId, subcompanyId);
+        Set<Long> subcompanyChain = subcompanyChainWithAncestors(subs.isEmpty() ? null : subs.get(0));
+        return isAuthorizedFor(dimensionId, auths, resourceId, subcompanyChain);
     }
 
     /**
-     * 授权语义（2026-10-22 调整）：
+     * 授权语义（2026-10-22 调整，同日升级为子树匹配）：
      * 无授权行 = 仅管理员可用（管理员经 authorized()/DimensionContextFilter 豁免直达，不进本判断）；
-     * 配置后，要求命中「人员 ID 精确授权」或「人员一级分部（subcompanyid1）授权」。
+     * 配置后，命中「人员 ID 精确授权」或「人员分部链（本级→逐级上级）包含授权分部」——
+     * 即勾选父分部覆盖其全部下级分部的人员。
      * resourceId 为空（无登录身份）：宽松放行——泛微钩子等内部集成调用不受租户授权约束。
      */
     private boolean isAuthorizedFor(Long dimensionId, List<AssessDimensionAuth> auths,
-                                    Long resourceId, Long subcompanyId) {
+                                    Long resourceId, Set<Long> subcompanyChain) {
         if (resourceId == null) {
             return true;
         }
@@ -238,11 +240,40 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
                 return true;
             }
             if (Objects.equals(auth.getAuthType(), AssessDimensionAuth.TYPE_SUBCOMPANY)
-                    && subcompanyId != null && Objects.equals(auth.getAuthId(), subcompanyId)) {
+                    && subcompanyChain.contains(auth.getAuthId())) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * 人员分部 → 沿上级链到根的 id 集合（含本级）。分部表行数级小（一次全量拉上级映射，
+     * 内存走链），深度上限 32 防御泛微层级脏数据成环。
+     */
+    private Set<Long> subcompanyChainWithAncestors(Long subcompanyId) {
+        Set<Long> chain = new HashSet<>();
+        if (subcompanyId == null) {
+            return chain;
+        }
+        Map<Long, Long> parents = loadSubcompanyParents();
+        Long current = subcompanyId;
+        int depth = 0;
+        while (current != null && current != 0L && depth++ < 32 && chain.add(current)) {
+            current = parents.get(current);
+        }
+        return chain;
+    }
+
+    /** 分部 id → 上级分部 id（仅启用行；无上级/已注销记为链终点） */
+    private Map<Long, Long> loadSubcompanyParents() {
+        Map<Long, Long> parents = new HashMap<>();
+        jdbc.query("SELECT id, supsubcomid FROM HrmSubCompany WHERE COALESCE(canceled, 0) = 0",
+                rs -> {
+                    Object sup = rs.getObject("supsubcomid");
+                    parents.put(rs.getLong("id"), sup == null ? null : ((Number) sup).longValue());
+                });
+        return parents;
     }
 
     /** 按类型批量查泛微对象名称（表为平台表，只读） */

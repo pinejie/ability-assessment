@@ -110,6 +110,14 @@ CREATE TABLE IF NOT EXISTS uf_score_weight (
     deleted INT DEFAULT 0
 );
 
+-- 泛微分部表（测试用，分部子树匹配走上级链）
+CREATE TABLE IF NOT EXISTS HrmSubCompany (
+    id BIGINT PRIMARY KEY,
+    subcompanyname VARCHAR(100) NOT NULL,
+    supsubcomid BIGINT,
+    canceled CHAR(1) DEFAULT '0'
+);
+
 -- 泛微部门表（测试用）
 CREATE TABLE IF NOT EXISTS HrmDepartment (
     id BIGINT PRIMARY KEY,

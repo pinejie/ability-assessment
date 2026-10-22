@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 维度（类租户）可见性测试（2026-10-22 语义）：
- * 未配置授权行的维度仅管理员可见；配置后按「一级分部 ID 或 人员 ID」精确命中；
+ * 未配置授权行的维度仅管理员可见；配置后按「人员 ID 精确命中，或人员分部沿上级链命中授权分部（子树）」访问；
  * 无登录身份维持宽松（内部集成调用）；禁用维度对所有人不可见。
  */
 @SpringBootTest
@@ -48,9 +48,12 @@ class AssessDimensionAdminTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    private static final long SUB_PARENT = 5L;
+
     private Long openDim;
     private Long subDim;
     private Long personDim;
+    private Long subtreeDim;
     private Long disabledDim;
 
     @BeforeEach
@@ -59,14 +62,34 @@ class AssessDimensionAdminTest {
         subDim = insertDimension("分部授权维度", 1, 2);
         personDim = insertDimension("人员授权维度", 1, 3);
         disabledDim = insertDimension("禁用维度", 0, 4);
+        subtreeDim = insertDimension("上级分部授权维度", 1, 5);
 
         insertAuth(subDim, AssessDimensionAuth.TYPE_SUBCOMPANY, SUB_AUTHORIZED);
         insertAuth(personDim, AssessDimensionAuth.TYPE_RESOURCE, PERSON_ID);
+        // 子树语义：授权给上级分部 5，人员挂在下级分部 9 → 也应命中
+        insertAuth(subtreeDim, AssessDimensionAuth.TYPE_SUBCOMPANY, SUB_PARENT);
+
+        // 分部层级：5(父) → 9(子)；8 独立
+        jdbc.update("INSERT INTO HrmSubCompany (id, subcompanyname, supsubcomid) VALUES (?, '父分部', NULL)", SUB_PARENT);
+        jdbc.update("INSERT INTO HrmSubCompany (id, subcompanyname, supsubcomid) VALUES (?, '子分部', ?)", SUB_AUTHORIZED, SUB_PARENT);
+        jdbc.update("INSERT INTO HrmSubCompany (id, subcompanyname, supsubcomid) VALUES (?, '另一分部', NULL)", SUB_OTHER);
 
         jdbc.update("INSERT INTO HrmResource (id, lastname, status, loginid, subcompanyid1) "
                 + "VALUES (?, '甲', 1, 'u100', ?)", PERSON_ID, SUB_AUTHORIZED);
         jdbc.update("INSERT INTO HrmResource (id, lastname, status, loginid, subcompanyid1) "
                 + "VALUES (?, '乙', 1, 'u200', ?)", PERSON_OTHER, SUB_OTHER);
+    }
+
+    @Test
+    @DisplayName("子树匹配：授权父分部覆盖下级分部人员；他链人员不命中")
+    void subcompanyAuthCoversSubtree() {
+        // 甲挂在 9（5 的下级）→ 授权 5 命中
+        List<Long> hit = ids(dimensionService.authorized(PERSON_ID, false));
+        assertTrue(hit.contains(subtreeDim));
+
+        // 乙在 8（与 5 无祖先关系）→ 不命中
+        List<Long> miss = ids(dimensionService.authorized(PERSON_OTHER, false));
+        assertFalse(miss.contains(subtreeDim));
     }
 
     @Test
@@ -80,10 +103,10 @@ class AssessDimensionAdminTest {
     }
 
     @Test
-    @DisplayName("命中方式：一级分部 ID 或 人员 ID，任一匹配即可访问")
+    @DisplayName("命中方式：分部链（本级/上级）或 人员 ID，任一匹配即可访问")
     void subcompanyOrPersonIdMatch() {
-        // 100：人员维度按 ID 命中 + 分部维度按一级分部命中；未配置的 openDim 不可见
-        assertEquals(List.of(subDim, personDim), ids(dimensionService.authorized(PERSON_ID, false)));
+        // 100：人员维度按 ID 命中 + 分部维度按本级 9 命中 + 上级授权维度按链命中；未配置的 openDim 不可见
+        assertEquals(List.of(subDim, personDim, subtreeDim), ids(dimensionService.authorized(PERSON_ID, false)));
         // 200：什么都没命中 → 空列表（前端据此展示引导页）
         assertEquals(List.of(), ids(dimensionService.authorized(PERSON_OTHER, false)));
     }
@@ -93,7 +116,7 @@ class AssessDimensionAdminTest {
     void adminSeesAllEnabled() {
         List<Long> visible = ids(dimensionService.authorized(PERSON_OTHER, true));
 
-        assertEquals(List.of(openDim, subDim, personDim), visible);
+        assertEquals(List.of(openDim, subDim, personDim, subtreeDim), visible);
         assertFalse(visible.contains(disabledDim));
     }
 
@@ -102,7 +125,7 @@ class AssessDimensionAdminTest {
     void anonymousStaysLenient() {
         List<Long> visible = ids(dimensionService.authorized(null, false));
 
-        assertEquals(List.of(openDim, subDim, personDim), visible);
+        assertEquals(List.of(openDim, subDim, personDim, subtreeDim), visible);
     }
 
     // ==================== 辅助 ====================

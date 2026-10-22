@@ -8,26 +8,18 @@ import com.company.ability.security.UserContext;
 import com.company.ability.vo.ExternalScoreVO;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,49 +28,34 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 智能导入二期：测评后端 ↔ zd-code（ai-chat-app）桥 + Agent 交付稿（draft）管理。
+ * 智能导入二期：Agent 交付稿（draft）管理。
+ * 会话运行时在 AgentSessionService（测评后端自派生 claude CLI，不复用 ai-chat-app/zd-code）。
  *
  * 职责边界（方案 10 §5）：
  * - cp_server（agent）只能用内部令牌调 submitDraft：校验+落 draft，绝不写业务表；
  * - 写入唯一路径 = 前端点击 → commitDraft → 复用一期 ExternalScoreService（存储过程）；
- * - 会话代理：createSession/stop/history/upload 转发 zd-code（服务端持 zd_auth Cookie，浏览器不碰 APP_TOKEN）。
+ * - draft 过期与会话回收同规则（闲置 30 分钟 / 绝对 2 小时，惰性判定）。
  */
 @Slf4j
 @Service
 public class AgentBridgeService {
 
     static final int ERR_DRAFT_EXPIRED = 40301;
-    static final int ERR_ZDCODE = 50210;
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
     private final ExternalScoreService externalScoreService;
-    // HTTP/1.1：Java HttpClient 默认 HTTP/2 先升级，uvicorn(h11) 会回 400 Invalid HTTP request
-    private final HttpClient http = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(5)).build();
 
     private final boolean enabled;
-    private final String zdBaseUrl;
-    private final String zdCookie;
-    private final String workspacePath;
     private final String internalToken;
-    private final String wsPublicUrl;
     private final long companyId;
     private final int idleMinutes;
     private final int maxHours;
 
-    private volatile String cachedWorkspaceId;
-    private volatile long workspaceIdFetchedAt;
-
     public AgentBridgeService(JdbcTemplate jdbc, ObjectMapper mapper,
                               ExternalScoreService externalScoreService,
                               @Value("${agent.enabled:false}") boolean enabled,
-                              @Value("${agent.zdcode-base-url:http://127.0.0.1:8000}") String zdBaseUrl,
-                              @Value("${agent.zdcode-app-token:}") String appToken,
-                              @Value("${agent.workspace-path:/home/wgd/ws/cp}") String workspacePath,
                               @Value("${agent.internal-token:}") String internalToken,
-                              @Value("${agent.ws-public-url:}") String wsPublicUrl,
                               @Value("${assess.company-id:1}") long companyId,
                               @Value("${agent.draft-idle-minutes:30}") int idleMinutes,
                               @Value("${agent.draft-max-hours:2}") int maxHours) {
@@ -86,105 +63,10 @@ public class AgentBridgeService {
         this.mapper = mapper;
         this.externalScoreService = externalScoreService;
         this.enabled = enabled;
-        this.zdBaseUrl = zdBaseUrl.replaceAll("/+$", "");
-        this.zdCookie = appToken.isBlank() ? "" : "zd_auth=" + appToken;
-        this.workspacePath = workspacePath;
         this.internalToken = internalToken;
-        this.wsPublicUrl = wsPublicUrl;
         this.companyId = companyId;
         this.idleMinutes = idleMinutes;
         this.maxHours = maxHours;
-    }
-
-    // ==================== 会话代理 ====================
-
-    /** 前端页配置：WS 直连地址（REST 全走本代理） */
-    public Map<String, Object> clientConfig() {
-        requireEnabled();
-        String ws = wsPublicUrl.isBlank()
-                ? "ws://" + URI.create(zdBaseUrl).getHost() + ":8000"
-                : wsPublicUrl;
-        Map<String, Object> cfg = new LinkedHashMap<>();
-        cfg.put("wsUrl", ws);
-        cfg.put("workspacePath", workspacePath);
-        return cfg;
-    }
-
-    /** 新建 zd-code 会话（固定绑定 cp 工作空间，目录快照写入会话索引） */
-    public Map<String, Object> createSession() {
-        requireEnabled();
-        ObjectNode body = mapper.createObjectNode();
-        body.put("workspace_id", resolveWorkspaceId());
-        JsonNode r = zdCall("POST", "/api/sessions", body);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("sessionId", r.path("session_id").asText());
-        out.put("title", r.path("title").asText());
-        return out;
-    }
-
-    public JsonNode history(String sessionId) {
-        requireEnabled();
-        return zdCall("GET", "/api/sessions/" + safeId(sessionId) + "/history", null);
-    }
-
-    public JsonNode stopSession(String sessionId) {
-        requireEnabled();
-        return zdCall("POST", "/api/sessions/" + safeId(sessionId) + "/stop", null);
-    }
-
-    /** 附件上传转发：存到 zd-code 的 UPLOAD_DIR，返回路径给前端随消息 files 发送 */
-    public JsonNode upload(List<MultipartFile> files) {
-        requireEnabled();
-        if (files == null || files.isEmpty()) {
-            throw new BusinessException(400, "缺少文件");
-        }
-        String boundary = "----extImport" + System.nanoTime();
-        try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            for (MultipartFile f : files) {
-                out.write(("--" + boundary + "\r\n"
-                        + "Content-Disposition: form-data; name=\"files\"; filename=\""
-                        + sanitizeName(f.getOriginalFilename()) + "\"\r\n"
-                        + "Content-Type: application/octet-stream\r\n\r\n")
-                        .getBytes(StandardCharsets.UTF_8));
-                out.write(f.getBytes());
-                out.write("\r\n".getBytes(StandardCharsets.UTF_8));
-            }
-            out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
-            HttpRequest req = HttpRequest.newBuilder(URI.create(zdBaseUrl + "/api/upload"))
-                    .timeout(Duration.ofSeconds(30))
-                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                    .header("Cookie", zdCookie)
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray()))
-                    .build();
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() / 100 != 2) {
-                throw new BusinessException(ERR_ZDCODE, "文件上传失败（zd-code " + resp.statusCode() + "）");
-            }
-            return mapper.readTree(resp.body());
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException(ERR_ZDCODE, "文件上传异常：" + e.getMessage());
-        }
-    }
-
-    private String resolveWorkspaceId() {
-        long now = System.currentTimeMillis();
-        String cached = cachedWorkspaceId;
-        if (cached != null && now - workspaceIdFetchedAt < 60_000) {
-            return cached;
-        }
-        JsonNode list = zdCall("GET", "/api/workspaces", null).path("items");
-        for (JsonNode ws : list) {
-            if (workspacePath.equals(ws.path("path").asText())) {
-                cachedWorkspaceId = ws.path("id").asText();
-                workspaceIdFetchedAt = now;
-                return cachedWorkspaceId;
-            }
-        }
-        throw new BusinessException(ERR_ZDCODE,
-                "cp 工作空间未注册（期望路径 " + workspacePath + "，请在 zd-code 工作空间管理中添加）");
     }
 
     // ==================== draft：提交（cp_server 内部令牌） ====================
@@ -504,42 +386,8 @@ public class AgentBridgeService {
         return sessionId;
     }
 
-    private static String sanitizeName(String name) {
-        if (name == null || name.isBlank()) {
-            return "file";
-        }
-        return name.replaceAll("[\"\\\\r\\n]", "_");
-    }
-
     private static String str(Map<String, Object> row, String key) {
         Object v = row.get(key);
         return v == null ? null : v.toString();
-    }
-
-    private JsonNode zdCall(String method, String path, JsonNode body) {
-        try {
-            HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(zdBaseUrl + path))
-                    .timeout(Duration.ofSeconds(15))
-                    .header("Cookie", zdCookie);
-            if ("POST".equals(method)) {
-                rb.header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(
-                                body == null ? "{}" : mapper.writeValueAsString(body)));
-            } else {
-                rb.GET();
-            }
-            HttpResponse<String> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 401) {
-                throw new BusinessException(ERR_ZDCODE, "zd-code 鉴权失败（检查 agent.zdcode-app-token 配置）");
-            }
-            if (resp.statusCode() / 100 != 2) {
-                throw new BusinessException(ERR_ZDCODE, "zd-code " + resp.statusCode() + "：" + resp.body());
-            }
-            return mapper.readTree(resp.body());
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException(ERR_ZDCODE, "zd-code 不可达：" + e.getMessage());
-        }
     }
 }

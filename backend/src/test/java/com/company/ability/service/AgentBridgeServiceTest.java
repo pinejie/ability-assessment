@@ -55,8 +55,7 @@ class AgentBridgeServiceTest {
     @BeforeEach
     void setUp() {
         service = new AgentBridgeService(jdbc, new ObjectMapper(), externalScoreService,
-                true, "http://127.0.0.1:8000", "", "/home/wgd/ws/cp", TOKEN,
-                "ws://172.18.28.206:8000", 1L, 30, 2);
+                true, TOKEN, 1L, 30, 2);
         LoginUser user = new LoginUser("tester", 900L, "测试员", 10L, 1L);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(user, null, List.of()));

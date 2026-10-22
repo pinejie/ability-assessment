@@ -62,13 +62,13 @@ jwt:
   secret: ${JWT_SECRET:your-secret-key-must-be-at-least-32-characters-long}
   expiration: 7200  # 2小时（秒）
 
-# 智能导入二期（AI 会话桥 + 交付稿）。敏感项 agent.zdcode-app-token / agent.internal-token
-# 由 backend/config/secret.yml 提供（缺 internal-token 时 /agent/draft 一律 401）。
+# 智能导入二期（内置 claude CLI 会话 + 交付稿，不复用 ai-chat-app）。
+# 敏感项 agent.internal-token 由 backend/config/secret.yml 提供（缺省时 /agent/draft 一律 401）。
 agent:
   enabled: true
-  zdcode-base-url: http://127.0.0.1:8000
   workspace-path: /home/wgd/ws/cp
-  ws-public-url: ws://172.18.28.206:8000   # 浏览器直连 zd-code 的 WS 入口（同 IP 跨端口 = 同站，cookie 可携带）
+  claude-bin: /home/wgd/bin/claude
+  max-active-sessions: 6
   draft-idle-minutes: 30
   draft-max-hours: 2
 

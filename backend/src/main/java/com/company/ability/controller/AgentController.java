@@ -2,10 +2,11 @@ package com.company.ability.controller;
 
 import com.company.ability.dto.Result;
 import com.company.ability.service.AgentBridgeService;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.company.ability.service.AgentSessionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,57 +18,61 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * 智能导入（二期）：会话代理 + Agent 交付稿。
- * /draft 由 cp_server 以内部令牌调用（SecurityConfig 放行，令牌在服务内校验）；
- * 其余接口走测评 JWT 登录态。写入只存在于 /drafts/{id}/commit（前端按钮）。
+ * 智能导入（二期）：会话运行时 + 交付稿。全程测评 JWT 同源，浏览器不接触任何其他服务。
+ * /draft 由 cp_server 以内部令牌调用（SecurityConfig 放行，服务内校验令牌）；
+ * 写入只存在于 /drafts/{id}/commit（前端按钮点击=确认）。
  */
-@Tag(name = "智能导入", description = "AI 会话桥与交付稿")
+@Tag(name = "智能导入", description = "测评内置 Agent 会话与交付稿")
 @RestController
 @RequestMapping("/api/v1/agent")
 @RequiredArgsConstructor
 public class AgentController {
 
     private final AgentBridgeService agentBridgeService;
+    private final AgentSessionService agentSessionService;
 
-    @Operation(summary = "前端连接配置（WS 地址等）")
-    @GetMapping("/config")
-    public Result<Map<String, Object>> config() {
-        return Result.success(agentBridgeService.clientConfig());
-    }
-
-    @Operation(summary = "新建智能导入会话（绑定 cp 工作空间）")
+    @Operation(summary = "新建导入会话（每次进入页面调用，全新上下文）")
     @PostMapping("/sessions")
     public Result<Map<String, Object>> createSession() {
-        return Result.success(agentBridgeService.createSession());
-    }
-
-    @Operation(summary = "会话历史")
-    @GetMapping("/sessions/{sessionId}/history")
-    public Result<JsonNode> history(@PathVariable String sessionId) {
-        return Result.success(agentBridgeService.history(sessionId));
-    }
-
-    @Operation(summary = "停止会话生成")
-    @PostMapping("/sessions/{sessionId}/stop")
-    public Result<JsonNode> stop(@PathVariable String sessionId) {
-        return Result.success(agentBridgeService.stopSession(sessionId));
-    }
-
-    @Operation(summary = "附件上传（转发 zd-code，返回文件路径随消息发送）")
-    @PostMapping("/upload")
-    public Result<JsonNode> upload(@RequestPart("files") List<MultipartFile> files) {
-        return Result.success(agentBridgeService.upload(files));
+        return Result.success(agentSessionService.createSession());
     }
 
     /**
-     * cp_server deliver/validate 入口（内部令牌，无 JWT）。
-     * validate=true 仅校验不落稿；否则校验通过即落 READY 稿并返回 ready 标识。
+     * 发送消息：请求体本身是普通 POST JSON，响应是 SSE 流（text/event-stream），
+     * 前端用 fetch 流式读取。一轮 = 一个 claude 进程回合。
      */
+    @Operation(summary = "发送消息（SSE 流式回复）")
+    @PostMapping(value = "/sessions/{sessionId}/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter messages(@PathVariable String sessionId, @RequestBody MessageRequest req) {
+        return agentSessionService.sendMessage(sessionId, req.getContent(), req.getFiles());
+    }
+
+    @Operation(summary = "会话历史（审计留痕）")
+    @GetMapping("/sessions/{sessionId}/history")
+    public Result<List<Map<String, Object>>> history(@PathVariable String sessionId) {
+        return Result.success(agentSessionService.history(sessionId));
+    }
+
+    @Operation(summary = "停止本轮生成")
+    @PostMapping("/sessions/{sessionId}/stop")
+    public Result<Void> stop(@PathVariable String sessionId) {
+        agentSessionService.stopSession(sessionId);
+        return Result.success();
+    }
+
+    @Operation(summary = "附件上传（落 cp/uploads，路径随消息发送，agent 经 parse_import_file 解析）")
+    @PostMapping("/upload")
+    public Result<List<Map<String, Object>>> upload(@RequestPart("files") List<MultipartFile> files) {
+        return Result.success(agentSessionService.upload(files));
+    }
+
+    /** cp_server deliver/validate 入口（内部令牌，无 JWT） */
     @Operation(summary = "Agent 提交交付稿（内部令牌）")
     @PostMapping("/draft")
     public ResponseEntity<Result<Map<String, Object>>> draft(
@@ -90,5 +95,12 @@ public class AgentController {
     @PostMapping("/drafts/{id}/commit")
     public Result<Map<String, Object>> commit(@PathVariable long id) {
         return Result.success(agentBridgeService.commitDraft(id));
+    }
+
+    /** 消息请求体 */
+    @lombok.Data
+    public static class MessageRequest {
+        private String content;
+        private List<String> files;
     }
 }

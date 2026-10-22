@@ -1,15 +1,14 @@
 import request from '@/utils/request'
 
-/** 智能导入（二期）：会话桥 + 交付稿。WS 由页面直连 zd-code。 */
-
-export interface AgentConfig {
-  wsUrl: string
-  workspacePath: string
-}
+/** 智能导入（二期）：测评内置会话运行时 + 交付稿。全程同源 JWT，无任何外部服务依赖。 */
 
 export interface AgentSession {
   sessionId: string
-  title: string
+}
+
+export interface UploadedFile {
+  name: string
+  path: string
 }
 
 export interface DraftRow {
@@ -57,14 +56,15 @@ export interface CommitResponse {
   result?: { persons: CommitPersonOutcome[] }
 }
 
-export const getAgentConfig = (): Promise<AgentConfig> => request.get('/agent/config')
-
 export const createAgentSession = (): Promise<AgentSession> => request.post('/agent/sessions')
 
-export const stopAgentSession = (sessionId: string): Promise<unknown> =>
+export const stopAgentSession = (sessionId: string): Promise<void> =>
   request.post(`/agent/sessions/${sessionId}/stop`)
 
-export const agentUpload = (file: File): Promise<{ files: { name: string; path: string }[] }> => {
+export const getAgentHistory = (sessionId: string): Promise<{ time: string; role: string; content: string }[]> =>
+  request.get(`/agent/sessions/${sessionId}/history`)
+
+export const uploadAgentFile = (file: File): Promise<UploadedFile[]> => {
   const form = new FormData()
   form.append('files', file)
   return request.post('/agent/upload', form)

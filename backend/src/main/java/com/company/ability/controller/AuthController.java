@@ -53,6 +53,7 @@ public class AuthController {
         SsoLoginService.SsoLoginResult result = ssoLoginService.authenticate(dto.getTicket(), dto.getState());
         CurrentUserVO user = CurrentUserVO.from(result.user());
         user.setAdmin(adminService.isAdmin(result.user().loginid()));
+        user.setSuperAdmin(adminService.isSuperAdmin(result.user().loginid()));
         SsoLoginResultVO vo = new SsoLoginResultVO(result.token(), user, result.redirect());
         return Result.success("登录成功", vo);
     }
@@ -66,6 +67,7 @@ public class AuthController {
         }
         CurrentUserVO vo = CurrentUserVO.from(user);
         vo.setAdmin(adminService.isAdmin(user.loginid()));
+        vo.setSuperAdmin(adminService.isSuperAdmin(user.loginid()));
         return Result.success(vo);
     }
 

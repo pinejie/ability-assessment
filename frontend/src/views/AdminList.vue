@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="page-title-section">
         <h1 class="page-title">管理员配置</h1>
-        <p class="page-description">管理员可增删改租户（维度）并查看全部租户数据；身份锚定泛微 OA 登录名</p>
+        <p class="page-description">本页仅超级管理员可见；添加的管理员可管理租户并查看全部租户数据，但不能管理管理员名单</p>
       </div>
       <el-button type="primary" @click="handleAdd">新增管理员</el-button>
     </div>

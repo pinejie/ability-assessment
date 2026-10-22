@@ -84,6 +84,19 @@ class AdminServiceTest {
         adminService.requireAdmin();
     }
 
+    @Test
+    @DisplayName("requireSuperAdmin：表内普通管理员被拒 403，配置超管放行（管理员名单仅超管可维护）")
+    void requireSuperAdminRejectsTableAdmin() {
+        insertRow("table-admin");
+
+        loginAs("table-admin", 10L);
+        BusinessException denied = assertThrows(BusinessException.class, adminService::requireSuperAdmin);
+        assertEquals(403, denied.getCode());
+
+        loginAs("boot-admin2", 2L);
+        adminService.requireSuperAdmin();
+    }
+
     // ==================== 新增 ====================
 
     @Test

@@ -12,6 +12,9 @@ export const useUserStore = defineStore('user', () => {
   /** 是否管理员（仅 UI 门控；权威拦截在后端各接口 requireAdmin） */
   const isAdmin = computed(() => user.value?.admin === true)
 
+  /** 是否超级管理员（管理员配置页专属门控；后端 requireSuperAdmin 兜底） */
+  const isSuperAdmin = computed(() => user.value?.superAdmin === true)
+
   /** SSO 登录成功：存 token + 用户信息 */
   const login = (token: string, info: CurrentUser) => {
     setToken(token)
@@ -30,5 +33,5 @@ export const useUserStore = defineStore('user', () => {
     user.value = null
   }
 
-  return { user, isAdmin, login, refresh, clear }
+  return { user, isAdmin, isSuperAdmin, login, refresh, clear }
 })

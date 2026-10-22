@@ -19,7 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 系统管理员配置（仅管理员可操作：入口自身也要求管理员，防止扩权面失控）
+ * 系统管理员配置（仅超级管理员可操作：普通管理员不得增删管理员，防止互相加人扩权。
+ * 超管 = assess.bootstrap-admins 配置名单；普通管理员可管维度但不可见本页）
  */
 @Tag(name = "管理员配置", description = "系统管理员名单维护")
 @RestController
@@ -32,21 +33,21 @@ public class AssessAdminController {
     @Operation(summary = "管理员名单（含配置超管）")
     @GetMapping
     public Result<List<AssessAdminVO>> list() {
-        adminService.requireAdmin();
+        adminService.requireSuperAdmin();
         return Result.success(adminService.list());
     }
 
     @Operation(summary = "新增管理员（按泛微在职人员）")
     @PostMapping
     public Result<Long> add(@Valid @RequestBody AssessAdminCreateDTO dto) {
-        adminService.requireAdmin();
+        adminService.requireSuperAdmin();
         return Result.success("添加成功", adminService.add(dto));
     }
 
     @Operation(summary = "移除管理员（配置超管与本人不可删）")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        adminService.requireAdmin();
+        adminService.requireSuperAdmin();
         adminService.delete(id);
         return Result.success("删除成功", null);
     }

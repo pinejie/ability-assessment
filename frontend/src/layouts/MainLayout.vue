@@ -150,6 +150,8 @@ interface MenuItem {
   icon: string
   /** 仅管理员可见（体验层控制，权威拦截在后端接口） */
   adminOnly?: boolean
+  /** 仅超级管理员可见（管理员名单维护专属） */
+  superOnly?: boolean
 }
 
 const menuItems: MenuItem[] = [
@@ -162,11 +164,13 @@ const menuItems: MenuItem[] = [
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
   { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
   { path: '/assess-dimensions', title: '维度管理', icon: '🏛', adminOnly: true },
-  { path: '/assess-admins', title: '管理员配置', icon: '🛡️', adminOnly: true },
+  { path: '/assess-admins', title: '管理员配置', icon: '🛡️', superOnly: true },
 ]
 
-/** 管理员专属菜单按身份过滤 */
-const visibleMenuItems = computed(() => menuItems.filter(m => !m.adminOnly || userStore.isAdmin))
+/** 管理菜单按身份分级过滤（超管 ⊂ 管理员） */
+const visibleMenuItems = computed(() =>
+  menuItems.filter(m => (!m.adminOnly || userStore.isAdmin) && (!m.superOnly || userStore.isSuperAdmin)),
+)
 
 const currentPath = computed(() => route.path)
 

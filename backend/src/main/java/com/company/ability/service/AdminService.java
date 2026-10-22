@@ -16,9 +16,20 @@ public interface AdminService {
     boolean isAdmin(String loginid);
 
     /**
+     * 是否超级管理员：仅看配置 assess.bootstrap-admins（不含表添加的普通管理员）。
+     * 只有超管可维护管理员名单（防止普通管理员互相加人扩权）。
+     */
+    boolean isSuperAdmin(String loginid);
+
+    /**
      * 要求当前登录者为管理员：未登录 401，无角色 403（BusinessException）
      */
     void requireAdmin();
+
+    /**
+     * 要求当前登录者为超级管理员：未登录 401，非超管 403（BusinessException）
+     */
+    void requireSuperAdmin();
 
     /**
      * 管理员名单（表记录 + 未落表的配置超管合成条目）

@@ -50,11 +50,16 @@ public class AdminServiceImpl implements AdminService {
         if (loginid == null || loginid.isBlank()) {
             return false;
         }
-        if (bootstrapSet().contains(loginid)) {
+        if (isSuperAdmin(loginid)) {
             return true;
         }
         return adminMapper.selectCount(new LambdaQueryWrapper<AssessAdmin>()
                 .eq(AssessAdmin::getLoginid, loginid)) > 0;
+    }
+
+    @Override
+    public boolean isSuperAdmin(String loginid) {
+        return loginid != null && !loginid.isBlank() && bootstrapSet().contains(loginid);
     }
 
     @Override
@@ -65,6 +70,17 @@ public class AdminServiceImpl implements AdminService {
         }
         if (!isAdmin(user.loginid())) {
             throw new BusinessException(403, "需要管理员权限，请联系管理员开通");
+        }
+    }
+
+    @Override
+    public void requireSuperAdmin() {
+        LoginUser user = UserContext.currentOrNull();
+        if (user == null) {
+            throw new BusinessException(401, "请先登录");
+        }
+        if (!isSuperAdmin(user.loginid())) {
+            throw new BusinessException(403, "仅超级管理员可维护管理员名单");
         }
     }
 

@@ -25,10 +25,15 @@ public class CurrentUserVO {
     private Long subcompanyId;
 
     /**
-     * 是否系统管理员。服务端实时判定（配置超管 ∪ uf_assess_admin），
+     * 是否系统管理员（超管 ∪ 表管理员）。服务端实时判定，
      * 前端菜单/路由门控用；权威拦截仍在各接口 requireAdmin，此字段仅体验层。
      */
     private boolean admin;
+
+    /**
+     * 是否超级管理员（仅 assess.bootstrap-admins 配置名单）：管理员配置页专属
+     */
+    private boolean superAdmin;
 
     public static CurrentUserVO from(LoginUser user) {
         CurrentUserVO vo = new CurrentUserVO();

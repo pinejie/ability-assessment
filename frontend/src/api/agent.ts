@@ -64,10 +64,10 @@ export const stopAgentSession = (sessionId: string): Promise<void> =>
 export const getAgentHistory = (sessionId: string): Promise<{ time: string; role: string; content: string }[]> =>
   request.get(`/agent/sessions/${sessionId}/history`)
 
-export const uploadAgentFile = (file: File): Promise<UploadedFile[]> => {
+export const uploadAgentFile = (file: File, sessionId: string): Promise<UploadedFile[]> => {
   const form = new FormData()
   form.append('files', file)
-  return request.post('/agent/upload', form)
+  return request.post('/agent/upload', form, { params: { sessionId } })
 }
 
 export const listAgentDrafts = (sessionId: string): Promise<AgentDraft[]> =>

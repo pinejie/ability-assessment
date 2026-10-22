@@ -126,11 +126,13 @@ function newSession(): void {
 async function send(): Promise<void> {
   if (!canSend.value) return
   const text = draftText.value.trim() || '请解析我上传的文件并整理导入数据'
-  let content = text
-  if (!contextSent) {
-    content = `〔会话上下文：sessionId=${sessionId.value}；dimensionId=${dimensionStore.currentId}〕\n${content}`
-    contextSent = true
-  }
+  const dim = dimensionStore.currentId ?? ''
+  const head = `〔会话上下文：sessionId=${sessionId.value}；dimensionId=${dim}〕`
+  // 每条消息都带上下文（顶栏切维度后以最新为准，review #7）；首条附只读步骤执行确认（review #6）
+  let content = contextSent
+    ? `${head}\n${text}`
+    : `${head}\n本条消息即对只读步骤（解析/查询/校验）的执行确认，收到文件或直接指令后请执行到展示整理稿为止；交付仍需我另行确认。\n${text}`
+  contextSent = true
   messages.value.push({ role: 'user', text })
   const files = pendingFiles.value.map(f => f.path)
   pendingFiles.value = []
@@ -235,9 +237,9 @@ function finalizeStreaming(): void {
 async function onFile(ev: Event): Promise<void> {
   const input = ev.target as HTMLInputElement
   const file = input.files?.[0]
-  if (!file) return
+  if (!file || !sessionId.value) return
   try {
-    const r = await uploadAgentFile(file)
+    const r = await uploadAgentFile(file, sessionId.value)
     pendingFiles.value.push(...r)
     ElMessage.success(`已上传 ${r[0]?.name ?? ''}`)
   } catch (e: unknown) {

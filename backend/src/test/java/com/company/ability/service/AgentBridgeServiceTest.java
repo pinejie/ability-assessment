@@ -52,18 +52,20 @@ class AgentBridgeServiceTest {
     @Mock private ExternalScoreService externalScoreService;
     @Mock private AssessDimensionService dimensionService;
     @Mock private com.company.ability.service.AdminService adminService;
+    @Mock private AgentSessionService sessionService;
 
     private AgentBridgeService service;
 
     @BeforeEach
     void setUp() {
         service = new AgentBridgeService(jdbc, new ObjectMapper(), externalScoreService,
-                dimensionService, adminService, true, TOKEN, 1L, 30, 2);
+                dimensionService, adminService, sessionService, true, TOKEN, 1L, 30, 2);
         LoginUser user = new LoginUser("tester", 900L, "测试员", 10L, 1L);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(user, null, List.of()));
         when(adminService.isAdmin(any())).thenReturn(false);
         when(dimensionService.isAuthorizedForUser(any(), any())).thenReturn(true);
+        when(sessionService.isLiveSession(any())).thenReturn(true);
     }
 
     @AfterEach
@@ -73,6 +75,14 @@ class AgentBridgeServiceTest {
     }
 
     // ==================== submitDraft ====================
+
+    @Test
+    @DisplayName("submitDraft：sessionId 格式合法但不是活会话 → 拒收（防任意会话投毒）")
+    void deadSessionDraftRejected() {
+        when(sessionService.isLiveSession(any())).thenReturn(false);
+        assertThatThrownBy(() -> service.submitDraft(TOKEN, PAYLOAD, false))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("会话不存在或已结束");
+    }
 
     @Test
     @DisplayName("submitDraft：内部令牌错误一律 401")

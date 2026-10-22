@@ -78,6 +78,56 @@ public class AgentSessionService {
 
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private final ExecutorService pumpPool = Executors.newCachedThreadPool();
+    private final java.util.concurrent.ScheduledExecutorService housekeeper =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "agent-housekeeper");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 定时巡检（review #9）：闲置/超时会话主动回收（杀挂死进程）；90 天文件清理（uploads+sessions） */
+    @jakarta.annotation.PostConstruct
+    void startHousekeeper() {
+        housekeeper.scheduleWithFixedDelay(this::housekeeping, 5, 5, TimeUnit.MINUTES);
+    }
+
+    void housekeeping() {
+        try {
+            sessions.values().forEach(this::reap);
+            cleanOldFiles(uploadsDir);
+            cleanOldFiles(sessionsDir);
+        } catch (Exception e) {
+            log.warn("agent 定时巡检异常: {}", e.getMessage());
+        }
+    }
+
+    private void cleanOldFiles(Path root) {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(90);
+        try (var walk = Files.walk(root)) {
+            walk.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        try {
+                            return Files.getLastModifiedTime(p).toInstant()
+                                    .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+                                    .isBefore(cutoff);
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    })
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException ignored) {
+                            // 单次清理失败下次再试
+                        }
+                    });
+        } catch (IOException e) {
+            log.warn("agent 文件清理遍历失败 {}: {}", root, e.getMessage());
+        }
+    }
 
     private static final String ALLOWED_TOOLS = String.join(",",
             "mcp__cp__lookup_person", "mcp__cp__get_periods", "mcp__cp__get_non_flow_elements",
@@ -171,11 +221,13 @@ public class AgentSessionService {
         return out;
     }
 
-    /** 上传落 cp/uploads，返回路径由消息携带，agent 用 parse_import_file 解析 */
-    public List<Map<String, Object>> upload(List<MultipartFile> files) {
+    /** 上传落 uploads/{sessionId}/，解析工具按会话校验归属（review #8：杜绝跨会话读他人原件） */
+    public List<Map<String, Object>> upload(String sessionId, List<MultipartFile> files) {
+        requireSession(sessionId);
         if (files == null || files.isEmpty()) {
             throw new BusinessException(400, "缺少文件");
         }
+        Path dir = uploadsDir.resolve(sessionId);
         List<Map<String, Object>> out = new ArrayList<>();
         for (MultipartFile f : files) {
             String name = f.getOriginalFilename() == null ? "file" : f.getOriginalFilename();
@@ -183,8 +235,9 @@ public class AgentSessionService {
             if (!List.of(".xlsx", ".xls", ".csv").contains(ext.toLowerCase())) {
                 throw new BusinessException(400, "仅支持 .xlsx / .xls / .csv，收到：" + name);
             }
-            Path target = uploadsDir.resolve(UUID.randomUUID() + ext);
+            Path target = dir.resolve(UUID.randomUUID() + ext);
             try {
+                Files.createDirectories(dir);
                 f.transferTo(target.toFile());
             } catch (IOException e) {
                 throw new BusinessException(500, "保存上传文件失败：" + e.getMessage());
@@ -192,6 +245,16 @@ public class AgentSessionService {
             out.add(Map.of("name", name, "path", target.toString()));
         }
         return out;
+    }
+
+    /** 活会话登记（review #2：submitDraft 必须验 sessionId 真实存在且未结束，防任意会话投毒） */
+    public boolean isLiveSession(String sessionId) {
+        Session s = sessionId == null ? null : sessions.get(sessionId);
+        if (s == null) {
+            return false;
+        }
+        reap(s);
+        return s.status == Status.ACTIVE;
     }
 
     // ==================== 内部 ====================

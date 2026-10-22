@@ -68,4 +68,13 @@ class AgentSessionServiceTest {
         Map<String, Object> again = service.createSession();
         assertThat(again.get("sessionId")).isNotEqualTo(sid);
     }
+
+    @Test
+    @DisplayName("isLiveSession：新建会话为活；未知/空 id 为死（交付投毒防线）")
+    void liveSessionRegistry() {
+        String sid = (String) service.createSession().get("sessionId");
+        assertThat(service.isLiveSession(sid)).isTrue();
+        assertThat(service.isLiveSession("no-such-session")).isFalse();
+        assertThat(service.isLiveSession(null)).isFalse();
+    }
 }

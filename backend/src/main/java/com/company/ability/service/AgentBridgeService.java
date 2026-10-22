@@ -47,6 +47,7 @@ public class AgentBridgeService {
     private final ExternalScoreService externalScoreService;
     private final AssessDimensionService dimensionService;
     private final AdminService adminService;
+    private final AgentSessionService sessionService;
 
     private final boolean enabled;
     private final String internalToken;
@@ -58,6 +59,7 @@ public class AgentBridgeService {
                               ExternalScoreService externalScoreService,
                               AssessDimensionService dimensionService,
                               AdminService adminService,
+                              AgentSessionService sessionService,
                               @Value("${agent.enabled:false}") boolean enabled,
                               @Value("${agent.internal-token:}") String internalToken,
                               @Value("${assess.company-id:1}") long companyId,
@@ -68,6 +70,7 @@ public class AgentBridgeService {
         this.externalScoreService = externalScoreService;
         this.dimensionService = dimensionService;
         this.adminService = adminService;
+        this.sessionService = sessionService;
         this.enabled = enabled;
         this.internalToken = internalToken;
         this.companyId = companyId;
@@ -247,6 +250,11 @@ public class AgentBridgeService {
         String sessionId = payload.path("sessionId").asText("");
         if (!sessionId.matches("[0-9a-zA-Z_-]{1,64}")) {
             throw new BusinessException(400, "载荷缺少合法 sessionId（应由前端首条消息给出并原样带回）");
+        }
+        // 活会话校验（review #2）：CLAUDE.md 承诺"不回传 sessionId 后端拒收"必须真实成立，
+        // 否则持内部令牌者可向任意/不存在的会话 id 投毒伪造稿
+        if (!sessionService.isLiveSession(sessionId)) {
+            throw new BusinessException(400, "会话不存在或已结束，交付被拒——请让用户重新发起会话后再交付");
         }
         int year = payload.path("year").asInt(0);
         JsonNode rows = payload.path("rows");

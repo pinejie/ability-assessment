@@ -66,10 +66,11 @@ public class AgentController {
         return Result.success();
     }
 
-    @Operation(summary = "附件上传（落 cp/uploads，路径随消息发送，agent 经 parse_import_file 解析）")
+    @Operation(summary = "附件上传（按会话落盘 cp/uploads/{sessionId}，agent 解析时校验归属）")
     @PostMapping("/upload")
-    public Result<List<Map<String, Object>>> upload(@RequestPart("files") List<MultipartFile> files) {
-        return Result.success(agentSessionService.upload(files));
+    public Result<List<Map<String, Object>>> upload(@RequestParam String sessionId,
+                                                    @RequestPart("files") List<MultipartFile> files) {
+        return Result.success(agentSessionService.upload(sessionId, files));
     }
 
     /** cp_server deliver/validate 入口（内部令牌，无 JWT） */

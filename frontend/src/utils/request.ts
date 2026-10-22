@@ -36,6 +36,26 @@ service.interceptors.request.use(
   }
 )
 
+/**
+ * 403 后重拉租户授权，让引导页/顶栏尽快反映最新权限。
+ * 3 秒防抖保险丝：平台路径已在后端豁免后 authorized 不会再 403，
+ * 但绝不允许再回到「403 → load → 又 403」的死循环（2026-10-22 事故复盘）。
+ * 动态 import 打断 request ↔ store 的模块循环依赖。
+ */
+let lastForbiddenRefreshAt = 0
+const refreshDimensionsAfterForbidden = (): void => {
+  const now = Date.now()
+  if (now - lastForbiddenRefreshAt < 3000) {
+    return
+  }
+  lastForbiddenRefreshAt = now
+  void import('@/stores/dimension')
+    .then(m => m.useDimensionStore().load())
+    .catch(() => {
+      /* authorized 自身失败时由布局状态兜底 */
+    })
+}
+
 // 响应拦截器
 service.interceptors.response.use(
   (response: AxiosResponse): AxiosResponse => {
@@ -63,15 +83,10 @@ service.interceptors.response.use(
     }
     // HTTP 403（维度越权拦截）：温和提示 + 重拉租户授权。
     // 权限还在 → 顶栏可切回可看租户；已全部失效 → 布局据此自动切引导页。不整页刷新，避免 403 循环。
-    // 动态 import 打断 request ↔ store 的模块循环依赖。
     if (error.response?.status === 403) {
       const msg = (error.response.data as { message?: string } | undefined)?.message
       ElMessage.warning(msg || '没有该租户的访问权限，请联系管理员配置')
-      void import('@/stores/dimension')
-        .then(m => m.useDimensionStore().load())
-        .catch(() => {
-          /* authorized 自身失败时由布局状态兜底 */
-        })
+      refreshDimensionsAfterForbidden()
       return Promise.reject(error)
     }
     console.error('响应错误:', error)

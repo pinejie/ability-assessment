@@ -112,6 +112,39 @@ class DimensionContextFilterTest {
     }
 
     @Test
+    @DisplayName("平台路径豁免：/authorized、/auth/me、/assess-admins 带维度头也不校验、不写上下文（防零租户死循环）")
+    void platformPathsSkipCheck() throws Exception {
+        login();
+        for (String uri : List.of("/api/v1/assess-dimensions/authorized",
+                "/api/v1/auth/me", "/api/v1/assess-admins")) {
+            MockHttpServletRequest request = new MockHttpServletRequest("GET", uri);
+            request.addHeader(DimensionContextFilter.HEADER_DIMENSION_ID, "1");
+
+            filter.doFilterInternal(request, response, recordingChain());
+
+            assertTrue(chainCalled.get(), uri + " 应放行");
+            assertNull(contextDuringChain.get(), uri + " 不应写维度上下文");
+            chainCalled.set(false);
+        }
+        verifyNoInteractions(dimensionService, adminService);
+    }
+
+    @Test
+    @DisplayName("业务路径不豁免：零授权用户对兜底维度 1 的业务请求仍 403")
+    void businessPathStillChecked() throws Exception {
+        login();
+        when(adminService.isAdmin("tester")).thenReturn(false);
+        when(dimensionService.isAuthorizedForUser(1L, 100L)).thenReturn(false);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/assess-sheets");
+        request.addHeader(DimensionContextFilter.HEADER_DIMENSION_ID, "1");
+        filter.doFilterInternal(request, response, recordingChain());
+
+        assertFalse(chainCalled.get());
+        assertEquals(403, response.getStatus());
+    }
+
+    @Test
     @DisplayName("已登录管理员：豁免授权表校验，任意维度放行")
     void adminBypassesAuthorizationCheck() throws Exception {
         login();

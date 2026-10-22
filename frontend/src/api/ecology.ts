@@ -1,15 +1,14 @@
 import request from '@/utils/request'
 
-/** 泛微分部（扁平，含上级 id） */
-export interface SubCompany {
+/** 一级分部（顶层公司） */
+export interface Level1SubCompany {
   id: number
   subcompanyname: string
-  supsubcomid: number | null
 }
 
 /**
- * 全量启用分部（分部树选择器数据源；不分页、不截断）
+ * 一级分部全量列表（授权配置选择器数据源；勾选一级分部覆盖其全部下级分支人员，服务端按上级链匹配）
  */
-export const listAllSubCompanies = (): Promise<SubCompany[]> => {
-  return request.get('/sub-companies/all')
+export const listLevel1SubCompanies = (): Promise<Level1SubCompany[]> => {
+  return request.get('/sub-companies/level1')
 }

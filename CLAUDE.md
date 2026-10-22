@@ -168,7 +168,7 @@ ability-assessment/
   - 维度机制：前端顶栏切换维度 → 请求头 `X-Dimension-Id` → `DimensionContextFilter` → `DimensionContext`（ThreadLocal）→ MyBatis-Plus 租户拦截器（`MyBatisPlusConfig.TENANT_TABLES` 清单内的表自动拼 `WHERE dimension_id=?` 并在 INSERT 自动填充）；JdbcTemplate 原生 SQL（AssessPeriodService / AssessSheet* / AssessReportService）手动拼过滤，未列入清单的表（平台表、钩子直写子表）不拦截。
   - 上下文缺失（泛微钩子等）为宽松模式：拦截跳过、原生 SQL 回落默认维度（id=1）。新增表参与隔离时同步维护 `TENANT_TABLES` 清单。前端 `request.ts` 对 `X-Dimension-Id` 缺省兜底 `'1'`，UI 请求永远带头。
   - **「先删后插」的整表覆盖式保存禁止只靠拦截器隔离**：写路径必须显式带 `dimension_id`（delete 加 eq、insert set），否则宽松模式下 delete 跨维度误删。落点：`AssessConfigServiceImpl`（四组配置 getter/save 显式带维度，读取返回固定骨架）。
-  - 维度与授权：`uf_assess_dimension` / `uf_assess_dimension_auth`（授权对象=分部/人员；**无授权行=仅管理员**［2026-10-22 语义，原为所有人可用］；配置后人员 ID 命中，或人员分部**沿上级链**命中授权分部——勾选上级覆盖全部下级，2026-10-22 子树语义；分部选择 UI 为 `el-tree-select` 树形浏览，数据源 `/api/v1/sub-companies/all`）。接口 `/api/v1/assess-dimensions`。零租户普通用户前端显示引导页（不发业务请求）。详见 `project/能力测评/02-架构设计.md` 第十三、十四节（14.6/14.7）。
+  - 维度与授权：`uf_assess_dimension` / `uf_assess_dimension_auth`（授权对象=分部/人员；**无授权行=仅管理员**［2026-10-22 语义，原为所有人可用］；配置后人员 ID 命中，或人员分部**沿上级链**命中授权分部；分部授权只提供**一级分部**（选择器平铺多选，数据源 `/api/v1/sub-companies/level1`；勾一级=覆盖整条下级分支，服务端链匹配实现，见 14.7/14.8）。接口 `/api/v1/assess-dimensions`。零租户普通用户前端显示引导页（不发业务请求）。详见 `project/能力测评/02-架构设计.md` 第十三、十四节（14.6~14.8）。
 - **客户评价开关：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
 
 ### 认证与权限（2026-10-21 已落地）

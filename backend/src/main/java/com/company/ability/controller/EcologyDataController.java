@@ -55,15 +55,15 @@ public class EcologyDataController {
         }
     }
 
-    @Operation(summary = "全部启用分公司扁平列表（含上级 id，前端组树用，不分页不截断）")
-    @GetMapping("/sub-companies/all")
-    public Result<List<Map<String, Object>>> listAllSubCompanies() {
+    @Operation(summary = "一级分公司全量列表（顶层分部，授权选择器数据源；不分页不截断）")
+    @GetMapping("/sub-companies/level1")
+    public Result<List<Map<String, Object>>> listLevel1SubCompanies() {
         try {
-            String sql = "SELECT id, subcompanyname, supsubcomid FROM HrmSubCompany "
-                    + "WHERE ISNULL(canceled, 0)=0 ORDER BY id";
+            String sql = "SELECT id, subcompanyname FROM HrmSubCompany "
+                    + "WHERE ISNULL(canceled, 0)=0 AND ISNULL(supsubcomid, 0)=0 ORDER BY id";
             return Result.success(jdbcTemplate.queryForList(sql));
         } catch (Exception e) {
-            log.error("查询全部分公司列表失败", e);
+            log.error("查询一级分公司列表失败", e);
             return Result.success(List.of());
         }
     }

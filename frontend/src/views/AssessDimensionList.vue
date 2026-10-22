@@ -99,27 +99,22 @@
         type="info"
         :closable="false"
         show-icon
-        title="未配置任何授权对象时，该维度仅管理员可见；配置后，人员 ID 精确命中、或人员所在分部命中授权分部（勾选上级覆盖其全部下级）的用户方可使用。"
+        title="未配置任何授权对象时，该维度仅管理员可见；分部授权只提供一级分部（勾选即覆盖该一级分部全部下级分支的人员），人员 ID 授权为精确命中。"
         style="margin-bottom: 16px"
       />
 
       <div class="auth-section">
         <h3 class="form-section-title">按分部授权</h3>
-        <el-tree-select
+        <el-select
           v-model="authSubcompanyIds"
-          :data="subCompanyTree"
           multiple
-          show-checkbox
-          check-strictly
           filterable
           clearable
-          node-key="id"
-          :props="{ label: 'label', children: 'children' }"
-          default-expand-all
-          :render-after-expand="false"
-          placeholder="树形浏览勾选分部（勾选上级覆盖其全部下级）"
+          placeholder="选择一级分部（勾选后覆盖该分部全部下级分支人员）"
           style="width: 100%"
-        />
+        >
+          <el-option v-for="c in subCompanies" :key="c.id" :label="c.subcompanyname" :value="c.id" />
+        </el-select>
       </div>
 
       <div class="auth-section">
@@ -153,11 +148,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
-import { listAllSubCompanies, type SubCompany } from '@/api/ecology'
+import { listLevel1SubCompanies, type Level1SubCompany } from '@/api/ecology'
 import {
   listAllDimensions,
   createDimension,
@@ -177,37 +172,10 @@ import { useDimensionStore } from '@/stores/dimension'
 /** 默认维度（存量数据挂载点），禁止删除 */
 const DEFAULT_DIMENSION_ID = 1
 
-/** 分部树节点（el-tree-select 数据形状） */
-interface SubCompanyTreeNode {
-  id: number
-  label: string
-  children: SubCompanyTreeNode[]
-}
-
 const dimensionList = ref<AssessDimensionVO[]>([])
-const subCompanies = ref<SubCompany[]>([])
+/** 一级分部全量列表（2026-10-22 决策：授权只面向一级分部；服务端按人员分部上级链命中，勾一级覆盖整分支） */
+const subCompanies = ref<Level1SubCompany[]>([])
 const dimensionStore = useDimensionStore()
-
-/**
- * 扁平分部列表组树；上级缺失/孤儿节点按根处理（防泛微脏数据导致整棵树丢失）。
- * 子树匹配语义在授权表保存后由服务端判定，这里只负责展示与选择。
- */
-const subCompanyTree = computed<SubCompanyTreeNode[]>(() => {
-  const nodes = new Map<number, SubCompanyTreeNode>()
-  subCompanies.value.forEach(c => nodes.set(c.id, { id: c.id, label: c.subcompanyname, children: [] }))
-  const roots: SubCompanyTreeNode[] = []
-  subCompanies.value.forEach(c => {
-    const node = nodes.get(c.id)
-    if (!node) return
-    const parent = c.supsubcomid != null ? nodes.get(c.supsubcomid) : undefined
-    if (parent && parent !== node) {
-      parent.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  })
-  return roots
-})
 
 const loadData = async () => {
   try {
@@ -219,9 +187,9 @@ const loadData = async () => {
 
 const loadSubCompanies = async () => {
   try {
-    subCompanies.value = await listAllSubCompanies()
+    subCompanies.value = await listLevel1SubCompanies()
   } catch (error) {
-    console.error('加载分部列表失败:', error)
+    console.error('加载一级分部列表失败:', error)
   }
 }
 

@@ -50,6 +50,7 @@ public class AbilityElementServiceImpl
 
         AbilityElement element = new AbilityElement();
         BeanUtils.copyProperties(dto, element);
+        normalizeAssessFlags(element);
         save(element);
         log.info("创建能力要素成功，ID: {}, 名称: {}", element.getId(), element.getElementName());
         return element.getId();
@@ -66,6 +67,7 @@ public class AbilityElementServiceImpl
         // 保存原始值（BeanUtils.copyProperties 会用 null 覆盖未传的字段）
         Long originalCategoryId = element.getCategoryId();
         Integer originalStatus = element.getStatus();
+        Integer originalAssessInFlow = element.getAssessInFlow();
 
         // 如果修改了类别，检查类别是否存在
         if (dto.getCategoryId() != null) {
@@ -80,6 +82,11 @@ public class AbilityElementServiceImpl
                 && dto.getStatus() != null && dto.getStatus() == 1;
 
         BeanUtils.copyProperties(dto, element, "id");
+        // 未传「需评价」时沿用原值（copyProperties 置 null），保证联动判定基于生效值
+        if (element.getAssessInFlow() == null) {
+            element.setAssessInFlow(originalAssessInFlow);
+        }
+        normalizeAssessFlags(element);
         updateById(element);
         log.info("更新能力要素成功，ID: {}", element.getId());
 
@@ -160,6 +167,16 @@ public class AbilityElementServiceImpl
         return list.stream()
             .map(this::convertToVO)
             .collect(Collectors.toList());
+    }
+
+    /**
+     * 评价开关联动：不需评价（assessInFlow=0）的要素不进测评页面，
+     * 「需客户评价」无意义，强制归 0，避免出现 0/1 的混淆配置。
+     */
+    private void normalizeAssessFlags(AbilityElement element) {
+        if (Integer.valueOf(0).equals(element.getAssessInFlow())) {
+            element.setAllowClientAssess(0);
+        }
     }
 
     /**

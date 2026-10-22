@@ -57,9 +57,10 @@ WHILE @@FETCH_STATUS = 0
 BEGIN
     INSERT INTO uf_ability_element
         (element_name, element_code, category_id, description, status, sort,
-         create_by, create_time, update_by, update_time, deleted, dimension_id, allow_client_assess)
+         create_by, create_time, update_by, update_time, deleted, dimension_id, allow_client_assess, assess_in_flow)
     SELECT e.element_name, e.element_code, m.new_id, e.description, e.status, e.sort,
-           e.create_by, GETDATE(), e.update_by, GETDATE(), 0, @dst_dim, e.allow_client_assess
+           e.create_by, GETDATE(), e.update_by, GETDATE(), 0, @dst_dim, e.allow_client_assess,
+           COALESCE(e.assess_in_flow, 1)
     FROM uf_ability_element e
     JOIN #map_cat m ON m.old_id = e.category_id
     WHERE e.id = @old;

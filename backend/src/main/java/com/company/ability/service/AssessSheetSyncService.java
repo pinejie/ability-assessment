@@ -55,10 +55,11 @@ public class AssessSheetSyncService {
         }
         long periodId = num(periods.get(0).get("id"));
 
-        // 2. 人员能力要求明细（要素、类别、要求等级）
+        // 2. 人员能力要求明细（要素、类别、要求等级、是否需评价）
         List<Map<String, Object>> items = jdbc.queryForList(
                 "SELECT i.element_id, COALESCE(i.category_id, e.category_id) AS category_id, " +
-                "       c.category_name, e.element_name, l.level AS level_no " +
+                "       c.category_name, e.element_name, l.level AS level_no, " +
+                "       COALESCE(e.assess_in_flow, 1) AS assess_in_flow " +
                 "FROM uf_user_ability_req_item i " +
                 "JOIN uf_user_ability_req_new h ON h.id = i.req_id " +
                 "LEFT JOIN uf_ability_element e ON e.id = i.element_id " +
@@ -71,7 +72,7 @@ public class AssessSheetSyncService {
             throw new BusinessException("人员能力要求为空，不允许保存（能力要素由岗位派生）");
         }
 
-        Set<Long> elementIds = new HashSet<>();
+        Set<Long> allElementIds = new HashSet<>();
         for (Map<String, Object> m : items) {
             long elementId = num(m.get("element_id"));
             if (m.get("element_name") == null) {
@@ -84,10 +85,22 @@ public class AssessSheetSyncService {
             if (lv == null || num(lv) < 1 || num(lv) > 5) {
                 throw new BusinessException("要素等级无效或缺失，ID: " + elementId);
             }
-            if (!elementIds.add(elementId)) {
+            if (!allElementIds.add(elementId)) {
                 throw new BusinessException("同一要素重复配置，ID: " + elementId);
             }
         }
+
+        // 2b. 需评价要素（assess_in_flow=1）才进测评页面；不需评价的要素保留在要求中（任职标准），
+        //     其已有页面行由第 5 步的 NOT IN 停用逻辑置 active=0，评级历史保留
+        List<Map<String, Object>> assessItems = items.stream()
+                .filter(m -> num(m.get("assess_in_flow")) != 0)
+                .collect(Collectors.toList());
+        if (assessItems.isEmpty()) {
+            throw new BusinessException("能力要素均已设置「流程中不评价」，人员能力要求至少需要一个需评价要素");
+        }
+        Set<Long> elementIds = assessItems.stream()
+                .map(m -> num(m.get("element_id")))
+                .collect(Collectors.toCollection(HashSet::new));
 
         // 3. 人员信息（部门、岗位、直接领导）
         List<Map<String, Object>> hrs = jdbc.queryForList(
@@ -129,9 +142,9 @@ public class AssessSheetSyncService {
             action = "SYNC";
         }
 
-        // 5. 页面行：新增或更新有效要素（结构字段），不在要求中的要素置为无效（保留已有评级）
-        for (int sortNo = 1; sortNo <= items.size(); sortNo++) {
-            Map<String, Object> m = items.get(sortNo - 1);
+        // 5. 页面行：新增或更新需评价要素（结构字段），不在要求中或不需评价的要素置为无效（保留已有评级）
+        for (int sortNo = 1; sortNo <= assessItems.size(); sortNo++) {
+            Map<String, Object> m = assessItems.get(sortNo - 1);
             long elementId = num(m.get("element_id"));
             long categoryId = num(m.get("category_id"));
             String categoryName = (String) m.get("category_name");
@@ -159,13 +172,15 @@ public class AssessSheetSyncService {
                 "UPDATE uf_assess_sheet_row SET active = 0 WHERE sheet_id = ? AND element_id NOT IN (" + placeholders + ")",
                 args);
 
-        // 5b. 基础数据：类别权重、要素标准分、岗位标准分（由配置与要求等级算出，不依赖评级）
-        writeBaseScores(sheetId, items, dimensionId);
+        // 5b. 基础数据：类别权重、要素标准分、岗位标准分（由配置与要求等级算出，不依赖评级；仅计需评价要素）
+        writeBaseScores(sheetId, assessItems, dimensionId);
 
         // 6. 日志
         writeLog(sheetId, action, String.format(
-                "{\"elements\":%d,\"deactivated\":%d}", elementIds.size(), deactivated), dimensionId);
-        log.info("测评页面{}完成，sheetId={}, 要素={}, 移除={}", action, sheetId, elementIds.size(), deactivated);
+                "{\"elements\":%d,\"required\":%d,\"deactivated\":%d}",
+                elementIds.size(), items.size(), deactivated), dimensionId);
+        log.info("测评页面{}完成，sheetId={}, 需评价要素={}/要求={}, 停用={}",
+                action, sheetId, elementIds.size(), items.size(), deactivated);
     }
 
     /**

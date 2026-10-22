@@ -95,6 +95,47 @@ class AbilityElementServiceTest {
     }
 
     @Test
+    @DisplayName("创建「不需评价」要素时联动归零「需客户评价」")
+    void shouldForceClientAssessOffWhenAssessInFlowOff() {
+        AbilityElementCreateDTO dto = new AbilityElementCreateDTO();
+        dto.setElementName("免评要素");
+        dto.setCategoryId(categoryId);
+        dto.setAssessInFlow(0);
+        dto.setAllowClientAssess(1);  // 显式传了需要客户评价，也应被联动归零
+
+        Long id = abilityElementService.createElement(dto);
+
+        AbilityElementVO vo = abilityElementService.getElementById(id);
+        assertEquals(0, vo.getAssessInFlow());
+        assertEquals(0, vo.getAllowClientAssess());
+    }
+
+    @Test
+    @DisplayName("更新未传「需评价」时沿用原值，联动判定基于生效值")
+    void shouldKeepOriginalAssessFlagOnPartialUpdate() {
+        AbilityElementCreateDTO createDTO = new AbilityElementCreateDTO();
+        createDTO.setElementName("部分更新要素");
+        createDTO.setCategoryId(categoryId);
+        Long id = abilityElementService.createElement(createDTO);
+
+        AbilityElementUpdateDTO off = new AbilityElementUpdateDTO();
+        off.setId(id);
+        off.setAssessInFlow(0);
+        abilityElementService.updateElement(off);
+        assertEquals(0, abilityElementService.getElementById(id).getAllowClientAssess());
+
+        // 只改名称并试图打开客户开关：需评价仍为 0，客户开关必须继续被压 0
+        AbilityElementUpdateDTO nameOnly = new AbilityElementUpdateDTO();
+        nameOnly.setId(id);
+        nameOnly.setElementName("部分更新要素-改名");
+        nameOnly.setAllowClientAssess(1);
+        abilityElementService.updateElement(nameOnly);
+        AbilityElementVO vo = abilityElementService.getElementById(id);
+        assertEquals(0, vo.getAssessInFlow());
+        assertEquals(0, vo.getAllowClientAssess(), "流程中仍免评时，客户开关被强制归零");
+    }
+
+    @Test
     @DisplayName("应该删除能力要素")
     void shouldDeleteAbilityElement() {
         // Arrange

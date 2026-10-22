@@ -112,6 +112,15 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             elementCategory.put(ri.getElementId(), ri.getCategoryId());
         }
 
+        // 4a. 流程中不需评价的要素（assess_in_flow=0）不参与计分——与页面同步/重算存储过程同口径：
+        //     要求仍记录（任职标准），但归档得分、完整性校验、类别要素数只算需评价要素
+        Map<Long, Boolean> assessInFlow = loadAssessInFlow(requiredLevel.keySet());
+        requiredLevel.keySet().removeIf(id -> Boolean.FALSE.equals(assessInFlow.get(id)));
+        elementCategory.keySet().removeIf(id -> Boolean.FALSE.equals(assessInFlow.get(id)));
+        if (requiredLevel.isEmpty()) {
+            throw new BusinessException(ERR_NO_REQUIREMENT, "人员能力要求的要素均设置了「流程中不评价」，无法归档测评结果");
+        }
+
         // 4b. 要素是否允许客户评价（做法 B：不允许的要素，客户分按 0 计入加权总分）
         Map<Long, Boolean> allowClientAssess = loadAllowClientAssess(requiredLevel.keySet());
 
@@ -376,6 +385,18 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             m.put(r.getElementId(), r.getLevelNo());
         }
         return m;
+    }
+
+    /** 批量读取要素的流程需评价开关（缺省按需评价处理，兼容未迁移历史行） */
+    private Map<Long, Boolean> loadAssessInFlow(Set<Long> elementIds) {
+        Map<Long, Boolean> map = new HashMap<>();
+        if (elementIds.isEmpty()) {
+            return map;
+        }
+        for (AbilityElement element : elementMapper.selectBatchIds(elementIds)) {
+            map.put(element.getId(), element.getAssessInFlow() == null || element.getAssessInFlow() != 0);
+        }
+        return map;
     }
 
     /** 批量读取要素的客户评价开关（缺省按允许处理，兼容未迁移历史行） */

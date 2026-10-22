@@ -67,10 +67,17 @@
             </template>
           </el-table-column>
           <el-table-column prop="description" label="描述" min-width="250" show-overflow-tooltip />
-          <el-table-column label="客户评价" width="100">
+          <el-table-column label="流程评价" width="90">
+            <template #default="{ row }">
+              <span class="status-tag" :class="row.assessInFlow === 0 ? 'disabled' : 'active'">
+                {{ row.assessInFlow === 0 ? '免评' : '需评' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="客户评价" width="90">
             <template #default="{ row }">
               <span class="status-tag" :class="row.allowClientAssess === 0 ? 'disabled' : 'active'">
-                {{ row.allowClientAssess === 0 ? '不允许' : '允许' }}
+                {{ row.allowClientAssess === 0 ? '免客户' : '需客户' }}
               </span>
             </template>
           </el-table-column>
@@ -164,15 +171,28 @@
               <el-radio-button :value="0">禁用</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="允许客户评价">
+          <el-form-item label="需评价">
             <el-switch
-              v-model="formData.allowClientAssess"
+              v-model="formData.assessInFlow"
               :active-value="1"
               :inactive-value="0"
-              active-text="允许"
-              inactive-text="不允许"
+              active-text="需要"
+              inactive-text="不需要"
             />
-            <div class="form-hint">不允许时，客户对该要素的评分按 0 计入加权总分</div>
+            <div class="form-hint">不需要时，该要素不进入测评流程页面（要求配置仍保留），权重由同类别其余需评价要素分摊</div>
+          </el-form-item>
+          <el-form-item label="需客户评价">
+            <el-switch
+              v-model="formData.allowClientAssess"
+              :disabled="formData.assessInFlow === 0"
+              :active-value="1"
+              :inactive-value="0"
+              active-text="需要"
+              inactive-text="不需要"
+            />
+            <div class="form-hint">
+              {{ formData.assessInFlow === 0 ? '要素不需评价，客户开关自动为不需要' : '不需要时，客户对该要素的评分按 0 计入加权总分' }}
+            </div>
           </el-form-item>
         </div>
       </el-form>
@@ -273,6 +293,7 @@ const formData = reactive({
   elementCode: '',
   categoryId: undefined as number | undefined,
   description: '',
+  assessInFlow: 1,
   allowClientAssess: 1,
   status: 1,
   sort: 0,
@@ -445,6 +466,7 @@ const resetForm = () => {
   formData.elementCode = ''
   formData.categoryId = undefined
   formData.description = ''
+  formData.assessInFlow = 1
   formData.allowClientAssess = 1
   formData.status = 1
   formData.sort = 0

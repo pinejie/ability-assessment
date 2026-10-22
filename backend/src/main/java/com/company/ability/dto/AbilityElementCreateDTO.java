@@ -37,6 +37,11 @@ public class AbilityElementCreateDTO {
     private String description;
 
     /**
+     * 测评流程中是否需要评价：1-需评价（默认），0-不需评价（联动 allowClientAssess=0）
+     */
+    private Integer assessInFlow = 1;
+
+    /**
      * 是否允许客户评价：1-允许，0-不允许
      */
     private Integer allowClientAssess = 1;

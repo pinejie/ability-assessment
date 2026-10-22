@@ -40,6 +40,11 @@ public class AbilityElementUpdateDTO {
     private String description;
 
     /**
+     * 测评流程中是否需要评价：1-需评价，0-不需评价（联动 allowClientAssess=0）
+     */
+    private Integer assessInFlow;
+
+    /**
      * 是否允许客户评价：1-允许，0-不允许
      */
     private Integer allowClientAssess;

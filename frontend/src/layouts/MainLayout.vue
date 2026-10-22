@@ -33,8 +33,9 @@
           <el-select
             :model-value="dimensionStore.currentId"
             class="dimension-select"
-            placeholder="选择维度"
+            :placeholder="dimensionPlaceholder"
             :loading="dimensionStore.loading"
+            :disabled="!dimensionStore.dimensions.length"
             @change="handleDimensionChange"
           >
             <el-option
@@ -55,9 +56,23 @@
         </div>
       </header>
 
-      <!-- 页面内容 -->
+      <!-- 页面内容：租户就绪且有可访问维度才渲染业务页（杜绝 authorized 返回前用兜底维度发请求吃 403） -->
       <div class="page-content">
-        <router-view />
+        <router-view v-if="contentReady" />
+        <div v-else-if="showNoDimensionGuidance" class="no-dimension">
+          <el-result
+            icon="info"
+            title="暂无可访问的测评租户"
+            sub-title="您的账号还没有被授权到任何测评租户（维度）。请联系测评管理员配置授权后，点击重新加载。"
+          >
+            <template #extra>
+              <el-button type="primary" :loading="dimensionStore.loading" @click="dimensionStore.load()">
+                重新加载
+              </el-button>
+            </template>
+          </el-result>
+        </div>
+        <div v-else class="page-loading">正在加载可访问的租户…</div>
       </div>
     </main>
   </div>
@@ -112,6 +127,22 @@ const handleDimensionChange = (id: number) => {
   dimensionStore.setCurrent(id)
   window.location.reload()
 }
+
+/**
+ * 内容门控（2026-10-22 语义）：未配置授权的租户仅管理员可见，
+ * 普通用户可能「零租户」——此时用引导页替代业务页，不发任何带兜底维度的请求。
+ * 公开页（SSO 回调/错误）与未登录调试态不受门控。
+ */
+const isLoggedIn = computed(() => !!getToken())
+const contentReady = computed(
+  () => route.meta.public === true || !isLoggedIn.value || (dimensionStore.loaded && dimensionStore.dimensions.length > 0),
+)
+const showNoDimensionGuidance = computed(
+  () => route.meta.public !== true && isLoggedIn.value && dimensionStore.loaded && dimensionStore.dimensions.length === 0,
+)
+const dimensionPlaceholder = computed(() =>
+  dimensionStore.loaded && dimensionStore.dimensions.length === 0 ? '无可访问租户' : '选择维度',
+)
 
 interface MenuItem {
   path: string
@@ -303,5 +334,16 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 24px;
+}
+
+.no-dimension {
+  padding-top: 48px;
+}
+
+.page-loading {
+  text-align: center;
+  color: #86909C;
+  padding-top: 48px;
+  font-size: 14px;
 }
 </style>

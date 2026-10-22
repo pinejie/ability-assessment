@@ -45,16 +45,33 @@ service.interceptors.response.use(
     if (code === 200) {
       // 拦截器返回业务数据，调用方通过 request.get<T> 指定类型
       return data as unknown as AxiosResponse
-    } else {
-      ElMessage.error(message || '请求失败')
-      return Promise.reject(new Error(message || '请求失败')) as unknown as AxiosResponse
     }
+    // 业务码 403（租户/管理员授权拒绝）：温和提示，不弹红色报错
+    if (code === 403) {
+      ElMessage.warning(message || '没有该操作的访问权限，请联系管理员配置')
+      return Promise.reject(new Error(message || '无访问权限')) as unknown as AxiosResponse
+    }
+    ElMessage.error(message || '请求失败')
+    return Promise.reject(new Error(message || '请求失败')) as unknown as AxiosResponse
   },
   (error) => {
     // HTTP 401：登录态缺失/过期 → 清理本地凭证并重新发起泛微 SSO（工具内置循环保护）
     if (error.response?.status === 401) {
       clearAuth()
       redirectToSsoLogin()
+      return Promise.reject(error)
+    }
+    // HTTP 403（维度越权拦截）：温和提示 + 重拉租户授权。
+    // 权限还在 → 顶栏可切回可看租户；已全部失效 → 布局据此自动切引导页。不整页刷新，避免 403 循环。
+    // 动态 import 打断 request ↔ store 的模块循环依赖。
+    if (error.response?.status === 403) {
+      const msg = (error.response.data as { message?: string } | undefined)?.message
+      ElMessage.warning(msg || '没有该租户的访问权限，请联系管理员配置')
+      void import('@/stores/dimension')
+        .then(m => m.useDimensionStore().load())
+        .catch(() => {
+          /* authorized 自身失败时由布局状态兜底 */
+        })
       return Promise.reject(error)
     }
     console.error('响应错误:', error)

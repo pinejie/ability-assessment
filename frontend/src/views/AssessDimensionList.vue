@@ -29,9 +29,9 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="使用授权" width="130">
+          <el-table-column label="使用授权" width="150">
             <template #default="{ row }">
-              <el-tag v-if="row.authCount === 0" type="success" effect="plain">不限（所有人可用）</el-tag>
+              <el-tag v-if="row.authCount === 0" type="warning" effect="plain">未配置（仅管理员）</el-tag>
               <el-tag v-else type="info" effect="plain">{{ row.authCount }} 个对象</el-tag>
             </template>
           </el-table-column>
@@ -99,7 +99,7 @@
         type="info"
         :closable="false"
         show-icon
-        title="未配置任何授权对象时，该维度对所有人开放；配置后，仅命中的分部或人员可使用。"
+        title="未配置任何授权对象时，该维度仅管理员可见；配置后，人员 ID 或其一级分部命中的用户方可使用。"
         style="margin-bottom: 16px"
       />
 

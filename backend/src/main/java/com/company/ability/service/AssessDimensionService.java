@@ -44,15 +44,16 @@ public interface AssessDimensionService {
     void saveAuths(Long dimensionId, List<DimensionAuthItemDTO> items);
 
     /**
-     * 查询指定人员可用的维度（启用 + 授权匹配；无授权行的维度视为所有人可用）。
+     * 查询指定人员可用的维度（启用 + 授权匹配；2026-10-22 起：无授权行的维度仅管理员可见）。
      * admin=true（系统管理员）返回全部启用维度；
-     * resourceId 为空时返回全部启用维度（当前系统无统一登录，未传用户时不做过滤）。
+     * resourceId 为空（无登录身份，宽松兼容内部调用/调试）返回全部启用维度。
      */
     List<AssessDimensionVO> authorized(Long resourceId, boolean admin);
 
     /**
      * 判断人员对指定维度是否有访问权（请求级越权校验用）。
-     * 与 authorized() 同一套规则：无授权行 = 所有人可用。
+     * 与 authorized() 同一套规则：无授权行 = 仅管理员（管理员由调用方先行豁免）；
+     * 配置授权后按「人员 ID 或一级分部」精确命中。
      */
     boolean isAuthorizedForUser(Long dimensionId, Long resourceId);
 }

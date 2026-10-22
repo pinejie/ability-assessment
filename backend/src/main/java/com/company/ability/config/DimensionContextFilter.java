@@ -69,6 +69,6 @@ public class DimensionContextFilter extends OncePerRequestFilter {
     private void writeForbidden(HttpServletResponse response) throws IOException {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType("application/json;charset=UTF-8");
-        response.getWriter().write("{\"code\":403,\"message\":\"无权访问该维度，请在顶栏切换后重试\"}");
+        response.getWriter().write("{\"code\":403,\"message\":\"没有该租户的访问权限，请在顶栏切换或联系管理员配置授权\"}");
     }
 }

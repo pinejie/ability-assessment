@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 
 /**
  * 维度授权：控制哪些分部/哪些人可使用哪个维度。
- * 维度没有任何授权行 = 所有人可用。
+ * 维度没有任何授权行 = 仅管理员可用（2026-10-22 语义调整，原为"所有人可用"）。
  */
 @Data
 @TableName("uf_assess_dimension_auth")

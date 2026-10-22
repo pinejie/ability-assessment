@@ -12,6 +12,8 @@ export const useDimensionStore = defineStore('dimension', () => {
   const dimensions = ref<AssessDimensionVO[]>([])
   const currentId = ref<number | null>(Number(localStorage.getItem(DIMENSION_STORAGE_KEY)) || null)
   const loading = ref(false)
+  /** 首次 authorized 是否已返回（布局用它区分「加载中」与「确无可访问租户」） */
+  const loaded = ref(false)
 
   const setCurrent = (id: number | null) => {
     currentId.value = id
@@ -26,14 +28,15 @@ export const useDimensionStore = defineStore('dimension', () => {
     loading.value = true
     try {
       dimensions.value = await listAuthorizedDimensions()
-      // 选中值失效（首次进入 / 维度被删或禁用）时回落到第一个可用维度
+      // 选中值失效（首次进入 / 维度被删或禁用 / 无任何可访问维度）时回落到第一个可用维度
       if (!dimensions.value.some(d => d.id === currentId.value)) {
         setCurrent(dimensions.value[0]?.id ?? null)
       }
     } finally {
       loading.value = false
+      loaded.value = true
     }
   }
 
-  return { dimensions, currentId, loading, setCurrent, load }
+  return { dimensions, currentId, loading, loaded, setCurrent, load }
 })

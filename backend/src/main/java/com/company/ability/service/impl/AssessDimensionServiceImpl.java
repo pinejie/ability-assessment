@@ -206,12 +206,12 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
 
     @Override
     public boolean isAuthorizedForUser(Long dimensionId, Long resourceId) {
+        if (resourceId == null) {
+            return true; // 无登录身份（泛微钩子/调试匿名）：宽松，与 DimensionContext 口径一致
+        }
         List<AssessDimensionAuth> auths = authMapper.selectList(
                 new LambdaQueryWrapper<AssessDimensionAuth>()
                         .eq(AssessDimensionAuth::getDimensionId, dimensionId));
-        if (auths.isEmpty() || resourceId == null) {
-            return true;
-        }
         List<Long> subs = jdbc.queryForList(
                 "SELECT subcompanyid1 FROM HrmResource WHERE id = ?", Long.class, resourceId);
         Long subcompanyId = subs.isEmpty() ? null : subs.get(0);
@@ -219,17 +219,18 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
     }
 
     /**
-     * 无授权行 = 所有人可用；提供 resourceId 时要求命中「人员精确授权」或「人员所属分部授权」。
-     * resourceId 为空（系统尚无统一登录）：宽松模式不过滤——否则配了授权的维度连管理入口都不可达；
-     * SSO 落地、前端始终携带 resourceId 后，这里自动升级为强制过滤。
+     * 授权语义（2026-10-22 调整）：
+     * 无授权行 = 仅管理员可用（管理员经 authorized()/DimensionContextFilter 豁免直达，不进本判断）；
+     * 配置后，要求命中「人员 ID 精确授权」或「人员一级分部（subcompanyid1）授权」。
+     * resourceId 为空（无登录身份）：宽松放行——泛微钩子等内部集成调用不受租户授权约束。
      */
     private boolean isAuthorizedFor(Long dimensionId, List<AssessDimensionAuth> auths,
                                     Long resourceId, Long subcompanyId) {
-        if (auths == null || auths.isEmpty()) {
-            return true;
-        }
         if (resourceId == null) {
             return true;
+        }
+        if (auths == null || auths.isEmpty()) {
+            return false;
         }
         for (AssessDimensionAuth auth : auths) {
             if (Objects.equals(auth.getAuthType(), AssessDimensionAuth.TYPE_RESOURCE)

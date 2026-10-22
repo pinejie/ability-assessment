@@ -21,16 +21,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 维度（类租户）切换器可见性测试：普通人员按授权过滤，管理员全量（禁用维度除外）。
+ * 维度（类租户）可见性测试（2026-10-22 语义）：
+ * 未配置授权行的维度仅管理员可见；配置后按「一级分部 ID 或 人员 ID」精确命中；
+ * 无登录身份维持宽松（内部集成调用）；禁用维度对所有人不可见。
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @Transactional
-@DisplayName("维度切换器管理员全量可见测试")
+@DisplayName("维度可见性语义测试")
 class AssessDimensionAdminTest {
 
     private static final long SUB_AUTHORIZED = 9L;
     private static final long SUB_OTHER = 8L;
+    private static final long PERSON_ID = 100L;
+    private static final long PERSON_OTHER = 200L;
 
     @Autowired
     private AssessDimensionService dimensionService;
@@ -45,53 +49,60 @@ class AssessDimensionAdminTest {
     private JdbcTemplate jdbc;
 
     private Long openDim;
-    private Long restrictedDim;
+    private Long subDim;
+    private Long personDim;
     private Long disabledDim;
 
     @BeforeEach
     void seed() {
-        openDim = insertDimension("开放维度", 1, 1);
-        restrictedDim = insertDimension("限定维度", 1, 2);
-        disabledDim = insertDimension("禁用维度", 0, 3);
+        openDim = insertDimension("未配置维度", 1, 1);
+        subDim = insertDimension("分部授权维度", 1, 2);
+        personDim = insertDimension("人员授权维度", 1, 3);
+        disabledDim = insertDimension("禁用维度", 0, 4);
 
-        AssessDimensionAuth auth = new AssessDimensionAuth();
-        auth.setDimensionId(restrictedDim);
-        auth.setAuthType(AssessDimensionAuth.TYPE_SUBCOMPANY);
-        auth.setAuthId(SUB_AUTHORIZED);
-        authMapper.insert(auth);
+        insertAuth(subDim, AssessDimensionAuth.TYPE_SUBCOMPANY, SUB_AUTHORIZED);
+        insertAuth(personDim, AssessDimensionAuth.TYPE_RESOURCE, PERSON_ID);
 
         jdbc.update("INSERT INTO HrmResource (id, lastname, status, loginid, subcompanyid1) "
-                + "VALUES (100, '甲', 1, 'u100', ?)", SUB_AUTHORIZED);
+                + "VALUES (?, '甲', 1, 'u100', ?)", PERSON_ID, SUB_AUTHORIZED);
         jdbc.update("INSERT INTO HrmResource (id, lastname, status, loginid, subcompanyid1) "
-                + "VALUES (200, '乙', 1, 'u200', ?)", SUB_OTHER);
+                + "VALUES (?, '乙', 1, 'u200', ?)", PERSON_OTHER, SUB_OTHER);
     }
 
     @Test
-    @DisplayName("普通人员：只见开放维度与命中的授权维度，禁用维度不可见")
-    void normalUserSeesOnlyGranted() {
-        List<Long> visible = ids(dimensionService.authorized(200L, false));
+    @DisplayName("未配置授权的维度：普通用户不可见，管理员可见")
+    void emptyAuthIsAdminOnly() {
+        List<Long> visible = ids(dimensionService.authorized(PERSON_OTHER, false));
+        assertFalse(visible.contains(openDim));
 
-        assertEquals(List.of(openDim), visible);
-
-        List<Long> authorizedHit = ids(dimensionService.authorized(100L, false));
-        assertTrue(authorizedHit.contains(restrictedDim));
+        List<Long> adminVisible = ids(dimensionService.authorized(PERSON_OTHER, true));
+        assertTrue(adminVisible.contains(openDim));
     }
 
     @Test
-    @DisplayName("管理员：全部启用维度可见（不受授权限制），禁用维度仍不可见")
+    @DisplayName("命中方式：一级分部 ID 或 人员 ID，任一匹配即可访问")
+    void subcompanyOrPersonIdMatch() {
+        // 100：人员维度按 ID 命中 + 分部维度按一级分部命中；未配置的 openDim 不可见
+        assertEquals(List.of(subDim, personDim), ids(dimensionService.authorized(PERSON_ID, false)));
+        // 200：什么都没命中 → 空列表（前端据此展示引导页）
+        assertEquals(List.of(), ids(dimensionService.authorized(PERSON_OTHER, false)));
+    }
+
+    @Test
+    @DisplayName("管理员：全部启用维度可见（含未配置授权与别人授权的），禁用维度仍不可见")
     void adminSeesAllEnabled() {
-        List<Long> visible = ids(dimensionService.authorized(200L, true));
+        List<Long> visible = ids(dimensionService.authorized(PERSON_OTHER, true));
 
-        assertEquals(List.of(openDim, restrictedDim), visible);
+        assertEquals(List.of(openDim, subDim, personDim), visible);
         assertFalse(visible.contains(disabledDim));
     }
 
     @Test
-    @DisplayName("无身份（旧宽松口径）：不过滤，返回全部启用维度")
+    @DisplayName("无登录身份（钩子/调试宽松口径）：返回全部启用维度")
     void anonymousStaysLenient() {
         List<Long> visible = ids(dimensionService.authorized(null, false));
 
-        assertEquals(List.of(openDim, restrictedDim), visible);
+        assertEquals(List.of(openDim, subDim, personDim), visible);
     }
 
     // ==================== 辅助 ====================
@@ -103,6 +114,14 @@ class AssessDimensionAdminTest {
         dimension.setSort(sort);
         dimensionMapper.insert(dimension);
         return dimension.getId();
+    }
+
+    private void insertAuth(Long dimensionId, int authType, Long authId) {
+        AssessDimensionAuth auth = new AssessDimensionAuth();
+        auth.setDimensionId(dimensionId);
+        auth.setAuthType(authType);
+        auth.setAuthId(authId);
+        authMapper.insert(auth);
     }
 
     private List<Long> ids(List<AssessDimensionVO> dimensions) {

@@ -6,6 +6,7 @@
         <p class="page-description">
           年度只影响人员能力要求和测评汇总页面。测评配置全局共用，不按年设置。
           关闭后，该年度的人员能力要求和测评页面只读，泛微钩子不再写入。
+          每个维度同一时间只允许一个「进行中」年度：新增或激活年度时，原进行中年度将被自动关闭（报告冻结）。
         </p>
       </div>
       <el-button type="primary" @click="openCreate">新增年度</el-button>
@@ -71,7 +72,23 @@ const openCreate = () => {
   dialogVisible.value = true
 }
 
+/** 当前维度下除 excludeId 外、处于「进行中」的年度——服务端会联动自动关闭它们 */
+const activeOthers = (excludeId: number) =>
+  periods.value.filter(p => p.status === 0 && p.id !== excludeId)
+
 const submitCreate = async () => {
+  const willClose = activeOthers(-1)
+  if (willClose.length) {
+    try {
+      await ElMessageBox.confirm(
+        `新增年度默认为「进行中」，同维度当前进行中的 ${willClose.map(p => `${p.year}年度`).join('、')} 将被自动关闭（报告冻结）。确定继续？`,
+        '提示',
+        { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
   saving.value = true
   try {
     await createPeriod(newYear.value)
@@ -85,11 +102,15 @@ const submitCreate = async () => {
 
 const toggle = async (row: PeriodItem, status: number) => {
   const closing = status === 1
+  const willClose = closing ? [] : activeOthers(row.id)
+  const cascadeNote = willClose.length
+    ? `同维度进行中的 ${willClose.map(p => `${p.year}年度`).join('、')} 将被自动关闭（报告冻结）。`
+    : ''
   try {
     await ElMessageBox.confirm(
       closing
         ? `关闭${row.year}年度后，该年度的人员能力要求和测评页面只读，泛微钩子不再写入。确定关闭？`
-        : `重新开启${row.year}年度？`,
+        : `重新开启${row.year}年度？${cascadeNote}`,
       '提示',
       { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' },
     )
@@ -97,7 +118,7 @@ const toggle = async (row: PeriodItem, status: number) => {
     return
   }
   await changePeriodStatus(row.id, status)
-  ElMessage.success(closing ? '已关闭' : '已开启')
+  ElMessage.success(closing ? '已关闭' : willClose.length ? '已开启，原进行中年度已自动关闭' : '已开启')
   await load()
 }
 

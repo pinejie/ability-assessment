@@ -26,8 +26,19 @@ cd backend
 # 编译（离线环境加 -o）
 mvn clean compile
 
-# 运行（默认端口 8080）
-mvn spring-boot:run
+# 运行（默认端口 8080）——必须走 user service，禁止在聊天会话里直接 mvn spring-boot:run
+# 原因：会话进程树挂在 zd-code.service cgroup 下，该服务每次重启会 SIGTERM 整个 cgroup，
+#      会话里启动的后端会被连带杀掉（2026-10-22 排查确认）。
+export XDG_RUNTIME_DIR=/run/user/1000
+systemctl --user start ability-backend        # 启动（unit: ~/.config/systemd/user/ability-backend.service）
+systemctl --user stop ability-backend         # 停止
+systemctl --user restart ability-backend      # 重启
+systemctl --user status ability-backend       # 状态
+journalctl --user -u ability-backend -f       # 实时日志（run-8080.log 同步追加）
+# 已 enable：开机/登录自启（依赖 Linger=yes），Restart=always 崩溃自动拉起
+
+# 前台调试（临时跑一下才用这个；mvn 不在 PATH，用绝对路径）
+/home/wgd/apache-maven-3.9.16/bin/mvn spring-boot:run
 
 # 打包
 mvn clean package -DskipTests
@@ -45,8 +56,17 @@ cd frontend
 # 安装依赖
 pnpm install
 
-# 开发（默认端口 3000，/api 代理到 localhost:8080）
-pnpm dev
+# 开发（端口 3000，host 0.0.0.0，/api 代理到 localhost:8080）——长驻必须走 user service，
+# 禁止在聊天会话里直接 pnpm dev（同后端：会被 zd-code 重启连坐杀掉）
+# unit: ~/.config/systemd/user/ability-frontend.service（Restart=always，日志 append 到 frontend/dev-3000.log）
+export XDG_RUNTIME_DIR=/run/user/1000
+systemctl --user start ability-frontend      # 启动
+systemctl --user stop ability-frontend       # 停止
+systemctl --user restart ability-frontend    # 重启（改 vite.config 后需要）
+journalctl --user -u ability-frontend -f     # 实时日志
+
+# 临时前台调试才用（pnpm 装在 nvm 下，不在默认 PATH）：
+/home/wgd/.nvm/versions/node/v20.20.2/bin/pnpm dev
 
 # 构建（先 vue-tsc 类型检查，再 vite build）
 pnpm build
@@ -102,7 +122,7 @@ ability-assessment/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 │
-├── sql/                              # 建表/运维脚本 01-22（按序执行；22 为默认维度清理脚本）
+├── sql/                              # 建表/运维脚本 01-23（按序执行；22 为默认维度清理脚本，23 为要素「流程需评价」开关列）
 ├── docs/                             # 项目内补充文档
 ├── CLAUDE.md                         # 本文件
 └── README.md
@@ -116,7 +136,7 @@ ability-assessment/
 |------|----------|----------|------|
 | 维度管理（类租户） | `/api/v1/assess-dimensions` | 维度管理（仅管理员） | 维度 CRUD、分部/人员授权配置、顶栏维度切换（`/authorized`，管理员返回全部启用维度） |
 | 能力类别管理 | `/api/v1/ability-categories` | 能力类别管理 | 能力类别 CRUD，删除前校验引用 |
-| 能力要素管理 | `/api/v1/ability-elements` | 能力要素管理 | 要素 CRUD，启用要素时自动启用所属类别 |
+| 能力要素管理 | `/api/v1/ability-elements` | 能力要素管理 | 要素 CRUD，启用要素时自动启用所属类别；两开关：需评价 / 需客户评价（免评时联动强制后者为否，见架构约定） |
 | 能力等级 | `/api/v1/ability-element-levels` | 能力要素等级弹窗 | 要素的等级定义 |
 | 组织能力要求 | `/api/v1/org-ability-reqs` | 组织能力要求（菜单已隐藏） | 按部门配置能力要求 |
 | 岗位能力要求 | `/api/v1/position-ability-reqs` | 岗位能力要求 | 按部门 + 岗位配置能力要求 |
@@ -169,7 +189,9 @@ ability-assessment/
   - 上下文缺失（泛微钩子等）为宽松模式：拦截跳过、原生 SQL 回落兜底维度 id=1。新增表参与隔离时同步维护 `TENANT_TABLES` 清单。前端 `request.ts` 对 `X-Dimension-Id` 缺省兜底 `'1'`，UI 请求永远带头。**注（2026-10-22）**：默认维度已由 `sql/22` 清理删除，id=1 兜底仅剩哨兵语义（读不到数据、无泄漏面）；正式 UI 请求由零租户门控保证必带真实有权维度。
   - **「先删后插」的整表覆盖式保存禁止只靠拦截器隔离**：写路径必须显式带 `dimension_id`（delete 加 eq、insert set），否则宽松模式下 delete 跨维度误删。落点：`AssessConfigServiceImpl`（四组配置 getter/save 显式带维度，读取返回固定骨架）。
   - 维度与授权：`uf_assess_dimension` / `uf_assess_dimension_auth`（授权对象=分部/人员；**无授权行=仅管理员**［2026-10-22 语义，原为所有人可用］；配置后人员 ID 命中，或人员分部**沿上级链**命中授权分部；分部授权只提供**一级分部**（选择器平铺多选，数据源 `/api/v1/sub-companies/level1`；勾一级=覆盖整条下级分支，服务端链匹配实现，见 14.7/14.8）。接口 `/api/v1/assess-dimensions`。零租户普通用户前端显示引导页（不发业务请求）。详见 `project/能力测评/02-架构设计.md` 第十三、十四节（14.6~14.8）。
-- **客户评价开关：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
+- **客户评价开关（UI 名「需客户评价」）：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
+- **年度唯一激活（2026-10-22）：** 同一公司+维度下「进行中」（status=0）年度至多一个。`AssessPeriodService` 的 create（新增即激活）与 changeStatus(0)（激活）都会**先自动关闭**同维度其他进行中年度（复用关闭链路：status=1 + `reportService.freezePeriod` 报告快照冻结，先关后开以兼容唯一索引），再打开目标；库层兜底为筛选唯一索引 `UX_assess_period_active`（sql/24）。前端年度页在新增/激活确认框中列出将被自动关闭的年度。
+- **流程需评价开关（2026-10-22）：** `uf_ability_element.assess_in_flow`（1-需评价/0-不需评价，`sql/23`）。不需评价的要素：人员要求仍可选并记要求等级（任职标准），但**不进测评页面**——同步服务按「不在要求中」处理（行 `active=0`、评级保留），`n_c`/标准分/完整性校验只数需评价要素、同类权重自动接管（`usp_assess_recalc` 零改动）；归档（`AssessArchiveServiceImpl.loadAssessInFlow`）同口径过滤；全免评的需求拒绝同步/归档。联动：`assess_in_flow=0` 时服务端强制 `allow_client_assess=0`（`AbilityElementServiceImpl.normalizeAssessFlags`，非报错）。详见 `project/能力测评/02-架构设计.md` 第十五节。
 
 ### 认证与权限（2026-10-21 已落地）
 
@@ -193,7 +215,7 @@ ability-assessment/
 | uf_assess_dimension_auth | 维度授权（auth_type 1-分部 2-人员；无授权行=仅管理员，2026-10-22 起） |
 | uf_assess_admin | 系统管理员名单（全局角色，loginid 唯一，物理删除小表，`sql/21`） |
 | uf_ability_category | 能力类别 |
-| uf_ability_element | 能力要素 |
+| uf_ability_element | 能力要素（含 `assess_in_flow` 流程需评价、`allow_client_assess` 需客户评价两开关） |
 | uf_org_ability_req | 组织能力要求 |
 | uf_position_ability_req | 岗位能力要求（旧版，由 `sql/04` 创建） |
 | uf_user_ability_req | 人员能力要求（旧版，由 `sql/05` 创建） |
@@ -281,7 +303,8 @@ VITE_API_BASE_URL=/api/v1   # 开发时经 Vite 代理转发到 http://localhost
 - **工具输出掩码可污染字符串字面量（2026-10-21 实际踩过）：** 本工作环境会把形似密钥的字符串以 `***` 掩码展示；若照抄掩码结果写回文件，会把真实值毁成字面 `***`（曾使 `utils/auth.ts` 三个 localStorage key 同名，token 被 user 覆盖 → SSO 登录成功但请求永远 401 循环）。用 `awk 'NR==x{print length($0)}'` 按字节长度核验文件真实内容，勿凭显示值断言；给密钥类字面量取名避开 token/jwt/secret 等词。
 - **建表脚本不完整：** 见「数据库设计」中的三张待补充表。
 - **Maven 不在 PATH：** 本机使用 `~/apache-maven-3.9.16/bin/mvn`（下文命令中的 `mvn` 均指该路径）。
-- ~~后端测试无法编译~~（已解决：过时用例已删除；2026-10-21 修复 H2 测试库 `schema-test.sql` 与维度/客户评价/新版岗位表实体字段漂移，`mvn test` 全量 42 用例通过）。
+- ~~后端测试无法编译~~（已解决：过时用例已删除；2026-10-21 修复 H2 测试库 `schema-test.sql` 与维度/客户评价/新版岗位表实体字段漂移，`mvn test` 全量 42 用例通过；2026-10-22 流程需评价开关落地后全量 73 通过）。
+- **H2 测试库 SQL Server 兼容：** `uf_assess_period.year` 是 H2 2.x 保留字，测试 URL 需带 `NON_KEYWORDS=YEAR`（已在 `application-test.yml`）；生产同步/归档原生 SQL 使用 `SYSDATETIME()`，H2 无此函数，经 `schema-test.sql` 末尾 `CREATE ALIAS` 映射到测试类 `H2SqlServerFunctions`。新增 SQL Server 专有函数/语法进测试路径时，照此补别名，不要为测试改生产 SQL。
 - **安全：** 见「安全事项」。
 
 ---

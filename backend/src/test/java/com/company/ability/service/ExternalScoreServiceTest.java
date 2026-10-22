@@ -69,10 +69,9 @@ class ExternalScoreServiceTest {
                 .thenReturn(List.of(
                         row("sheet_id", SHEET_ID, "element_id", 11L),
                         row("sheet_id", SHEET_ID, "element_id", 12L)));
-        when(jdbc.queryForList(contains("SELECT DISTINCT rt.element_id FROM uf_assess_sheet_rating"),
-                eq(Long.class), any())).thenReturn(List.of(11L));
-        when(jdbc.queryForList(contains("rt.sheet_id, COUNT(DISTINCT rt.element_id) AS covered"), any(Object[].class)))
-                .thenReturn(List.of(row("sheet_id", SHEET_ID, "covered", 1)));
+        // 已覆盖外部要素（批量查询：sheet_id, element_id）
+        when(jdbc.queryForList(contains("SELECT rt.sheet_id, rt.element_id FROM uf_assess_sheet_rating"),
+                any(Object[].class))).thenReturn(List.of(row("sheet_id", SHEET_ID, "element_id", 11L)));
     }
 
     @AfterEach
@@ -204,6 +203,29 @@ class ExternalScoreServiceTest {
     }
 
     // ==================== refill / clear ====================
+
+    @Test
+    @DisplayName("commit：年度分调用带维度参数（sql/27 六参数，防跨维度误写）")
+    void annualCommitCarriesDimension() {
+        Map<String, Object> procRow = new HashMap<>();
+        procRow.put("sheetId", SHEET_ID);
+        procRow.put("annual_score", new BigDecimal("85.5"));
+        when(jdbc.queryForList(contains("{call usp_assess_annual_score"), any(Object[].class)))
+                .thenReturn(List.of(procRow));
+        ExternalScoreDTO.ImportRequest req = new ExternalScoreDTO.ImportRequest();
+        req.setYear(2026);
+        ExternalScoreDTO.AnnualRow a = new ExternalScoreDTO.AnnualRow();
+        a.setResourceId(100L);
+        a.setAnnualScore(new BigDecimal("85.5"));
+        req.setAnnuals(List.of(a));
+
+        var result = service.commit(req);
+        assertThat(result.getPersons().get(0).isSuccess()).isTrue();
+        ArgumentCaptor<Object[]> captor = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).queryForList(contains("{call usp_assess_annual_score"), captor.capture());
+        assertThat(captor.getValue()).hasSize(6);
+        assertThat(captor.getValue()[5]).isEqualTo(DIM);
+    }
 
     @Test
     @DisplayName("refill：取最后成功稿，以 EXTERNAL_REFILL 重放存储过程")

@@ -50,16 +50,16 @@ public class ExternalScoreService {
             " LEFT JOIN HrmResource h ON h.id = s.resource_id" +
             " WHERE s.company_id = ? AND p.year = ? AND s.dimension_id = ?";
 
-    private static final String NON_FLOW_CELLS =
-            "SELECT r.element_id, r.element_name, r.category_name, r.required_level_no," +
+    private static final String NON_FLOW_CELLS_BATCH =
+            "SELECT r.sheet_id, r.element_id, r.element_name, r.category_name, r.required_level_no," +
             "       (SELECT MAX(rt.level_no) FROM uf_assess_sheet_rating rt" +
             "         WHERE rt.sheet_id = r.sheet_id AND rt.element_id = r.element_id AND rt.source = 'EXTERNAL') AS current_level_no," +
             "       (SELECT MAX(rt.original_score) FROM uf_assess_sheet_rating rt" +
             "         WHERE rt.sheet_id = r.sheet_id AND rt.element_id = r.element_id AND rt.source = 'EXTERNAL') AS original_score" +
             " FROM uf_assess_sheet_row r" +
             " JOIN uf_ability_element e ON e.id = r.element_id AND e.deleted = 0" +
-            " WHERE r.sheet_id = ? AND ISNULL(e.assess_in_flow, 1) = 0" +
-            " ORDER BY r.sort_no, r.id";
+            " WHERE r.sheet_id IN (%s) AND ISNULL(e.assess_in_flow, 1) = 0" +
+            " ORDER BY r.sheet_id, r.sort_no, r.id";
 
     private static final String LAST_IMPORT_ITEMS =
             "SELECT TOP 1 items_json FROM uf_assess_external_import_log" +
@@ -84,10 +84,15 @@ public class ExternalScoreService {
         long dimensionId = DimensionContext.getOrDefault();
         List<Map<String, Object>> heads = jdbc.queryForList(SHEETS_BY_YEAR + " ORDER BY s.resource_id",
                 companyId, year, dimensionId);
+        if (heads.isEmpty()) {
+            return List.of();
+        }
+        List<Long> sheetIds = heads.stream().map(h -> num(h, "sheet_id")).toList();
+        Map<Long, List<ExternalScoreVO.ElementCell>> cellsBySheet = loadCells(sheetIds);
         List<ExternalScoreVO.SheetContext> result = new ArrayList<>();
         for (Map<String, Object> h : heads) {
             ExternalScoreVO.SheetContext ctx = toContext(h, year);
-            ctx.setElements(loadCells(ctx.getSheetId()));
+            ctx.setElements(cellsBySheet.getOrDefault(ctx.getSheetId(), List.of()));
             result.add(ctx);
         }
         return result;
@@ -102,7 +107,7 @@ public class ExternalScoreService {
             throw new BusinessException(404, "该年度此维度下无测评页面（被测人未配备人员能力要求）");
         }
         ExternalScoreVO.SheetContext ctx = toContext(heads.get(0), year);
-        ctx.setElements(loadCells(ctx.getSheetId()));
+        ctx.setElements(loadCells(List.of(ctx.getSheetId())).getOrDefault(ctx.getSheetId(), List.of()));
         return ctx;
     }
 
@@ -119,11 +124,36 @@ public class ExternalScoreService {
         ratings.forEach(r -> resources.add(r.getResourceId()));
         annuals.forEach(r -> resources.add(r.getResourceId()));
 
-        // 页面与年度状态
+        Map<Long, Map<String, Object>> sheetByRes = resolveSheets(req.getYear(), resources);
+        SheetRefs refs = loadSheetRefs(sheetByRes.values());
+
+        List<ExternalScoreVO.LineResult> lines = new ArrayList<>();
+        Map<Long, Set<Long>> newElementsPerRes = new HashMap<>();
+        Set<String> seenRating = new HashSet<>();
+        Set<Long> seenAnnual = new HashSet<>();
+        int lineNo = 0;
+        for (ExternalScoreDTO.RatingRow r : ratings) {
+            lineNo++;
+            lines.add(checkRatingRow(lineNo, r, sheetByRes, refs, seenRating, newElementsPerRes));
+        }
+        for (ExternalScoreDTO.AnnualRow a : annuals) {
+            lineNo++;
+            lines.add(checkAnnualRow(lineNo, a, sheetByRes, seenAnnual));
+        }
+
+        ExternalScoreVO.PreviewResult result = new ExternalScoreVO.PreviewResult();
+        result.setLines(lines);
+        result.setCoverage(summarizeCoverage(resources, sheetByRes, refs, newElementsPerRes));
+        result.setCommitable(lines.stream().noneMatch(l -> "BLOCK".equals(l.getStatus())));
+        return result;
+    }
+
+    /** 年度+维度下按人定位页面（批量一次查询） */
+    private Map<Long, Map<String, Object>> resolveSheets(int year, Set<Long> resources) {
         String placeholders = resources.stream().map(x -> "?").collect(Collectors.joining(","));
         List<Object> args = new ArrayList<>();
         args.add(companyId);
-        args.add(req.getYear());
+        args.add(year);
         args.add(DimensionContext.getOrDefault());
         args.addAll(resources);
         List<Map<String, Object>> sheets = jdbc.queryForList(
@@ -132,78 +162,92 @@ public class ExternalScoreService {
         for (Map<String, Object> s : sheets) {
             sheetByRes.put(num(s, "resource_id"), s);
         }
+        return sheetByRes;
+    }
 
-        // 每页非流程要素白名单（preview 的"要素必须是非流程且在页面上"依据）
-        Map<Long, Set<Long>> nonFlowBySheet = new HashMap<>();
-        if (!sheets.isEmpty()) {
-            String sheetPh = sheets.stream().map(x -> "?").collect(Collectors.joining(","));
-            List<Object> sheetIds = sheets.stream()
-                    .map(s -> num(s, "sheet_id")).collect(Collectors.toList());
-            for (Map<String, Object> row : jdbc.queryForList(
-                    "SELECT r.sheet_id, r.element_id FROM uf_assess_sheet_row r" +
-                    " JOIN uf_ability_element e ON e.id = r.element_id AND e.deleted = 0" +
-                    " WHERE r.sheet_id IN (" + sheetPh + ") AND ISNULL(e.assess_in_flow, 1) = 0",
-                    sheetIds.toArray())) {
-                nonFlowBySheet.computeIfAbsent(num(row, "sheet_id"), k -> new HashSet<>())
-                        .add(num(row, "element_id"));
-            }
+    /** 页面引用集：非流程要素白名单 + 已覆盖外部要素（均批量查询，消除 N+1） */
+    private static final class SheetRefs {
+        final Map<Long, Set<Long>> nonFlowBySheet = new HashMap<>();
+        final Map<Long, Set<Long>> coveredBySheet = new HashMap<>();
+    }
+
+    private SheetRefs loadSheetRefs(java.util.Collection<Map<String, Object>> sheets) {
+        SheetRefs refs = new SheetRefs();
+        if (sheets.isEmpty()) {
+            return refs;
         }
-
-        List<ExternalScoreVO.LineResult> lines = new ArrayList<>();
-        Map<Long, Set<Long>> newElementsPerRes = new HashMap<>();
-        Set<String> seenRating = new HashSet<>();
-        Set<Long> seenAnnual = new HashSet<>();
-        int lineNo = 0;
-
-        for (ExternalScoreDTO.RatingRow r : ratings) {
-            lineNo++;
-            String status = "PASS";
-            String message = null;
-            Map<String, Object> sheet = sheetByRes.get(r.getResourceId());
-            if (r.getLevelNo() == null || r.getLevelNo() < 1 || r.getLevelNo() > 5) {
-                status = "BLOCK";
-                message = "评级必须为 1–5 整数";
-            } else if (sheet == null) {
-                status = "BLOCK";
-                message = "该年度此维度下无测评页面（未配备人员能力要求）";
-            } else if (isClosed(sheet)) {
-                status = "BLOCK";
-                message = "年度已关闭，拒绝写入";
-            } else if (!seenRating.add(r.getResourceId() + "#" + r.getElementId())) {
-                status = "BLOCK";
-                message = "同一人同一要素重复行";
-            } else if (!nonFlowBySheet.getOrDefault(num(sheet, "sheet_id"), Set.of()).contains(r.getElementId())) {
-                status = "BLOCK";
-                message = "要素不在该页面中，或属于流程评价要素（应由泛微流程写入）";
-            } else {
-                newElementsPerRes.computeIfAbsent(r.getResourceId(), k -> new HashSet<>()).add(r.getElementId());
-            }
-            lines.add(line(lineNo, "RATING", r.getResourceId(), r.getElementId(), status, message));
+        String sheetPh = sheets.stream().map(x -> "?").collect(Collectors.joining(","));
+        List<Object> sheetIds = sheets.stream().map(s -> num(s, "sheet_id")).collect(Collectors.toList());
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT r.sheet_id, r.element_id FROM uf_assess_sheet_row r" +
+                " JOIN uf_ability_element e ON e.id = r.element_id AND e.deleted = 0" +
+                " WHERE r.sheet_id IN (" + sheetPh + ") AND ISNULL(e.assess_in_flow, 1) = 0",
+                sheetIds.toArray())) {
+            refs.nonFlowBySheet.computeIfAbsent(num(row, "sheet_id"), k -> new HashSet<>())
+                    .add(num(row, "element_id"));
         }
-
-        for (ExternalScoreDTO.AnnualRow a : annuals) {
-            lineNo++;
-            String status = "PASS";
-            String message = null;
-            Map<String, Object> sheet = sheetByRes.get(a.getResourceId());
-            if (a.getAnnualScore() == null
-                    || a.getAnnualScore().signum() < 0 || a.getAnnualScore().compareTo(new BigDecimal("100")) > 0) {
-                status = "BLOCK";
-                message = "年度分应在 0–100 之间";
-            } else if (sheet == null) {
-                status = "BLOCK";
-                message = "该年度此维度下无测评页面（未配备人员能力要求）";
-            } else if (isClosed(sheet)) {
-                status = "BLOCK";
-                message = "年度已关闭，拒绝写入";
-            } else if (!seenAnnual.add(a.getResourceId())) {
-                status = "BLOCK";
-                message = "同一人重复年度分行";
-            }
-            lines.add(line(lineNo, "ANNUAL", a.getResourceId(), null, status, message));
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT rt.sheet_id, rt.element_id FROM uf_assess_sheet_rating rt" +
+                " WHERE rt.source = 'EXTERNAL' AND rt.sheet_id IN (" + sheetPh + ")", sheetIds.toArray())) {
+            refs.coveredBySheet.computeIfAbsent(num(row, "sheet_id"), k -> new HashSet<>())
+                    .add(num(row, "element_id"));
         }
+        return refs;
+    }
 
-        // 覆盖摘要（决议 2：分批合法，展示 x/y；不齐只是信息，不阻断）
+    private ExternalScoreVO.LineResult checkRatingRow(int lineNo, ExternalScoreDTO.RatingRow r,
+                                                      Map<Long, Map<String, Object>> sheetByRes, SheetRefs refs,
+                                                      Set<String> seenRating, Map<Long, Set<Long>> newElementsPerRes) {
+        String status = "PASS";
+        String message = null;
+        Map<String, Object> sheet = sheetByRes.get(r.getResourceId());
+        if (r.getLevelNo() == null || r.getLevelNo() < 1 || r.getLevelNo() > 5) {
+            status = "BLOCK";
+            message = "评级必须为 1–5 整数";
+        } else if (sheet == null) {
+            status = "BLOCK";
+            message = "该年度此维度下无测评页面（未配备人员能力要求）";
+        } else if (isClosed(sheet)) {
+            status = "BLOCK";
+            message = "年度已关闭，拒绝写入";
+        } else if (!seenRating.add(r.getResourceId() + "#" + r.getElementId())) {
+            status = "BLOCK";
+            message = "同一人同一要素重复行";
+        } else if (!refs.nonFlowBySheet.getOrDefault(num(sheet, "sheet_id"), Set.of()).contains(r.getElementId())) {
+            status = "BLOCK";
+            message = "要素不在该页面中，或属于流程评价要素（应由泛微流程写入）";
+        } else {
+            newElementsPerRes.computeIfAbsent(r.getResourceId(), k -> new HashSet<>()).add(r.getElementId());
+        }
+        return line(lineNo, "RATING", r.getResourceId(), r.getElementId(), status, message);
+    }
+
+    private ExternalScoreVO.LineResult checkAnnualRow(int lineNo, ExternalScoreDTO.AnnualRow a,
+                                                      Map<Long, Map<String, Object>> sheetByRes, Set<Long> seenAnnual) {
+        String status = "PASS";
+        String message = null;
+        Map<String, Object> sheet = sheetByRes.get(a.getResourceId());
+        if (a.getAnnualScore() == null
+                || a.getAnnualScore().signum() < 0 || a.getAnnualScore().compareTo(new BigDecimal("100")) > 0) {
+            status = "BLOCK";
+            message = "年度分应在 0–100 之间";
+        } else if (sheet == null) {
+            status = "BLOCK";
+            message = "该年度此维度下无测评页面（未配备人员能力要求）";
+        } else if (isClosed(sheet)) {
+            status = "BLOCK";
+            message = "年度已关闭，拒绝写入";
+        } else if (!seenAnnual.add(a.getResourceId())) {
+            status = "BLOCK";
+            message = "同一人重复年度分行";
+        }
+        return line(lineNo, "ANNUAL", a.getResourceId(), null, status, message);
+    }
+
+    /** 覆盖摘要（决议 2：分批合法，展示 x/y；不齐只是信息，不阻断） */
+    private List<ExternalScoreVO.Coverage> summarizeCoverage(Set<Long> resources,
+                                                             Map<Long, Map<String, Object>> sheetByRes,
+                                                             SheetRefs refs, Map<Long, Set<Long>> newElementsPerRes) {
         List<ExternalScoreVO.Coverage> coverages = new ArrayList<>();
         for (Long res : resources) {
             Map<String, Object> sheet = sheetByRes.get(res);
@@ -211,23 +255,19 @@ public class ExternalScoreService {
                 continue;
             }
             long sheetId = num(sheet, "sheet_id");
-            int total = nonFlowBySheet.getOrDefault(sheetId, Set.of()).size();
-            Set<Long> after = new HashSet<>(coveredElements(sheetId, nonFlowBySheet));
+            Set<Long> nonFlow = refs.nonFlowBySheet.getOrDefault(sheetId, Set.of());
+            Set<Long> after = new HashSet<>(refs.coveredBySheet.getOrDefault(sheetId, Set.of()));
+            after.retainAll(nonFlow);
             after.addAll(newElementsPerRes.getOrDefault(res, Set.of()));
             ExternalScoreVO.Coverage cov = new ExternalScoreVO.Coverage();
             cov.setResourceId(res);
             cov.setResourceName(str(sheet, "resource_name"));
-            cov.setExternalTotal(total);
+            cov.setExternalTotal(nonFlow.size());
             cov.setExternalCoveredAfter(after.size());
-            cov.setSheetStatus(sheet.get("sheet_status") == null ? null : ((Number) sheet.get("sheet_status")).intValue());
+            cov.setSheetStatus(intOf(sheet.get("sheet_status")));
             coverages.add(cov);
         }
-
-        ExternalScoreVO.PreviewResult result = new ExternalScoreVO.PreviewResult();
-        result.setLines(lines);
-        result.setCoverage(coverages);
-        result.setCommitable(lines.stream().noneMatch(l -> "BLOCK".equals(l.getStatus())));
-        return result;
+        return coverages;
     }
 
     // ==================== commit ====================
@@ -269,9 +309,11 @@ public class ExternalScoreService {
             pr.setResourceId(a.getResourceId());
             pr.setAction("ANNUAL");
             try {
+                // sql/27：外部通道必须带维度定位页面（钩子不传该参数、行为不变）
                 List<Map<String, Object>> rs = jdbc.queryForList(
-                        "{call usp_assess_annual_score(?,?,?,?,?)}",
-                        companyId, req.getYear(), a.getResourceId(), a.getAnnualScore(), ANNUAL_WORKFLOW_MARK);
+                        "{call usp_assess_annual_score(?,?,?,?,?,?)}",
+                        companyId, req.getYear(), a.getResourceId(), a.getAnnualScore(),
+                        ANNUAL_WORKFLOW_MARK, DimensionContext.getOrDefault());
                 pr.setSuccess(true);
                 pr.setMessage("年度分已写入：" + a.getAnnualScore());
                 if (!rs.isEmpty()) {
@@ -398,9 +440,12 @@ public class ExternalScoreService {
         return ctx;
     }
 
-    private List<ExternalScoreVO.ElementCell> loadCells(long sheetId) {
-        List<ExternalScoreVO.ElementCell> cells = new ArrayList<>();
-        for (Map<String, Object> row : jdbc.queryForList(NON_FLOW_CELLS, sheetId)) {
+    /** 批量拉多张页面的非流程要素单元格（消除逐人 N+1） */
+    private Map<Long, List<ExternalScoreVO.ElementCell>> loadCells(List<Long> sheetIds) {
+        Map<Long, List<ExternalScoreVO.ElementCell>> bySheet = new HashMap<>();
+        String ph = sheetIds.stream().map(x -> "?").collect(Collectors.joining(","));
+        for (Map<String, Object> row : jdbc.queryForList(
+                NON_FLOW_CELLS_BATCH.formatted(ph), sheetIds.toArray())) {
             ExternalScoreVO.ElementCell cell = new ExternalScoreVO.ElementCell();
             cell.setElementId(num(row, "element_id"));
             cell.setElementName(str(row, "element_name"));
@@ -408,22 +453,9 @@ public class ExternalScoreService {
             cell.setRequiredLevelNo(intOf(row.get("required_level_no")));
             cell.setCurrentLevelNo(intOf(row.get("current_level_no")));
             cell.setOriginalScore(decimalOf(row.get("original_score")));
-            cells.add(cell);
+            bySheet.computeIfAbsent(num(row, "sheet_id"), k -> new ArrayList<>()).add(cell);
         }
-        return cells;
-    }
-
-    /** 该页已覆盖的外部要素集合（与 coveredBySheet 口径一致：非流程白名单 ∩ EXTERNAL 评级） */
-    private Set<Long> coveredElements(long sheetId, Map<Long, Set<Long>> nonFlowBySheet) {
-        Set<Long> nonFlow = nonFlowBySheet.getOrDefault(sheetId, Set.of());
-        if (nonFlow.isEmpty()) {
-            return Set.of();
-        }
-        return jdbc.queryForList(
-                        "SELECT DISTINCT rt.element_id FROM uf_assess_sheet_rating rt" +
-                        " WHERE rt.sheet_id = ? AND rt.source = 'EXTERNAL'", Long.class, sheetId).stream()
-                .filter(nonFlow::contains)
-                .collect(Collectors.toSet());
+        return bySheet;
     }
 
     private boolean isClosed(Map<String, Object> sheet) {

@@ -276,11 +276,16 @@ async function commit(): Promise<void> {
     } else {
       const persons = r.result?.persons || []
       const fails = persons.filter(p => !p.success)
+      const allOk = persons.length > 0 && fails.length === 0
       const scored = persons.find(p => p.actualScore != null)
-      commitMsg.value = { kind: fails.length ? 'warn' : 'ok', text: scored
-        ? '已写入并出总分'
-        : `写入完成（${persons.length} 人）${fails.length ? '；失败：' + fails.map(f => f.message).join('；') : ''}` }
-      activeDraft.value = null
+      if (allOk) {
+        commitMsg.value = { kind: 'ok', text: scored ? '已写入并出总分' : '写入完成，补齐外部要素后自动出分' }
+        activeDraft.value = null
+      } else {
+        // 部分/全部失败：稿保持 READY（upsert 幂等），再点一次只补失败者
+        commitMsg.value = { kind: 'warn', text: `部分失败（${fails.length}/${persons.length}）：${fails.map(f => f.message).join('；')}——再点一次可补写失败的人` }
+        void refreshDrafts()
+      }
     }
   } catch (e: unknown) {
     commitMsg.value = { kind: 'warn', text: errText(e) }

@@ -204,6 +204,7 @@ public class AgentSessionService {
             pb.redirectErrorStream(false);
             Process p = pb.start();
             s.process = p;
+            drainStderr(p, s.id);
 
             try (OutputStream stdin = p.getOutputStream()) {
                 stdin.write(prompt.getBytes(StandardCharsets.UTF_8));
@@ -241,6 +242,29 @@ public class AgentSessionService {
             s.running.set(false);
             s.process = null;
         }
+    }
+
+    /**
+     * stderr 必须独立抽干：管道缓冲（约 64KB）写满会阻塞子进程，stdout 不再输出、
+     * readLine 永不 EOF、waitFor 挂死（review P1#5）。内容限前 200 行进日志供排障。
+     */
+    private void drainStderr(Process p, String sessionId) {
+        Thread t = new Thread(() -> {
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(p.getErrorStream(), StandardCharsets.UTF_8))) {
+                String line;
+                int n = 0;
+                while ((line = r.readLine()) != null && n++ < 200) {
+                    if (!line.isBlank()) {
+                        log.warn("[claude stderr {}] {}", sessionId.substring(0, 8), line);
+                    }
+                }
+            } catch (IOException ignored) {
+                // 进程销毁后读管道报错属正常收尾
+            }
+        }, "claude-stderr-" + sessionId.substring(0, 8));
+        t.setDaemon(true);
+        t.start();
     }
 
     private List<String> buildCmd(Session s) {
@@ -340,6 +364,11 @@ public class AgentSessionService {
         if (s == null) {
             throw new BusinessException(404, "会话不存在（服务重启或从未创建），请重新进入页面");
         }
+        // 会话属主门：别人的 sessionId 不可发消息/看历史/停止
+        LoginUser user = requireUser();
+        if (s.ownerResourceId != null && !s.ownerResourceId.equals(user.resourceId())) {
+            throw new BusinessException(403, "无权操作他人会话");
+        }
         reap(s);
         if (s.status == Status.CLOSED) {
             throw new BusinessException(ERR_SESSION_GONE, "会话已结束（闲置超时或超过时长上限），请新建会话");
@@ -374,7 +403,7 @@ public class AgentSessionService {
         row.put("time", LocalDateTime.now().toString());
         row.put("role", role);
         row.put("content", content);
-        try (BufferedReader ignored = null) {
+        try {
             Files.createDirectories(f.getParent());
             try (BufferedWriter w = Files.newBufferedWriter(f, StandardCharsets.UTF_8,
                     java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {

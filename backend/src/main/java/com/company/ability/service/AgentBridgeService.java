@@ -45,6 +45,8 @@ public class AgentBridgeService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
     private final ExternalScoreService externalScoreService;
+    private final AssessDimensionService dimensionService;
+    private final AdminService adminService;
 
     private final boolean enabled;
     private final String internalToken;
@@ -54,6 +56,8 @@ public class AgentBridgeService {
 
     public AgentBridgeService(JdbcTemplate jdbc, ObjectMapper mapper,
                               ExternalScoreService externalScoreService,
+                              AssessDimensionService dimensionService,
+                              AdminService adminService,
                               @Value("${agent.enabled:false}") boolean enabled,
                               @Value("${agent.internal-token:}") String internalToken,
                               @Value("${assess.company-id:1}") long companyId,
@@ -62,6 +66,8 @@ public class AgentBridgeService {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.externalScoreService = externalScoreService;
+        this.dimensionService = dimensionService;
+        this.adminService = adminService;
         this.enabled = enabled;
         this.internalToken = internalToken;
         this.companyId = companyId;
@@ -118,12 +124,13 @@ public class AgentBridgeService {
 
     // ==================== draft：查询与写入（前端登录态） ====================
 
-    /** 会话下最新稿列表（前端轮询=活跃心跳，刷新 last_seen） */
+    /** 会话下最新稿列表（前端轮询=活跃心跳，刷新 last_seen）；仅返回登录用户有权维度的稿 */
     public List<Map<String, Object>> listDrafts(String sessionId) {
         requireEnabled();
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT TOP 5 id, year, dimension_id, status, payload_json," +
-                "       CONVERT(VARCHAR(19), ready_time, 120) AS ready_time" +
+                "       CONVERT(VARCHAR(19), ready_time, 120) AS ready_time," +
+                "       CONVERT(VARCHAR(19), last_seen_time, 120) AS last_seen_time" +
                 " FROM uf_assess_agent_draft WHERE session_id = ? AND company_id = ? ORDER BY id DESC",
                 safeId(sessionId), companyId);
         List<Map<String, Object>> out = new ArrayList<>();
@@ -131,6 +138,10 @@ public class AgentBridgeService {
         for (Map<String, Object> row : rows) {
             long id = ((Number) row.get("id")).longValue();
             String status = (String) row.get("status");
+            // 跨维度隔离：猜 sessionId 也看不到无权维度的稿内容
+            if (user != null && !canAccessDimension(user, ((Number) row.get("dimension_id")).longValue())) {
+                continue;
+            }
             if ("READY".equals(status)) {
                 if (isExpired(row)) {
                     jdbc.update("UPDATE uf_assess_agent_draft SET status='EXPIRED' WHERE id=? AND status='READY'", id);
@@ -163,12 +174,19 @@ public class AgentBridgeService {
             throw new BusinessException(401, "写入需要登录身份");
         }
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, session_id, year, dimension_id, status, payload_json, commit_time" +
+                "SELECT id, session_id, year, dimension_id, status, payload_json, commit_time," +
+                "       CONVERT(VARCHAR(19), ready_time, 120) AS ready_time," +
+                "       CONVERT(VARCHAR(19), last_seen_time, 120) AS last_seen_time" +
                 " FROM uf_assess_agent_draft WHERE id = ? AND company_id = ?", draftId, companyId);
         if (rows.isEmpty()) {
             throw new BusinessException(404, "交付稿不存在");
         }
         Map<String, Object> row = rows.get(0);
+        // 越权门：commitDraft 用 withDimension 切上下文绕开了请求头维度校验，
+        // 必须在这里补维度授权（管理员豁免），否则 draft_id 可枚举构成跨租户写入
+        if (!canAccessDimension(user, ((Number) row.get("dimension_id")).longValue())) {
+            throw new BusinessException(403, "无权操作该维度的交付稿");
+        }
         String status = (String) row.get("status");
         if ("COMMITTED".equals(status)) {
             throw new BusinessException(409, "该稿已提交，不能重复写入");
@@ -206,10 +224,12 @@ public class AgentBridgeService {
 
         ExternalScoreVO.CommitResult result = withDimension(dimensionId,
                 () -> externalScoreService.commit(toImportRequest(payload, ((Number) row.get("year")).intValue())));
-        boolean anySuccess = result.getPersons().stream().anyMatch(ExternalScoreVO.CommitPersonResult::isSuccess);
+        // 全部成功才作废（COMMITTED）；部分成功保持 READY——upsert 幂等，重试仅补失败者
+        boolean allSuccess = !result.getPersons().isEmpty()
+                && result.getPersons().stream().allMatch(ExternalScoreVO.CommitPersonResult::isSuccess);
         jdbc.update("UPDATE uf_assess_agent_draft SET status=?, commit_time=SYSDATETIME(), commit_by=?," +
                     " commit_result=? WHERE id = ?",
-                anySuccess ? "COMMITTED" : "READY", user.resourceId(),
+                allSuccess ? "COMMITTED" : "READY", user.resourceId(),
                 summarize(result), draftId);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("rejected", false);
@@ -377,6 +397,14 @@ public class AgentBridgeService {
         if (!enabled) {
             throw new BusinessException(503, "智能导入功能未启用（agent.enabled=false）");
         }
+    }
+
+    /** 维度授权判定：管理员放行，其余按维度授权表（与 DimensionContextFilter 同口径） */
+    private boolean canAccessDimension(LoginUser user, long dimensionId) {
+        if (adminService.isAdmin(user.loginid())) {
+            return true;
+        }
+        return dimensionService.isAuthorizedForUser(dimensionId, user.resourceId());
     }
 
     private static String safeId(String sessionId) {

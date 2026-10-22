@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -49,16 +50,20 @@ class AgentBridgeServiceTest {
 
     @Mock private JdbcTemplate jdbc;
     @Mock private ExternalScoreService externalScoreService;
+    @Mock private AssessDimensionService dimensionService;
+    @Mock private com.company.ability.service.AdminService adminService;
 
     private AgentBridgeService service;
 
     @BeforeEach
     void setUp() {
         service = new AgentBridgeService(jdbc, new ObjectMapper(), externalScoreService,
-                true, TOKEN, 1L, 30, 2);
+                dimensionService, adminService, true, TOKEN, 1L, 30, 2);
         LoginUser user = new LoginUser("tester", 900L, "测试员", 10L, 1L);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(user, null, List.of()));
+        when(adminService.isAdmin(any())).thenReturn(false);
+        when(dimensionService.isAuthorizedForUser(any(), any())).thenReturn(true);
     }
 
     @AfterEach
@@ -175,6 +180,43 @@ class AgentBridgeServiceTest {
         Map<String, Object> out = service.commitDraft(3L);
         assertThat(out.get("rejected")).isEqualTo(true);
         verify(externalScoreService, never()).commit(any());
+    }
+
+    @Test
+    @DisplayName("commitDraft：登录人无稿内维度授权 → 403（越权门）")
+    void crossDimensionCommitRejected() {
+        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        when(jdbc.queryForList(contains("WHERE id = ? AND company_id"), ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any()))
+                .thenReturn(List.of(draftRow(9L, "READY", now, now)));
+        when(dimensionService.isAuthorizedForUser(any(), any())).thenReturn(false);
+        assertThatThrownBy(() -> service.commitDraft(9L))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权");
+        verify(externalScoreService, never()).commit(any());
+    }
+
+    @Test
+    @DisplayName("commitDraft：部分人失败时保持 READY 可重试（upsert 幂等补写失败者）")
+    void partialFailureKeepsReady() {
+        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        when(jdbc.queryForList(contains("WHERE id = ? AND company_id"), ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any()))
+                .thenReturn(List.of(draftRow(8L, "READY", now, now)));
+        when(externalScoreService.preview(any())).thenReturn(preview(true, null));
+        ExternalScoreVO.CommitResult mixed = new ExternalScoreVO.CommitResult();
+        ExternalScoreVO.CommitPersonResult p1 = new ExternalScoreVO.CommitPersonResult();
+        p1.setResourceId(224L);
+        p1.setSuccess(true);
+        ExternalScoreVO.CommitPersonResult p2 = new ExternalScoreVO.CommitPersonResult();
+        p2.setResourceId(225L);
+        p2.setSuccess(false);
+        p2.setMessage("年度已关闭");
+        mixed.setPersons(List.of(p1, p2));
+        when(externalScoreService.commit(any())).thenReturn(mixed);
+
+        service.commitDraft(8L);
+        ArgumentCaptor<Object> statusCap = ArgumentCaptor.forClass(Object.class);
+        verify(jdbc).update(contains("SET status=?"), statusCap.capture(),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any());
+        assertThat(statusCap.getValue()).isEqualTo("READY");
     }
 
     @Test

@@ -38,9 +38,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AssessDimensionServiceImpl implements AssessDimensionService {
 
-    /** 默认维度，禁止删除（存量数据挂载点） */
-    private static final long DEFAULT_DIMENSION_ID = 1L;
-
     /** 删除维度前检查的业务表（有数据则禁止删除，防止业务数据变孤儿） */
     private static final List<String> DATA_CHECK_TABLES = List.of(
             "uf_ability_category", "uf_ability_element", "uf_assess_period", "uf_assess_sheet",
@@ -88,9 +85,8 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         requireDimension(id);
-        if (Objects.equals(id, DEFAULT_DIMENSION_ID)) {
-            throw new BusinessException("默认维度不允许删除");
-        }
+        // 原「默认维度 id=1 禁止删除」特例已移除（2026-10-22 默认维度经清理脚本删除，见 sql/22）；
+        // 通用护栏保留：维度下有业务数据即拒绝删除。
         for (String table : DATA_CHECK_TABLES) {
             Long count = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM " + table + " WHERE dimension_id = ?", Long.class, id);

@@ -40,9 +40,7 @@
             <template #default="{ row }">
               <el-button link type="primary" @click="handleConfigAuth(row)">授权配置</el-button>
               <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
-              <el-button link type="danger" :disabled="row.id === DEFAULT_DIMENSION_ID" @click="handleDelete(row)">
-                删除
-              </el-button>
+              <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -168,9 +166,6 @@ import {
   type AssessDimensionAuthVO,
 } from '@/types/assessDimension'
 import { useDimensionStore } from '@/stores/dimension'
-
-/** 默认维度（存量数据挂载点），禁止删除 */
-const DEFAULT_DIMENSION_ID = 1
 
 const dimensionList = ref<AssessDimensionVO[]>([])
 /** 一级分部全量列表（2026-10-22 决策：授权只面向一级分部；服务端按人员分部上级链命中，勾一级覆盖整分支） */

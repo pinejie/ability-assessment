@@ -13,6 +13,8 @@ assess:
   auth:
     # 测试环境不配置 oa.sso.*，关闭强校验让 SsoConfigValidator 跳过（业务用例不依赖登录）
     enforced: false
+  # 测试用配置超管（AdminServiceTest / DimensionContextFilter 相关用例依赖）
+  bootstrap-admins: boot-admin1,boot-admin2
 
 mybatis-plus:
   configuration:

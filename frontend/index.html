@@ -2,6 +2,8 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- 入口WAF(WVS)会拦截 Referer 主机为IP的请求并回404 securityIntercept，泛微SSO跳转链必须不带Referer -->
+    <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>能力测评系统</title>

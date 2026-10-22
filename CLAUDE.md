@@ -102,7 +102,7 @@ ability-assessment/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 │
-├── sql/                              # 建表脚本 01-08（按序执行）
+├── sql/                              # 建表脚本 01-21（按序执行）
 ├── docs/                             # 项目内补充文档
 ├── CLAUDE.md                         # 本文件
 └── README.md
@@ -114,7 +114,7 @@ ability-assessment/
 
 | 模块 | 后端入口 | 前端页面 | 说明 |
 |------|----------|----------|------|
-| 维度管理（类租户） | `/api/v1/assess-dimensions` | 维度管理 | 维度 CRUD、分部/人员授权配置、顶栏维度切换（`/authorized`） |
+| 维度管理（类租户） | `/api/v1/assess-dimensions` | 维度管理（仅管理员） | 维度 CRUD、分部/人员授权配置、顶栏维度切换（`/authorized`，管理员返回全部启用维度） |
 | 能力类别管理 | `/api/v1/ability-categories` | 能力类别管理 | 能力类别 CRUD，删除前校验引用 |
 | 能力要素管理 | `/api/v1/ability-elements` | 能力要素管理 | 要素 CRUD，启用要素时自动启用所属类别 |
 | 能力等级 | `/api/v1/ability-element-levels` | 能力要素等级弹窗 | 要素的等级定义 |
@@ -123,7 +123,8 @@ ability-assessment/
 | 人员能力要求 | `/api/v1/user-ability-reqs-new` | 人员能力要求 | 按人员配置，记录岗位来源，被引用时禁止删除 |
 | 能力测评配置 | `/api/v1/assess-config` | 能力测评配置 | 能力类型权重、测评对象权重、等级标准、等级分值 |
 | 泛微组织数据 | `/api/v1/sub-companies`、`/departments`、`/job-titles`、`/resources`、`/search/*` 等 | 各选择器组件 | 通过 `JdbcTemplate` 只读查询泛微 `Hr*` 表 |
-| 认证（SSO） | `/api/v1/auth/sso/login`、`/sso/callback`、`/me`、`/logout` | SsoCallback/SsoError 页、路由守卫 | 泛微 OAuth2 单点登录，JWT 签发校验（详见 SSO 一节） |
+| 认证（SSO） | `/api/v1/auth/sso/login`、`/sso/callback`、`/me`、`/logout` | SsoCallback/SsoError 页、路由守卫 | 泛微 OAuth2 单点登录，JWT 签发校验（详见 SSO 一节）；`/me` 含 `admin` 角色标记 |
+| 管理员配置 | `/api/v1/assess-admins` | 管理员配置（仅管理员） | 管理员名单维护：新增按泛微在职人员、移除（配置超管与本人不可删） |
 
 **能力测评配置（`/api/v1/assess-config`）接口：**
 
@@ -175,6 +176,7 @@ ability-assessment/
 - **登录：** 泛微 OAuth2 单点登录（weaversso 认证中心，详见「单点登录（SSO）」一节与 `project/能力测评/02-架构设计.md` 第七节）。授权码换 JWT：`AuthController`（/api/v1/auth/sso/*、/me、/logout）→ `SsoLoginService` → `OaSsoClient` → HrmResource（loginid，status=1 在职）。
 - **鉴权：** `assess.auth.enforced=true`（默认）时业务接口全部要求 `Authorization: Bearer <JWT>`；`JwtAuthFilter` 解析、未认证统一返回 401 JSON。设 false 回退匿名（仅开发调试，禁止公网）。
 - **权限：** 账号与组织权威在泛微端，本系统只读；维度授权已升级为按 JWT 人员身份强制过滤（`UserContext`）。请求级越权：`DimensionContextFilter` 对已登录用户的 `X-Dimension-Id` 按授权表校验，无权维度直接 403（`AssessDimensionService.isAuthorizedForUser`）；无登录身份的内部调用维持宽松。
+- **管理员（2026-10-22 已落地）：** 身份 = 配置超管（`assess.bootstrap-admins`，OA loginid，不可界面删除、用于引导首批管理员）∪ `uf_assess_admin` 表（sql/21，「管理员配置」页维护）。实时查库判定、**不进 JWT**（撤销即时生效，避免 2 小时空窗）。管理员：维度管理接口全放行、顶栏切换器返回全部启用维度、请求级维度校验豁免（即可逐租户查看全部数据；跨租户汇总视图未实现）；`AdminService.requireAdmin()` 是各管理接口统一门。详见 `project/能力测评/02-架构设计.md` 第十四节。
 - 备用「Ecology 账密校验」方案（`登录密码校验方案.md`）未启用。
 
 ---
@@ -189,6 +191,7 @@ ability-assessment/
 |----|------|
 | uf_assess_dimension | 测评维度（类租户），id=1 为默认维度 |
 | uf_assess_dimension_auth | 维度授权（auth_type 1-分部 2-人员；无授权行=所有人可用） |
+| uf_assess_admin | 系统管理员名单（全局角色，loginid 唯一，物理删除小表，`sql/21`） |
 | uf_ability_category | 能力类别 |
 | uf_ability_element | 能力要素 |
 | uf_org_ability_req | 组织能力要求 |
@@ -228,6 +231,7 @@ ability-assessment/
 | `jwt.expiration` | 7200 秒（2 小时） |
 | `oa.sso.*` | 泛微 OAuth2：base-url/client-id/redirect-uri/超时/state TTL |
 | `assess.auth.enforced` | 业务接口强制登录开关（默认 true） |
+| `assess.bootstrap-admins` | 配置超管 OA 登录名（逗号分隔，当前 `2024188`）：永远视为管理员且不可界面删除 |
 
 **本地敏感配置 `backend/config/secret.yml`**（已 gitignore，经 `spring.config.import` 加载）：
 `spring.datasource.username/password`、`oa.sso.client-secret`、`jwt.secret`。缺失且
@@ -289,6 +293,9 @@ VITE_API_BASE_URL=/api/v1   # 开发时经 Vite 代理转发到 http://localhost
 - 架构设计：`/home/wgd/ws/project/能力测评/02-架构设计.md`
 - 技术选型：`/home/wgd/ws/project/能力测评/03-技术选型.md`
 - 测试报告：`/home/wgd/ws/project/能力测评/05-测试报告.md`
+- 测评计算与归档设计：`/home/wgd/ws/project/能力测评/06-测评计算与归档设计.md`
+- 泛微钩子数据对接说明：`/home/wgd/ws/project/能力测评/07-泛微钩子数据对接说明.md`
+- 泛微对接总结：`/home/wgd/ws/project/能力测评/08-泛微对接总结.md`
 
 **文档内容与代码不一致时，以代码为准，并同步更新本文件与 README。**
 

@@ -2,6 +2,7 @@ package com.company.ability.config;
 
 import com.company.ability.context.DimensionContext;
 import com.company.ability.security.LoginUser;
+import com.company.ability.service.AdminService;
 import com.company.ability.service.AssessDimensionService;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
@@ -34,6 +35,7 @@ class DimensionContextFilterTest {
     private static final LoginUser USER = new LoginUser("tester", 100L, "测试员", 1L, 2L);
 
     private AssessDimensionService dimensionService;
+    private AdminService adminService;
     private DimensionContextFilter filter;
     private MockHttpServletResponse response;
     private final AtomicBoolean chainCalled = new AtomicBoolean();
@@ -42,7 +44,8 @@ class DimensionContextFilterTest {
     @BeforeEach
     void setUp() {
         dimensionService = mock(AssessDimensionService.class);
-        filter = new DimensionContextFilter(dimensionService);
+        adminService = mock(AdminService.class);
+        filter = new DimensionContextFilter(dimensionService, adminService);
         response = new MockHttpServletResponse();
         chainCalled.set(false);
         contextDuringChain.set(null);
@@ -106,6 +109,19 @@ class DimensionContextFilterTest {
         assertFalse(chainCalled.get());
         assertEquals(403, response.getStatus());
         assertTrue(response.getContentAsString().contains("403"));
+    }
+
+    @Test
+    @DisplayName("已登录管理员：豁免授权表校验，任意维度放行")
+    void adminBypassesAuthorizationCheck() throws Exception {
+        login();
+        when(adminService.isAdmin("tester")).thenReturn(true);
+
+        filter.doFilterInternal(requestWithDimension("9"), response, recordingChain());
+
+        assertTrue(chainCalled.get());
+        assertEquals(9L, contextDuringChain.get());
+        verifyNoInteractions(dimensionService);
     }
 
     @Test

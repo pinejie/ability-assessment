@@ -6,6 +6,7 @@ import com.company.ability.dto.SsoCallbackDTO;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.security.LoginUser;
 import com.company.ability.security.UserContext;
+import com.company.ability.service.AdminService;
 import com.company.ability.service.SsoLoginService;
 import com.company.ability.vo.CurrentUserVO;
 import com.company.ability.vo.SsoLoginResultVO;
@@ -37,6 +38,7 @@ public class AuthController {
 
     private final SsoLoginService ssoLoginService;
     private final OaSsoClient oaSsoClient;
+    private final AdminService adminService;
 
     @Operation(summary = "发起泛微单点登录（302 跳转认证中心 authorize）")
     @GetMapping("/sso/login")
@@ -49,8 +51,9 @@ public class AuthController {
     @PostMapping("/sso/callback")
     public Result<SsoLoginResultVO> callback(@Valid @RequestBody SsoCallbackDTO dto) {
         SsoLoginService.SsoLoginResult result = ssoLoginService.authenticate(dto.getTicket(), dto.getState());
-        SsoLoginResultVO vo = new SsoLoginResultVO(
-                result.token(), CurrentUserVO.from(result.user()), result.redirect());
+        CurrentUserVO user = CurrentUserVO.from(result.user());
+        user.setAdmin(adminService.isAdmin(result.user().loginid()));
+        SsoLoginResultVO vo = new SsoLoginResultVO(result.token(), user, result.redirect());
         return Result.success("登录成功", vo);
     }
 
@@ -61,7 +64,9 @@ public class AuthController {
         if (user == null) {
             throw new BusinessException(401, "未登录");
         }
-        return Result.success(CurrentUserVO.from(user));
+        CurrentUserVO vo = CurrentUserVO.from(user);
+        vo.setAdmin(adminService.isAdmin(user.loginid()));
+        return Result.success(vo);
     }
 
     @Operation(summary = "登出（返回泛微统一注销地址，前端清理本地 token 后跳转）")

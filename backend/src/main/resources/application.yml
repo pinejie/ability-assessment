@@ -43,6 +43,9 @@ assess:
   company-id: 1          # 测评数据所属公司（配置表按 company_id 隔离）
   auth:
     enforced: true       # 业务接口强制登录（false 仅限开发调试回退，禁止公网）
+  # 配置超管（OA 登录名 loginid，逗号分隔）：永远视为管理员且不可界面删除，
+  # 用于引导第一批管理员、并在管理员表被误清空时保留管理入口。动态管理员走「管理员配置」页（uf_assess_admin 表）。
+  bootstrap-admins: 2024188
 
 # 泛微 OAuth2 单点登录（契约见《异构系统接入OAuth2认证开发说明》v4.0）
 oa:

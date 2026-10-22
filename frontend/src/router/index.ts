@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { getToken, isAuthExpired, redirectToSsoLogin } from '@/utils/auth'
+import { useUserStore } from '@/stores/user'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -24,7 +26,13 @@ const routes: RouteRecordRaw[] = [
     path: '/assess-dimensions',
     name: 'AssessDimensions',
     component: () => import('@/views/AssessDimensionList.vue'),
-    meta: { title: '测评维度管理' },
+    meta: { title: '测评维度管理', admin: true },
+  },
+  {
+    path: '/assess-admins',
+    name: 'AssessAdmins',
+    component: () => import('@/views/AdminList.vue'),
+    meta: { title: '管理员配置', admin: true },
   },
   {
     path: '/ability-categories',
@@ -84,9 +92,14 @@ const router = createRouter({
 /**
  * 全局登录守卫：无登录态的页面访问整页跳转后端发起泛微 SSO。
  * 10 秒内已自动跳转过仍未拿到登录态时落到错误提示页，避免死循环。
+ * meta.admin 路由仅管理员可进（体验层门控；数据被撤权后即使进入，接口也会被后端 403 拦截）。
  */
 router.beforeEach((to) => {
   if (to.meta.public || (getToken() && !isAuthExpired())) {
+    if (to.meta.admin && !useUserStore().isAdmin) {
+      ElMessage.warning('该页面需要管理员权限')
+      return { path: '/' }
+    }
     return true
   }
   return redirectToSsoLogin(to.fullPath) ? false : { name: 'SsoError' }

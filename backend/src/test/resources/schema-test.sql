@@ -124,9 +124,47 @@ CREATE TABLE IF NOT EXISTS HrmJobTitles (
     canceled CHAR(1) DEFAULT '0'
 );
 
--- 泛微人员表（测试用）
+-- 泛微人员表（测试用；loginid/status=1 在职口径与生产一致）
 CREATE TABLE IF NOT EXISTS HrmResource (
     id BIGINT PRIMARY KEY,
     lastname VARCHAR(100) NOT NULL,
-    status INT DEFAULT 0
+    status INT DEFAULT 0,
+    loginid VARCHAR(100),
+    departmentid BIGINT,
+    subcompanyid1 BIGINT
+);
+
+-- 维度（类租户）主数据（测试用，与 sql/14 对齐）
+CREATE TABLE IF NOT EXISTS uf_assess_dimension (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_name VARCHAR(100) NOT NULL,
+    dimension_code VARCHAR(50),
+    description VARCHAR(500),
+    status INT DEFAULT 1,
+    sort INT DEFAULT 0,
+    create_by BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_by BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted INT DEFAULT 0
+);
+
+-- 维度授权表（测试用；无授权行 = 所有人可用）
+CREATE TABLE IF NOT EXISTS uf_assess_dimension_auth (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_id BIGINT NOT NULL,
+    auth_type INT NOT NULL,
+    auth_id BIGINT NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_dimension_auth UNIQUE (dimension_id, auth_type, auth_id)
+);
+
+-- 系统管理员表（测试用，与 sql/21 对齐；物理删除小配置表）
+CREATE TABLE IF NOT EXISTS uf_assess_admin (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    loginid VARCHAR(100) NOT NULL UNIQUE,
+    lastname VARCHAR(90),
+    remark VARCHAR(200),
+    create_by BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -24,6 +24,12 @@ public class CurrentUserVO {
     /** 分部 ID */
     private Long subcompanyId;
 
+    /**
+     * 是否系统管理员。服务端实时判定（配置超管 ∪ uf_assess_admin），
+     * 前端菜单/路由门控用；权威拦截仍在各接口 requireAdmin，此字段仅体验层。
+     */
+    private boolean admin;
+
     public static CurrentUserVO from(LoginUser user) {
         CurrentUserVO vo = new CurrentUserVO();
         vo.setLoginid(user.loginid());

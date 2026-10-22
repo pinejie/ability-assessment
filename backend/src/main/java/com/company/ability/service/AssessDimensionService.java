@@ -45,9 +45,10 @@ public interface AssessDimensionService {
 
     /**
      * 查询指定人员可用的维度（启用 + 授权匹配；无授权行的维度视为所有人可用）。
+     * admin=true（系统管理员）返回全部启用维度；
      * resourceId 为空时返回全部启用维度（当前系统无统一登录，未传用户时不做过滤）。
      */
-    List<AssessDimensionVO> authorized(Long resourceId);
+    List<AssessDimensionVO> authorized(Long resourceId, boolean admin);
 
     /**
      * 判断人员对指定维度是否有访问权（请求级越权校验用）。

@@ -5,6 +5,8 @@ export interface CurrentUser {
   name: string
   departmentId: number | null
   subcompanyId: number | null
+  /** 是否系统管理员（服务端实时判定；旧缓存可能缺失，布局挂载时会经 /auth/me 刷新） */
+  admin?: boolean
 }
 
 /** SSO 回调登录结果（与后端 SsoLoginResultVO 对应） */

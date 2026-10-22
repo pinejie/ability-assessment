@@ -7,7 +7,7 @@
       </div>
       <nav class="sidebar-nav">
         <router-link
-          v-for="item in menuItems"
+          v-for="item in visibleMenuItems"
           :key="item.path"
           :to="item.path"
           class="nav-item"
@@ -69,7 +69,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useDimensionStore } from '@/stores/dimension'
 import { useUserStore } from '@/stores/user'
-import { requestLogout } from '@/api/auth'
+import { fetchCurrentUser, requestLogout } from '@/api/auth'
 import { getToken } from '@/utils/auth'
 
 const route = useRoute()
@@ -80,6 +80,12 @@ onMounted(() => {
   // 仅在已有登录态时拉取维度列表（SSO 回调页首次挂载无 token，避免 401 触发跳转循环）
   if (getToken()) {
     dimensionStore.load()
+    // 以服务端为准刷新身份（管理员标记实时化：角色变更无需重新登录即可看到/失去菜单）
+    fetchCurrentUser()
+      .then(info => userStore.refresh(info))
+      .catch(() => {
+        /* 失败已由拦截器统一处理 */
+      })
   }
 })
 
@@ -107,8 +113,15 @@ const handleDimensionChange = (id: number) => {
   window.location.reload()
 }
 
-const menuItems = [
-  { path: '/assess-dimensions', title: '维度管理', icon: '🏛' },
+interface MenuItem {
+  path: string
+  title: string
+  icon: string
+  /** 仅管理员可见（体验层控制，权威拦截在后端接口） */
+  adminOnly?: boolean
+}
+
+const menuItems: MenuItem[] = [
   { path: '/ability-categories', title: '能力类别管理', icon: '📋' },
   { path: '/ability-elements', title: '能力要素管理', icon: '🎯' },
   { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
@@ -117,7 +130,12 @@ const menuItems = [
   { path: '/assess-periods', title: '年度设置', icon: '📅' },
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
   { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
+  { path: '/assess-dimensions', title: '维度管理', icon: '🏛', adminOnly: true },
+  { path: '/assess-admins', title: '管理员配置', icon: '🛡️', adminOnly: true },
 ]
+
+/** 管理员专属菜单按身份过滤 */
+const visibleMenuItems = computed(() => menuItems.filter(m => !m.adminOnly || userStore.isAdmin))
 
 const currentPath = computed(() => route.path)
 

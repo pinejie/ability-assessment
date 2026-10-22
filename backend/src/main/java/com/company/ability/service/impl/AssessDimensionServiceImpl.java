@@ -169,7 +169,7 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
     }
 
     @Override
-    public List<AssessDimensionVO> authorized(Long resourceId) {
+    public List<AssessDimensionVO> authorized(Long resourceId, boolean admin) {
         List<AssessDimension> dimensions = dimensionMapper.selectList(
                 new LambdaQueryWrapper<AssessDimension>()
                         .eq(AssessDimension::getStatus, 1)
@@ -180,6 +180,13 @@ public class AssessDimensionServiceImpl implements AssessDimensionService {
                 .stream()
                 .collect(Collectors.groupingBy(AssessDimensionAuth::getDimensionId,
                         LinkedHashMap::new, Collectors.toList()));
+
+        // 管理员：全部启用维度可用（顶栏切换器直达所有租户）
+        if (admin) {
+            return dimensions.stream()
+                    .map(d -> toVO(d, authByDimension.getOrDefault(d.getId(), List.of()).size()))
+                    .collect(Collectors.toList());
+        }
 
         Long subcompanyId = null;
         if (resourceId != null) {

@@ -72,6 +72,11 @@ public class AssessSheetSyncService {
             throw new BusinessException("人员能力要求为空，不允许保存（能力要素由岗位派生）");
         }
 
+        // 要求等级必须命中当前维度等级分值配置的等级号（等级数量动态，与归档/存储过程同口径）
+        Set<Integer> configuredLevels = new HashSet<>(jdbc.queryForList(
+                "SELECT level_no FROM uf_assess_level_score WHERE company_id = ? AND dimension_id = ?",
+                Integer.class, companyId, dimensionId));
+
         Set<Long> allElementIds = new HashSet<>();
         for (Map<String, Object> m : items) {
             long elementId = num(m.get("element_id"));
@@ -82,16 +87,18 @@ public class AssessSheetSyncService {
                 throw new BusinessException("要素缺少类别，ID: " + elementId);
             }
             Object lv = m.get("level_no");
-            if (lv == null || num(lv) < 1 || num(lv) > 5) {
-                throw new BusinessException("要素等级无效或缺失，ID: " + elementId);
+            if (lv == null || !configuredLevels.contains((int) num(lv))) {
+                throw new BusinessException("要素 " + elementId + " 的要求等级无效：不在当前维度等级分值配置的等级中"
+                        + (lv == null ? "（等级缺失）" : "（等级 " + num(lv) + "）"));
             }
             if (!allElementIds.add(elementId)) {
                 throw new BusinessException("同一要素重复配置，ID: " + elementId);
             }
         }
 
-        // 2b. 需评价要素（assess_in_flow=1）才进测评页面；不需评价的要素保留在要求中（任职标准），
-        //     其已有页面行由第 5 步的 NOT IN 停用逻辑置 active=0，评级历史保留
+        // 2b. 需评价要素（assess_in_flow=1）进入泛微流程（页面行 active=1）；
+        //     不需评价的要素也生成页面行但 active=0（任职标准，供测评汇总/个人报告展示与外部评分导入挂靠），
+        //     不参与流程评价、标准分与完整性校验；不在要求中的历史行由第 5 步 NOT IN 停用，评级历史保留
         List<Map<String, Object>> assessItems = items.stream()
                 .filter(m -> num(m.get("assess_in_flow")) != 0)
                 .collect(Collectors.toList());
@@ -142,35 +149,47 @@ public class AssessSheetSyncService {
             action = "SYNC";
         }
 
-        // 5. 页面行：新增或更新需评价要素（结构字段），不在要求中或不需评价的要素置为无效（保留已有评级）
-        for (int sortNo = 1; sortNo <= assessItems.size(); sortNo++) {
-            Map<String, Object> m = assessItems.get(sortNo - 1);
+        // 5. 页面行：要求中的全部要素都新增或更新（结构字段）。需评价 active=1（进流程）；
+        //    不需评价 active=0（不进流程，仅作任职标准展示/外部导入挂靠）。不在要求中的要素置为无效（保留已有评级）
+        for (int sortNo = 1; sortNo <= items.size(); sortNo++) {
+            Map<String, Object> m = items.get(sortNo - 1);
             long elementId = num(m.get("element_id"));
             long categoryId = num(m.get("category_id"));
             String categoryName = (String) m.get("category_name");
             String elementName = (String) m.get("element_name");
             int levelNo = (int) num(m.get("level_no"));
+            int active = num(m.get("assess_in_flow")) != 0 ? 1 : 0;
 
             int updated = jdbc.update(
                     "UPDATE uf_assess_sheet_row SET category_id = ?, category_name = ?, element_name = ?, " +
-                    "  required_level_no = ?, sort_no = ?, active = 1 WHERE sheet_id = ? AND element_id = ?",
-                    categoryId, categoryName, elementName, levelNo, sortNo, sheetId, elementId);
+                    "  required_level_no = ?, sort_no = ?, active = ? WHERE sheet_id = ? AND element_id = ?",
+                    categoryId, categoryName, elementName, levelNo, sortNo, active, sheetId, elementId);
             if (updated == 0) {
                 jdbc.update(
                         "INSERT INTO uf_assess_sheet_row (sheet_id, category_id, category_name, element_id, element_name, " +
-                        "  required_level_no, sort_no, active, dimension_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                        sheetId, categoryId, categoryName, elementId, elementName, levelNo, sortNo, dimensionId);
+                        "  required_level_no, sort_no, active, dimension_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        sheetId, categoryId, categoryName, elementId, elementName, levelNo, sortNo, active, dimensionId);
             }
         }
 
-        String placeholders = elementIds.stream().map(x -> "?").collect(Collectors.joining(","));
-        Object[] args = new Object[elementIds.size() + 1];
+        String placeholders = allElementIds.stream().map(x -> "?").collect(Collectors.joining(","));
+        Object[] args = new Object[allElementIds.size() + 1];
         args[0] = sheetId;
         int k = 1;
-        for (Long id : elementIds) args[k++] = id;
+        for (Long id : allElementIds) args[k++] = id;
         int deactivated = jdbc.update(
                 "UPDATE uf_assess_sheet_row SET active = 0 WHERE sheet_id = ? AND element_id NOT IN (" + placeholders + ")",
                 args);
+
+        // 5c. 停用行（免评/已移出要求）冗余分值列在写侧清空，杜绝残留值泄漏到任何读方；
+        //     评级历史在 uf_assess_sheet_rating，不受影响。有 EXTERNAL 评级的停用行不清——
+        //     它仍属 recalc v5 计分口径，清了会在"同步后、重算前"窗口期把外部导入结果显示成空白
+        jdbc.update("UPDATE uf_assess_sheet_row SET standard_score = NULL, category_weight = NULL, " +
+                "leader_level_no = NULL, leader_score = NULL, self_level_no = NULL, self_score = NULL, " +
+                "client_avg_score = NULL " +
+                "WHERE sheet_id = ? AND active = 0 AND NOT EXISTS (SELECT 1 FROM uf_assess_sheet_rating x" +
+                "  WHERE x.sheet_id = uf_assess_sheet_row.sheet_id AND x.element_id = uf_assess_sheet_row.element_id" +
+                "    AND x.source = 'EXTERNAL')", sheetId);
 
         // 5b. 基础数据：类别权重、要素标准分、岗位标准分（由配置与要求等级算出，不依赖评级；仅计需评价要素）
         writeBaseScores(sheetId, assessItems, dimensionId);

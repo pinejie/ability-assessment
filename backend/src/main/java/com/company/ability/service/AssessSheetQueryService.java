@@ -134,40 +134,13 @@ public class AssessSheetQueryService {
             byKey.put(r.get("element_id") + "#" + r.get("client_seq"), r);
         }
 
-        // 有效要素行（按排序）：流程有效行 + 已获外部导入评级的非流程行（recalc v5 同口径）
-        List<AssessSheetVO.Row> rows = jdbc.query(
-                "SELECT r.element_id, r.category_name, r.category_weight, r.element_name, r.required_level_no, r.standard_score," +
-                "       r.leader_level_no, r.leader_score, r.client_avg_score, r.self_level_no, r.self_score," +
-                "       CASE WHEN r.active = 0 THEN 1 ELSE 0 END AS is_external," +
-                "       (SELECT MAX(x.original_score) FROM uf_assess_sheet_rating x" +
-                "         WHERE x.sheet_id = r.sheet_id AND x.element_id = r.element_id AND x.source = 'EXTERNAL') AS original_score" +
-                " FROM uf_assess_sheet_row r" +
-                " WHERE r.sheet_id = ? AND (r.active = 1 OR EXISTS (SELECT 1 FROM uf_assess_sheet_rating x2" +
-                "        WHERE x2.sheet_id = r.sheet_id AND x2.element_id = r.element_id AND x2.source = 'EXTERNAL'))" +
-                " ORDER BY r.sort_no, r.id",
-                (rs, i) -> {
-                    AssessSheetVO.Row row = new AssessSheetVO.Row();
-                    row.setExternal(rs.getInt("is_external") == 1);
-                    row.setOriginalScore(rs.getBigDecimal("original_score"));
-                    row.setElementId(rs.getLong("element_id"));
-                    row.setCategoryName(rs.getString("category_name"));
-                    row.setCategoryWeight(rs.getBigDecimal("category_weight"));
-                    row.setElementName(rs.getString("element_name"));
-                    row.setRequiredLevelNo(rs.getObject("required_level_no") == null ? null : rs.getInt("required_level_no"));
-                    row.setStandardScore(rs.getBigDecimal("standard_score"));
-                    row.setLeaderLevelNo(rs.getObject("leader_level_no") == null ? null : rs.getInt("leader_level_no"));
-                    row.setLeaderScore(rs.getBigDecimal("leader_score"));
-                    row.setClientAvgScore(rs.getBigDecimal("client_avg_score"));
-                    row.setSelfLevelNo(rs.getObject("self_level_no") == null ? null : rs.getInt("self_level_no"));
-                    row.setSelfScore(rs.getBigDecimal("self_score"));
-                    row.setClients(new ArrayList<>());
-                    return row;
-                }, sheetId);
+        List<AssessSheetVO.Row> rows = loadDisplayRows(d.getId(), d.getResourceId(), d.getYear());
 
         for (AssessSheetVO.Row row : rows) {
             Long eid = row.getElementId();
             for (Integer seq : seqs) {
-                Map<String, Object> rt = byKey.get(eid + "#" + seq);
+                Map<String, Object> rt = Boolean.TRUE.equals(row.getNonFlow())
+                        ? null : byKey.get(eid + "#" + seq);
                 AssessSheetVO.Rating c = new AssessSheetVO.Rating();
                 c.setSeq(seq);
                 if (rt != null) {
@@ -177,9 +150,11 @@ public class AssessSheetQueryService {
                 row.getClients().add(c);
             }
         }
-        // 每个客户在有效要素上的得分合计（合计行直接使用，不在前端加总）
+        // 每个客户在有效要素上的得分合计（合计行直接使用，不在前端加总；未计分的免评行不参与）
         java.util.Set<Long> activeIds = new java.util.HashSet<>();
-        for (AssessSheetVO.Row r : rows) activeIds.add(r.getElementId());
+        for (AssessSheetVO.Row r : rows) {
+            if (!Boolean.TRUE.equals(r.getNonFlow())) activeIds.add(r.getElementId());
+        }
         List<BigDecimal> seqTotals = new ArrayList<>();
         for (Integer seq : seqs) {
             BigDecimal sum = BigDecimal.ZERO;
@@ -193,5 +168,88 @@ public class AssessSheetQueryService {
         d.setClientSeqTotals(seqTotals);
         d.setRows(rows);
         return d;
+    }
+
+    /**
+     * 展示行（按排序）= recalc v5 的计分口径（active=1 ∪ 有 EXTERNAL 评级）
+     * ∪ 仍在本人·本年度·本维度人员能力要求中的免评停用行（active=0 且 assess_in_flow=0）：
+     * 标记 non_flow，仅作任职标准展示——要求等级与类别权重（取当前配置）可见，
+     * 得分/标准分按 null 掩蔽（存量行残留值兜底；同步已在写侧清空停用行冗余列），不进任何合计与报告；
+     * flag 改回需评价但未重同步的行不展示（同旧口径），待重同步进流程。
+     * 顺序：类别排序号 → 类别ID（同序平局键，保证同类别连续）→ 要素排序号 → 录入序兜底。
+     */
+    private List<AssessSheetVO.Row> loadDisplayRows(long sheetId, long resourceId, int year) {
+        long dimensionId = DimensionContext.getOrDefault();
+        List<Long> reqIds = jdbc.queryForList(
+                "SELECT ri.element_id FROM uf_user_ability_req_item ri " +
+                "JOIN uf_user_ability_req_new rh ON rh.id = ri.req_id " +
+                "WHERE rh.resource_id = ? AND rh.assess_year = ? AND rh.dimension_id = ?",
+                Long.class, resourceId, year, dimensionId);
+        String inClause = reqIds.stream().map(x -> "?").collect(java.util.stream.Collectors.joining(","));
+        // 仅免评要素（assess_in_flow=0）的停用行按任职标准展示（non_flow，得分掩蔽）；
+        // flag 改回需评价但未重同步的 active=0 行沿用旧口径不展示——其未计入 recalc 页面头，
+        // 以残留值混入展示/合计会造成报告校验不一致，等重同步进流程后自然恢复
+        String nonFlowBranch = reqIds.isEmpty() ? "" :
+                " OR (r.active = 0 AND COALESCE(e0.assess_in_flow, 1) = 0 AND r.element_id IN (" + inClause + "))";
+
+        List<Object> args = new ArrayList<>();
+        args.add(companyId);
+        args.add(dimensionId);
+        args.add(sheetId);
+        args.add(sheetId);
+        args.addAll(reqIds);
+
+        String sql =
+                "SELECT r.element_id, r.category_name, r.category_weight, r.element_name, r.required_level_no, r.standard_score," +
+                "       r.leader_level_no, r.leader_score, r.client_avg_score, r.self_level_no, r.self_score," +
+                "       wa.weight AS config_weight," +
+                // 外部导入标签：有 EXTERNAL 评级且行不在流程正常在用状态（免评 flag 或已停用）——
+                // 与 recalc v5 的 is_ext 判定同向（flag 改回 1 未重同步的 active=1 行也带标签，来源不失真）
+                "       CASE WHEN ext.element_id IS NOT NULL AND (COALESCE(e0.assess_in_flow, 1) = 0 OR r.active = 0)" +
+                "            THEN 1 ELSE 0 END AS is_external," +
+                "       CASE WHEN r.active = 0 AND COALESCE(e0.assess_in_flow, 1) = 0 AND ext.element_id IS NULL THEN 1 ELSE 0 END AS non_flow," +
+                "       ext.original_score" +
+                " FROM uf_assess_sheet_row r" +
+                " LEFT JOIN uf_ability_element e0 ON e0.id = r.element_id" +
+                " LEFT JOIN uf_ability_category c0 ON c0.id = r.category_id" +
+                " LEFT JOIN uf_assess_weight_ability wa ON wa.category_id = r.category_id" +
+                "   AND wa.company_id = ? AND wa.dimension_id = ?" +
+                " LEFT JOIN (SELECT element_id, MAX(original_score) AS original_score FROM uf_assess_sheet_rating" +
+                "            WHERE sheet_id = ? AND source = 'EXTERNAL' GROUP BY element_id) ext ON ext.element_id = r.element_id" +
+                " WHERE r.sheet_id = ? AND (r.active = 1 OR ext.element_id IS NOT NULL" + nonFlowBranch + ")" +
+                " ORDER BY COALESCE(c0.sort, 2147483647), r.category_id, COALESCE(e0.sort, 2147483647), r.sort_no, r.id";
+        return jdbc.query(sql, AssessSheetQueryService::mapDisplayRow, args.toArray());
+    }
+
+    private static AssessSheetVO.Row mapDisplayRow(java.sql.ResultSet rs, int i) throws java.sql.SQLException {
+        AssessSheetVO.Row row = new AssessSheetVO.Row();
+        boolean nonFlow = rs.getInt("non_flow") == 1;
+        row.setNonFlow(nonFlow);
+        row.setExternal(rs.getInt("is_external") == 1);
+        row.setOriginalScore(rs.getBigDecimal("original_score"));
+        row.setElementId(rs.getLong("element_id"));
+        row.setCategoryName(rs.getString("category_name"));
+        row.setElementName(rs.getString("element_name"));
+        row.setRequiredLevelNo(rs.getObject("required_level_no") == null ? null : rs.getInt("required_level_no"));
+        if (nonFlow) {
+            // 未计分的免评行：分值掩蔽；类别权重取当前配置（行上停用前残留值不可信）
+            row.setCategoryWeight(rs.getBigDecimal("config_weight"));
+            row.setStandardScore(null);
+            row.setLeaderLevelNo(null);
+            row.setLeaderScore(null);
+            row.setClientAvgScore(null);
+            row.setSelfLevelNo(null);
+            row.setSelfScore(null);
+        } else {
+            row.setCategoryWeight(rs.getBigDecimal("category_weight"));
+            row.setStandardScore(rs.getBigDecimal("standard_score"));
+            row.setLeaderLevelNo(rs.getObject("leader_level_no") == null ? null : rs.getInt("leader_level_no"));
+            row.setLeaderScore(rs.getBigDecimal("leader_score"));
+            row.setClientAvgScore(rs.getBigDecimal("client_avg_score"));
+            row.setSelfLevelNo(rs.getObject("self_level_no") == null ? null : rs.getInt("self_level_no"));
+            row.setSelfScore(rs.getBigDecimal("self_score"));
+        }
+        row.setClients(new ArrayList<>());
+        return row;
     }
 }

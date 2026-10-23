@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS uf_ability_element_level (
     level_requirement VARCHAR(500),
     score DECIMAL(10,2) NOT NULL,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    dimension_id BIGINT DEFAULT 1
 );
 
 -- 部门能力要求表
@@ -130,6 +131,7 @@ CREATE TABLE IF NOT EXISTS HrmDepartment (
 CREATE TABLE IF NOT EXISTS HrmJobTitles (
     id BIGINT PRIMARY KEY,
     jobtitlemark VARCHAR(100) NOT NULL,
+    jobtitlename VARCHAR(100),
     canceled CHAR(1) DEFAULT '0'
 );
 
@@ -142,7 +144,8 @@ CREATE TABLE IF NOT EXISTS HrmResource (
     departmentid BIGINT,
     jobtitle BIGINT,
     managerid BIGINT,
-    subcompanyid1 BIGINT
+    subcompanyid1 BIGINT,
+    birthday DATE
 );
 
 -- 维度（类租户）主数据（测试用，与 sql/14 对齐）
@@ -213,10 +216,46 @@ CREATE TABLE IF NOT EXISTS uf_assess_sheet (
     actual_score DECIMAL(10,4),
     score_rate DECIMAL(10,4),
     grade_name VARCHAR(20),
+    annual_score DECIMAL(10,4),
     sync_time TIMESTAMP,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_sheet_period_resource UNIQUE (period_id, resource_id)
+);
+
+-- 测评配置：评价人权重 / 等级标准（sql/07 + sql/15 维度列）
+CREATE TABLE IF NOT EXISTS uf_assess_weight_assessor (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT NOT NULL,
+    dimension_id BIGINT DEFAULT 1,
+    assessor_code VARCHAR(20) NOT NULL,
+    weight DECIMAL(5,2) NOT NULL,
+    update_by BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS uf_assess_grade_level (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT NOT NULL,
+    dimension_id BIGINT DEFAULT 1,
+    level_name VARCHAR(20) NOT NULL,
+    lower_bound DECIMAL(5,2),
+    upper_bound DECIMAL(5,2),
+    sort_order INT NOT NULL,
+    update_by BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 测评意见（sql/12；写入方为泛微钩子存储过程）
+CREATE TABLE IF NOT EXISTS uf_assess_comment (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT NOT NULL,
+    sheet_id BIGINT NOT NULL,
+    comment_type VARCHAR(10) NOT NULL,
+    content VARCHAR(2000) NOT NULL,
+    workflow_request_id BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_assess_comment UNIQUE (sheet_id, comment_type)
 );
 
 CREATE TABLE IF NOT EXISTS uf_assess_sheet_row (
@@ -246,6 +285,22 @@ CREATE TABLE IF NOT EXISTS uf_assess_sheet_log (
     operator_resource_id BIGINT,
     detail_json VARCHAR(1000),
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    dimension_id BIGINT DEFAULT 1
+);
+
+-- 页面评级（sql/10 基础列 + sql/25 外部导入列）
+CREATE TABLE IF NOT EXISTS uf_assess_sheet_rating (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    sheet_id BIGINT NOT NULL,
+    element_id BIGINT NOT NULL,
+    rater_type VARCHAR(20) NOT NULL,
+    rater_resource_id BIGINT,
+    client_seq INT,
+    level_no INT,
+    score DECIMAL(10,4),
+    source VARCHAR(10) NOT NULL DEFAULT 'FLOW',
+    original_score DECIMAL(10,2),
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     dimension_id BIGINT DEFAULT 1
 );
 
@@ -282,9 +337,15 @@ CREATE TABLE IF NOT EXISTS uf_assess_level_score (
     company_id BIGINT NOT NULL,
     dimension_id BIGINT DEFAULT 1,
     level_no INT NOT NULL,
+    level_desc VARCHAR(100),
+    rate_value INT,
     score DECIMAL(10,4) NOT NULL,
-    CONSTRAINT uk_level_score UNIQUE (company_id, dimension_id, level_no)
+    update_by BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_level_score UNIQUE (company_id, dimension_id, level_no),
+    CONSTRAINT uk_level_rate UNIQUE (company_id, dimension_id, rate_value)
 );
 
--- SQL Server 函数替身：生产同步 SQL 使用 SYSDATETIME()，H2 无此函数（见 H2SqlServerFunctions）
+-- SQL Server 函数替身：生产 SQL 使用 SYSDATETIME()/ISNULL()，H2 无此函数（见 H2SqlServerFunctions）
 CREATE ALIAS IF NOT EXISTS SYSDATETIME FOR "com.company.ability.h2test.H2SqlServerFunctions.sysdatetime";
+CREATE ALIAS IF NOT EXISTS ISNULL FOR "com.company.ability.h2test.H2SqlServerFunctions.isNull";

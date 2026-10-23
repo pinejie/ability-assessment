@@ -51,6 +51,8 @@ export interface SheetRow {
   external?: boolean
   /** 外部导入的原始分（仅 external 行） */
   originalScore?: number | null
+  /** 非流程要素行且未导入外部评级：仅按任职标准展示，得分列空、不参与合计 */
+  nonFlow?: boolean
 }
 
 /** 详情 */

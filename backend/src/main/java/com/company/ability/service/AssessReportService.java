@@ -124,25 +124,32 @@ public class AssessReportService {
         List<AssessSheetVO.GradeBand> bands = loadBands(dimensionId);
         r.setGradeBands(bands);
 
-        // 按类别汇总（保持页面的类别顺序）
+        // 按类别汇总（保持页面的类别顺序）。
+        // 未计分的免评要素行（nonFlow）也保留类别（任职标准可见），但得分合计只累计计分口径行
+        // （需评价行 + 已导入外部评级的行，与 recalc v5 / 页面头一致）；类别内无计分行时各类分值保持 null。
         Map<String, List<AssessSheetVO.Row>> byCategory = d.getRows().stream()
                 .collect(Collectors.groupingBy(AssessSheetVO.Row::getCategoryName, LinkedHashMap::new, Collectors.toList()));
         List<AssessSheetVO.CategoryRow> categories = new ArrayList<>();
+        List<AssessSheetVO.CategoryRow> scoredCategories = new ArrayList<>();
         for (Map.Entry<String, List<AssessSheetVO.Row>> e : byCategory.entrySet()) {
-            List<AssessSheetVO.Row> rows = e.getValue();
+            List<AssessSheetVO.Row> scored = e.getValue().stream()
+                    .filter(x -> !Boolean.TRUE.equals(x.getNonFlow())).collect(Collectors.toList());
             AssessSheetVO.CategoryRow c = new AssessSheetVO.CategoryRow();
             c.setCategoryName(e.getKey());
-            c.setWeight(rows.get(0).getCategoryWeight());
-            c.setStandardScore(AssessReportCalc.sumOrNull(rows.stream().map(AssessSheetVO.Row::getStandardScore).collect(Collectors.toList())));
-            c.setLeaderScore(AssessReportCalc.sumOrNull(rows.stream().map(AssessSheetVO.Row::getLeaderScore).collect(Collectors.toList())));
-            c.setClientScore(AssessReportCalc.sumOrNull(rows.stream().map(AssessSheetVO.Row::getClientAvgScore).collect(Collectors.toList())));
-            c.setSelfScore(AssessReportCalc.sumOrNull(rows.stream().map(AssessSheetVO.Row::getSelfScore).collect(Collectors.toList())));
-            if (c.getLeaderScore() != null && c.getClientScore() != null && c.getSelfScore() != null) {
-                c.setActualScore(AssessReportCalc.actual(c.getLeaderScore(), c.getClientScore(), c.getSelfScore(),
-                        wLeader, wClient, wSelf));
+            if (!scored.isEmpty()) {
+                c.setWeight(scored.get(0).getCategoryWeight());
+                c.setStandardScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getStandardScore).collect(Collectors.toList())));
+                c.setLeaderScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getLeaderScore).collect(Collectors.toList())));
+                c.setClientScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getClientAvgScore).collect(Collectors.toList())));
+                c.setSelfScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getSelfScore).collect(Collectors.toList())));
+                if (c.getLeaderScore() != null && c.getClientScore() != null && c.getSelfScore() != null) {
+                    c.setActualScore(AssessReportCalc.actual(c.getLeaderScore(), c.getClientScore(), c.getSelfScore(),
+                            wLeader, wClient, wSelf));
+                }
+                c.setScoreRate(AssessReportCalc.rate(c.getActualScore(), c.getStandardScore()));
+                c.setGradeName(AssessReportCalc.gradeOf(c.getScoreRate(), bands));
+                scoredCategories.add(c);
             }
-            c.setScoreRate(AssessReportCalc.rate(c.getActualScore(), c.getStandardScore()));
-            c.setGradeName(AssessReportCalc.gradeOf(c.getScoreRate(), bands));
             categories.add(c);
         }
         r.setCategories(categories);
@@ -158,7 +165,8 @@ public class AssessReportService {
         t.setGradeName(d.getGradeName());
         r.setTotal(t);
         r.setComplete(d.getActualScore() != null);
-        verify(categories, t);
+        // 只对含计分要素的类别做一致性核对；纯免评占位类别（无计分行）不参与
+        verify(scoredCategories, t);
 
         // 人工年度分与意见
         Map<String, Object> head = jdbc.queryForMap(
@@ -174,14 +182,14 @@ public class AssessReportService {
         return r;
     }
 
-    /** 类别合计与页面合计必须一致（允许 0.01 的舍入差） */
-    private void verify(List<AssessSheetVO.CategoryRow> categories, AssessSheetVO.Total t) {
-        BigDecimal stdSum = AssessReportCalc.sumOrNull(categories.stream()
+    /** 类别合计与页面合计必须一致（允许 0.01 的舍入差）。入参为含计分要素的类别（build 显式收集） */
+    private void verify(List<AssessSheetVO.CategoryRow> scoredCategories, AssessSheetVO.Total t) {
+        BigDecimal stdSum = AssessReportCalc.sumOrNull(scoredCategories.stream()
                 .map(AssessSheetVO.CategoryRow::getStandardScore).collect(Collectors.toList()));
         if (stdSum != null && t.getStandardScore() != null && stdSum.subtract(t.getStandardScore()).abs().compareTo(TOLERANCE) > 0) {
             throw new BusinessException("报告标准分合计与页面不一致，请联系管理员核对");
         }
-        BigDecimal actSum = AssessReportCalc.sumOrNull(categories.stream()
+        BigDecimal actSum = AssessReportCalc.sumOrNull(scoredCategories.stream()
                 .map(AssessSheetVO.CategoryRow::getActualScore).collect(Collectors.toList()));
         if (actSum != null && t.getActualScore() != null && actSum.subtract(t.getActualScore()).abs().compareTo(TOLERANCE) > 0) {
             throw new BusinessException("报告实际得分合计与页面不一致，请联系管理员核对");

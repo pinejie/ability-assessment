@@ -183,6 +183,9 @@
               <el-tag v-if="row.external" size="small" type="warning" effect="plain" style="margin-left: 6px">
                 外部导入{{ row.originalScore != null ? `（原始分 ${row.originalScore}）` : '' }}
               </el-tag>
+              <el-tag v-if="row.nonFlow" size="small" type="info" effect="plain" style="margin-left: 6px">
+                非流程要素
+              </el-tag>
             </template>
           </el-table-column>
           <el-table-column label="要求等级" width="84" align="center">
@@ -199,12 +202,12 @@
           <el-table-column label="直接领导" align="center" header-cell-class-name="grp-leader">
             <el-table-column label="评级" width="60" align="center">
               <template #default="{ row }">
-                <LevelCell :level="row.leaderLevelNo" />
+                <span v-if="row.nonFlow" class="muted">—</span><LevelCell v-else :level="row.leaderLevelNo" />
               </template>
             </el-table-column>
             <el-table-column label="得分" width="72" align="right">
               <template #default="{ row }">
-                <ScoreCell :score="row.leaderScore" />
+                <span v-if="row.nonFlow" class="muted">—</span><ScoreCell v-else :score="row.leaderScore" />
               </template>
             </el-table-column>
           </el-table-column>
@@ -218,35 +221,35 @@
           >
             <template #header>
               <div class="grp-title">客户{{ seq }}</div>
-              <div class="grp-sub">已评 {{ ratedCount(idx) }}/{{ detail.rows.length }}</div>
+              <div class="grp-sub">已评 {{ ratedCount(idx) }}/{{ scoredRows.length }}</div>
             </template>
             <el-table-column label="评级" width="60" align="center">
               <template #default="{ row }">
-                <LevelCell :level="row.clients[idx]?.levelNo" />
+                <span v-if="row.nonFlow" class="muted">—</span><LevelCell v-else :level="row.clients[idx]?.levelNo" />
               </template>
             </el-table-column>
             <el-table-column label="得分" width="72" align="right">
               <template #default="{ row }">
-                <ScoreCell :score="row.clients[idx]?.score" />
+                <span v-if="row.nonFlow" class="muted">—</span><ScoreCell v-else :score="row.clients[idx]?.score" />
               </template>
             </el-table-column>
           </el-table-column>
 
           <el-table-column label="客户平均得分" width="120" align="right">
             <template #default="{ row }">
-              <ScoreCell :score="row.clientAvgScore" />
+              <span v-if="row.nonFlow" class="muted">—</span><ScoreCell v-else :score="row.clientAvgScore" />
             </template>
           </el-table-column>
 
           <el-table-column label="自评" align="center" header-cell-class-name="grp-self">
             <el-table-column label="评级" width="60" align="center">
               <template #default="{ row }">
-                <LevelCell :level="row.selfLevelNo" />
+                <span v-if="row.nonFlow" class="muted">—</span><LevelCell v-else :level="row.selfLevelNo" />
               </template>
             </el-table-column>
             <el-table-column label="得分" width="72" align="right">
               <template #default="{ row }">
-                <ScoreCell :score="row.selfScore" />
+                <span v-if="row.nonFlow" class="muted">—</span><ScoreCell v-else :score="row.selfScore" />
               </template>
             </el-table-column>
           </el-table-column>
@@ -263,7 +266,7 @@ import { getPeriods, getSheetDetail, getSheetPage } from '@/api/assessSheet'
 import AssessReportDialog from '@/components/AssessReportDialog.vue'
 import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
 import { getGradeLevels } from '@/api/assessConfig'
-import type { PeriodItem, SheetDetail, SheetListItem } from '@/types/assessSheet'
+import type { PeriodItem, SheetDetail, SheetListItem, SheetRow } from '@/types/assessSheet'
 
 // 测评配置按公司隔离，与能力测评配置页保持一致
 const COMPANY_ID = 1
@@ -338,8 +341,10 @@ const ScoreCell = defineComponent({
   },
 })
 
-const ratedCount = (idx: number): number =>
-  detail.value ? detail.value.rows.filter((r) => r.clients[idx]?.levelNo != null).length : 0
+/** 计分口径行（排除未导入外部评级的免评行）：客户"已评 x/N"的口径 */
+const scoredRows = computed<SheetRow[]>(() => (detail.value?.rows ?? []).filter((r) => !r.nonFlow))
+
+const ratedCount = (idx: number): number => scoredRows.value.filter((r) => r.clients[idx]?.levelNo != null).length
 
 /** 类别列合并：同一类别的连续行合并为一格 */
 const categorySpans = computed<number[]>(() => {
@@ -498,6 +503,11 @@ onMounted(async () => {
 .level-3 { background: #f4f4f5; color: #606266; }
 .level-2 { background: #fdf6ec; color: #b88230; }
 .level-1 { background: #fef0f0; color: #c45656; }
+/* 等级数量动态化后可能出现 6 级以上：沿用"越高越绿"的方向补色，1-5 色板不变 */
+.level-6 { background: #d7f2d0; color: #3f9c31; }
+.level-7 { background: #c8ecbf; color: #33862a; }
+.level-8 { background: #b7e6aa; color: #2a7222; }
+.level-9 { background: #a5e096; color: #215e1b; }
 .sheet-alert {
   margin-bottom: 12px;
 }

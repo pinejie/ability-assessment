@@ -82,6 +82,8 @@ public class AssessSheetVO {
         private Boolean external;
         /** 外部导入的原始分（仅 external 行；页面显示"x 级（原始分 y）"） */
         private BigDecimal originalScore;
+        /** 非流程要素行且尚未导入外部评级：按任职标准展示要求等级，得分列为空、不参与任何合计 */
+        private Boolean nonFlow;
     }
 
     @Data

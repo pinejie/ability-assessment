@@ -14,21 +14,18 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
+import static com.company.ability.h2test.SheetFixtures.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 测评页面同步服务测试（重点覆盖「流程中需评价」开关 assess_in_flow 的入页面/停用/兜底逻辑）
+ * 测评页面同步服务测试（重点覆盖「流程中需评价」开关 assess_in_flow 的入页面/停用/残留清理/兜底逻辑）
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @Transactional
 @DisplayName("测评页面同步服务测试")
 class AssessSheetSyncServiceTest {
-
-    private static final long RESOURCE_ID = 100L;
-    private static final int YEAR = 2026;
 
     @Autowired
     private AssessSheetSyncService syncService;
@@ -42,36 +39,38 @@ class AssessSheetSyncServiceTest {
 
     @BeforeEach
     void setUp() {
-        clean();
-        jdbc.update("INSERT INTO uf_ability_category (category_name, status, deleted) VALUES ('同步类别', 1, 0)");
-        categoryId = idOf("SELECT id FROM uf_ability_category WHERE category_name = '同步类别'");
+        cleanAll(jdbc);
+        categoryId = insertCategory(jdbc, "同步类别");
+        elementAssess = insertElement(jdbc, "需评价要素", categoryId, 1);
+        elementSkip = insertElement(jdbc, "免评要素", categoryId, 0);
 
-        elementAssess = insertElement("需评价要素", 1);
-        elementSkip = insertElement("免评要素", 0);
-
-        jdbc.update("INSERT INTO uf_assess_period (company_id, year, status, dimension_id) VALUES (1, ?, 0, 1)", YEAR);
-        jdbc.update("INSERT INTO HrmResource (id, lastname, status, departmentid, jobtitle, managerid) " +
-                "VALUES (?, '张三', 1, 5, 7, 88)", RESOURCE_ID);
-        jdbc.update("INSERT INTO uf_assess_weight_ability (company_id, dimension_id, category_id, weight) " +
-                "VALUES (1, 1, ?, 100)", categoryId);
-        for (int level = 1; level <= 5; level++) {
-            jdbc.update("INSERT INTO uf_assess_level_score (company_id, dimension_id, level_no, score) " +
-                    "VALUES (1, 1, ?, ?)", level, level * 20);
-        }
+        insertPeriod(jdbc, YEAR);
+        insertResource(jdbc, RESOURCE_ID);
+        insertCategoryWeight(jdbc, categoryId, 100);
+        insertLevelScores(jdbc);
     }
 
     @Test
-    @DisplayName("不需评价的要素不生成页面行，标准分只计需评价要素")
+    @DisplayName("免评要素生成 active=0 页面行（任职标准可见、不进流程），标准分只计需评价要素")
     void skipElementNotInSheet() {
         seedRequirement();
 
         syncService.syncRequirement(RESOURCE_ID, YEAR, true);
 
-        Long sheetId = sheetId();
+        long sheetId = sheetId(jdbc, RESOURCE_ID, YEAR);
         List<Map<String, Object>> rows = activeRows(sheetId);
-        assertEquals(1, rows.size(), "页面应只包含需评价要素");
+        assertEquals(1, rows.size(), "进流程的行应只有需评价要素");
         assertEquals(elementAssess, num(rows.get(0).get("element_id")));
         assertEquals(1, num(rows.get(0).get("active")));
+
+        assertEquals(2, allRows(sheetId).size(), "免评要素也应生成页面行（active=0，供汇总/报告展示与外部导入挂靠）");
+        Map<Long, Integer> activeByElement = activeByElement(sheetId);
+        assertEquals(0, activeByElement.get(elementSkip), "免评要素的页面行应为 active=0");
+        Integer skipRequiredLevel = jdbc.queryForObject(
+                "SELECT required_level_no FROM uf_assess_sheet_row WHERE sheet_id = ? AND element_id = ?",
+                Integer.class, sheetId, elementSkip);
+        assertEquals(2, skipRequiredLevel, "免评行必须记录要求等级（任职标准）");
+        assertNull(rowScore(sheetId, elementSkip, "standard_score"), "免评行不写标准分");
 
         // S(e) = 分值(2级=40)/10 × 类别权重100 ÷ n_c(1) = 400；免评要素不占 n_c、不摊权重
         assertClose(400, sheetStandard(sheetId));
@@ -83,7 +82,7 @@ class AssessSheetSyncServiceTest {
         jdbc.update("UPDATE uf_ability_element SET assess_in_flow = 1 WHERE id = ?", elementSkip);
         seedRequirement();
         syncService.syncRequirement(RESOURCE_ID, YEAR, true);
-        Long sheetId = sheetId();
+        long sheetId = sheetId(jdbc, RESOURCE_ID, YEAR);
         assertEquals(2, allRows(sheetId).size());
         // 同类 2 要素平摊：标准分 = 200 + 200
         assertClose(400, sheetStandard(sheetId));
@@ -95,6 +94,50 @@ class AssessSheetSyncServiceTest {
         assertEquals(1, activeByElement.get(elementAssess));
         assertEquals(0, activeByElement.get(elementSkip), "免评要素的历史行应被停用而非删除");
         assertClose(400, sheetStandard(sheetId), "唯一需评价要素接管类别权重，页面标准分不变（400）");
+    }
+
+    @Test
+    @DisplayName("停用行在同步时清空冗余分值残留（写侧根因），评级历史保留")
+    void deactivatedRowScoresClearedOnSync() {
+        jdbc.update("UPDATE uf_ability_element SET assess_in_flow = 1 WHERE id = ?", elementSkip);
+        seedRequirement();
+        syncService.syncRequirement(RESOURCE_ID, YEAR, true);
+        long sheetId = sheetId(jdbc, RESOURCE_ID, YEAR);
+        // 模拟流程评价回写的冗余列
+        jdbc.update("UPDATE uf_assess_sheet_row SET standard_score = 200, category_weight = 100, " +
+                "leader_level_no = 3, leader_score = 150, client_avg_score = 120, self_score = 100 " +
+                "WHERE sheet_id = ? AND element_id = ?", sheetId, elementSkip);
+
+        jdbc.update("UPDATE uf_ability_element SET assess_in_flow = 0 WHERE id = ?", elementSkip);
+        syncService.syncRequirement(RESOURCE_ID, YEAR, true);
+
+        for (String col : new String[]{"standard_score", "category_weight", "leader_level_no",
+                "leader_score", "client_avg_score", "self_score"}) {
+            assertNull(rowScore(sheetId, elementSkip, col), "停用后残留列应被清空：" + col);
+        }
+        Long ratingKept = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM uf_assess_sheet_rating WHERE sheet_id = ? AND element_id = ?",
+                Long.class, sheetId, elementSkip);
+        assertEquals(0, ratingKept, "（前置）本用例未种评级");
+    }
+
+    @Test
+    @DisplayName("有 EXTERNAL 评级的停用行不清冗余分（recalc v5 计分口径行，清了会造成重算前空白窗口）")
+    void externalRatedDeactivatedRowKeepsRedundantScores() {
+        jdbc.update("UPDATE uf_ability_element SET assess_in_flow = 1 WHERE id = ?", elementSkip);
+        seedRequirement();
+        syncService.syncRequirement(RESOURCE_ID, YEAR, true);
+        long sheetId = sheetId(jdbc, RESOURCE_ID, YEAR);
+        jdbc.update("UPDATE uf_assess_sheet_row SET standard_score = 200, leader_score = 150 " +
+                "WHERE sheet_id = ? AND element_id = ?", sheetId, elementSkip);
+        jdbc.update("INSERT INTO uf_assess_sheet_rating (sheet_id, element_id, rater_type, level_no, score, source, " +
+                "original_score) VALUES (?, ?, 'LEADER', 3, 150, 'EXTERNAL', 75)", sheetId, elementSkip);
+
+        jdbc.update("UPDATE uf_ability_element SET assess_in_flow = 0 WHERE id = ?", elementSkip);
+        syncService.syncRequirement(RESOURCE_ID, YEAR, true);
+
+        assertClose(200, rowScore(sheetId, elementSkip, "standard_score"));
+        assertClose(150, rowScore(sheetId, elementSkip, "leader_score"));
     }
 
     @Test
@@ -112,44 +155,9 @@ class AssessSheetSyncServiceTest {
 
     /** 人员能力要求头 + 两个要素明细（要求等级都指向 2 级；是否进页面由要素开关决定） */
     private void seedRequirement() {
-        long reqId = insertReturning("INSERT INTO uf_user_ability_req_new (resource_id, assess_year, dimension_id) " +
-                "VALUES (" + RESOURCE_ID + ", " + YEAR + ", 1)",
-                "SELECT id FROM uf_user_ability_req_new WHERE resource_id = " + RESOURCE_ID +
-                        " AND assess_year = " + YEAR);
-        long levelAssess = insertLevel(elementAssess);
-        long levelSkip = insertLevel(elementSkip);
-        jdbc.update("INSERT INTO uf_user_ability_req_item (req_id, element_id, category_id, level_id) " +
-                "VALUES (?, ?, ?, ?)", reqId, elementAssess, categoryId, levelAssess);
-        jdbc.update("INSERT INTO uf_user_ability_req_item (req_id, element_id, category_id, level_id) " +
-                "VALUES (?, ?, ?, ?)", reqId, elementSkip, categoryId, levelSkip);
-    }
-
-    private long insertElement(String name, int assessInFlow) {
-        return insertReturning("INSERT INTO uf_ability_element (element_name, category_id, assess_in_flow, " +
-                        "allow_client_assess, status, sort, deleted) VALUES ('" + name + "', " + categoryId + ", " +
-                        assessInFlow + ", 1, 1, 0, 0)",
-                "SELECT id FROM uf_ability_element WHERE element_name = '" + name + "'");
-    }
-
-    private long insertLevel(long elementId) {
-        jdbc.update("INSERT INTO uf_ability_element_level (element_id, level, level_name, score) " +
-                "VALUES (?, 2, '二级', 40)", elementId);
-        return idOf("SELECT id FROM uf_ability_element_level WHERE element_id = " + elementId + " AND level = 2");
-    }
-
-    private long insertReturning(String insertSql, String selectSql) {
-        jdbc.update(insertSql);
-        return idOf(selectSql);
-    }
-
-    private long idOf(String selectSql) {
-        return jdbc.queryForObject(selectSql, Long.class);
-    }
-
-    private Long sheetId() {
-        return jdbc.queryForObject("SELECT s.id FROM uf_assess_sheet s " +
-                "JOIN uf_assess_period p ON p.id = s.period_id " +
-                "WHERE p.year = ? AND s.resource_id = ?", Long.class, YEAR, RESOURCE_ID);
+        long reqId = insertRequirement(jdbc, RESOURCE_ID, YEAR);
+        addReqItem(jdbc, reqId, elementAssess, categoryId);
+        addReqItem(jdbc, reqId, elementSkip, categoryId);
     }
 
     private List<Map<String, Object>> activeRows(long sheetId) {
@@ -161,36 +169,29 @@ class AssessSheetSyncServiceTest {
     }
 
     private Map<Long, Integer> activeByElement(long sheetId) {
-        return allRows(sheetId).stream().collect(Collectors.toMap(
-                m -> num(m.get("element_id")), m -> (int) num(m.get("active")),
-                (a, b) -> a, HashMap::new));
+        Map<Long, Integer> m = new HashMap<>();
+        for (Map<String, Object> row : allRows(sheetId)) {
+            m.put(num(row.get("element_id")), (int) num(row.get("active")));
+        }
+        return m;
+    }
+
+    private BigDecimal rowScore(long sheetId, long elementId, String column) {
+        return jdbc.queryForObject("SELECT " + column + " FROM uf_assess_sheet_row WHERE sheet_id = ? AND element_id = ?",
+                BigDecimal.class, sheetId, elementId);
     }
 
     private BigDecimal sheetStandard(long sheetId) {
-        return jdbc.queryForObject("SELECT standard_score FROM uf_assess_sheet WHERE id = ?",
-                BigDecimal.class, sheetId);
+        return jdbc.queryForObject("SELECT standard_score FROM uf_assess_sheet WHERE id = ?", BigDecimal.class, sheetId);
     }
 
     private static void assertClose(double expected, BigDecimal actual) {
-        assertNotNull(actual, "标准分不应为空");
+        assertNotNull(actual, "数值不应为空");
         assertEquals(0, actual.compareTo(BigDecimal.valueOf(expected)), "expected " + expected + " but was " + actual);
     }
 
     private static void assertClose(double expected, BigDecimal actual, String message) {
         assertNotNull(actual, message);
         assertEquals(0, actual.compareTo(BigDecimal.valueOf(expected)), message + ": was " + actual);
-    }
-
-    private static long num(Object o) {
-        return o == null ? 0L : ((Number) o).longValue();
-    }
-
-    private void clean() {
-        for (String t : new String[]{"uf_user_ability_req_item", "uf_user_ability_req_new", "uf_assess_sheet_log",
-                "uf_assess_sheet_row", "uf_assess_sheet", "uf_assess_period", "uf_assess_level_score",
-                "uf_assess_weight_ability", "uf_ability_element_level", "uf_ability_element",
-                "uf_ability_category", "HrmResource"}) {
-            jdbc.update("DELETE FROM " + t);
-        }
     }
 }

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "cp": {
+      "type": "stdio",
+      "command": "/home/wgd/.nvm/versions/node/v20.20.2/bin/node",
+      "args": [
+        "/home/wgd/ws/cp/mcp/cp_server.mjs"
+      ],
+      "env": {
+        "CP_AGENT_TOKEN": "${CP_AGENT_TOKEN}",
+        "CP_BACKEND_URL": "http://127.0.0.1:8080"
+      }
+    }
+  }
+}

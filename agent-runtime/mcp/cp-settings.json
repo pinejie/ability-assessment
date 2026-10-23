@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__cp__lookup_person",
+      "mcp__cp__get_periods",
+      "mcp__cp__get_non_flow_elements",
+      "mcp__cp__get_existing_raters",
+      "mcp__cp__check_period_open",
+      "mcp__cp__parse_import_file",
+      "mcp__cp__validate_draft",
+      "mcp__cp__deliver",
+      "mcp__cp__submit_outcome"
+    ],
+    "deny": [
+      "Monitor",
+      "mcp__mssql-ecology__*",
+      "Bash",
+      "Bash(*)",
+      "Write",
+      "Edit",
+      "MultiEdit",
+      "NotebookEdit",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Task"
+    ]
+  },
+  "enableAllProjectMcpServers": true
+}

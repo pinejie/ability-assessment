@@ -415,6 +415,20 @@ public class AgentBridgeService {
         return dimensionService.isAuthorizedForUser(dimensionId, user.resourceId());
     }
 
+    /** cp_server 内部令牌统一校验（draft/outcome 共用），供 run 编排端点复用 */
+    public void requireInternalToken(String token) {
+        if (!enabled || internalToken.isBlank() || !MessageDigest.isEqual(
+                internalToken.getBytes(StandardCharsets.UTF_8),
+                token == null ? new byte[0] : token.getBytes(StandardCharsets.UTF_8))) {
+            throw new BusinessException(401, "内部令牌无效");
+        }
+    }
+
+    public boolean currentUserIsAdmin() {
+        LoginUser user = UserContext.currentOrNull();
+        return user != null && adminService.isAdmin(user.loginid());
+    }
+
     private static String safeId(String sessionId) {
         if (sessionId == null || !sessionId.matches("[0-9a-zA-Z_-]{1,64}")) {
             throw new BusinessException(400, "会话 ID 不合法");

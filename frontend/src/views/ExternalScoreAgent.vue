@@ -1,334 +1,271 @@
 <template>
-  <div class="agent-page">
-    <div class="session-bar">
-      <el-tag size="small" :type="generating ? 'warning' : 'success'">
-        {{ generating ? '生成中…' : '就绪' }}
-      </el-tag>
-      <span class="sid">会话 {{ sessionId.slice(0, 8) || '-' }}</span>
-      <el-button size="small" text @click="newSession">新会话</el-button>
-      <el-button v-if="generating" size="small" text type="warning" @click="stop">停止生成</el-button>
-      <span v-if="closed" class="hint">会话已结束（闲置超时/页面久离），点「新会话」重新开始；已生成的交付稿仍可写入。</span>
-    </div>
+  <div class="pipeline">
+    <!-- 输入区 -->
+    <el-card class="in-card" shadow="never">
+      <div class="in-row">
+        <el-button :icon="Upload" @click="fileEl?.click()">选择文件（xlsx/xls/csv）</el-button>
+        <input ref="fileEl" type="file" accept=".xlsx,.xls,.csv" hidden @change="onFile" />
+        <span class="file-name">{{ pickedFile?.name || '未选择文件' }}</span>
+        <el-input v-model="rules" class="rules" placeholder="本批换算规则（可选），如：60~70算2级；也可留空由系统提示补充" />
+        <el-button type="primary" :loading="starting" :disabled="!pickedFile" @click="start">开始导入</el-button>
+      </div>
+      <div class="hint">
+        仅支持两类数据：无需流程评价要素的评级（1–5）与年度分（0–100）；流程要素评级由泛微流程写入。
+        文件列头不规整没关系，缺什么系统会问你。
+      </div>
+    </el-card>
 
-    <div class="body">
-      <div ref="listEl" class="msg-list">
-        <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
-          <div v-if="m.role === 'tool'" class="tool-chip">🔧 {{ m.text }}</div>
-          <div v-else-if="m.role === 'error'" class="err-line">{{ m.text }}</div>
-          <div v-else class="bubble">{{ m.text }}</div>
-        </div>
-        <div v-if="streaming" class="msg assistant"><div class="bubble streaming">{{ streaming }}</div></div>
+    <!-- 运行区 -->
+    <el-card v-if="run" class="run-card" shadow="never">
+      <div class="run-head">
+        <b>批次 #{{ run.id }}</b>
+        <el-tag size="small" :type="statusTag.type">{{ statusTag.text }}</el-tag>
+        <span v-if="run.round" class="hint">补充 {{ run.round }}/{{ run.maxRounds }} 轮</span>
+        <el-button v-if="canRetry" size="small" text @click="retry">重试解析</el-button>
+      </div>
+      <div v-if="run.status === 'PARSING'" class="parsing">⏳ agent 解析校验中…（约 1 分钟）</div>
 
-        <div v-if="activeDraft" class="draft-card">
-          <div class="draft-head">
-            <b>交付稿 #{{ activeDraft.id }}</b>
-            <span>{{ activeDraft.year }} 年 · 维度 {{ activeDraft.dimensionId }} ·
-              {{ activeDraft.payload.rows.length }} 行</span>
-            <el-tag size="small" type="success">就绪，可写入</el-tag>
-          </div>
-          <el-table :data="activeDraft.payload.rows" size="small" border max-height="220">
-            <el-table-column prop="kind" label="类型" width="80" />
-            <el-table-column prop="resourceId" label="人员ID" width="80" />
-            <el-table-column label="要素/评级" min-width="120">
-              <template #default="{ row }">
-                <span v-if="row.kind === 'RATING'">要素 {{ row.elementId }} → {{ row.levelNo }} 级</span>
-                <span v-else>年度分 {{ row.annualScore }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="originalScore" label="原始分" width="80" />
-          </el-table>
-          <div class="draft-actions">
-            <el-button type="primary" :loading="committing" @click="commit">写入结果表（确认并提交）</el-button>
-            <span class="hint">点击即确认；写入后本稿作废，过期未写入需重新对话达成</span>
-          </div>
-          <div v-if="commitMsg" class="commit-msg" :class="commitMsg.kind">{{ commitMsg.text }}</div>
+      <RunAskCard v-if="run.status === 'NEED_INPUT' && questions.length" :questions="questions"
+                  :round="run.round" :max-rounds="run.maxRounds" @answer="onAnswer" />
+
+      <RunReadyCard v-if="run.status === 'READY' && draftRows.length" :draft-id="run.draftId || 0"
+                    :year="run.year" :dimension-id="run.dimensionId" :rows="draftRows"
+                    :committing="committing" @confirm="confirmWrite" />
+
+      <div v-if="run.status === 'DONE' && receipt" class="receipt">
+        <b>导入成功</b>
+        <div v-for="p in receipt" :key="p.resourceId" class="r-line">
+          人员 {{ p.resourceId }}：{{ p.success ? '已写入' : '失败·' + p.message }}
+          <template v-if="p.externalTotal != null">· 外部覆盖 {{ p.externalCovered }}/{{ p.externalTotal }}</template>
+          <template v-if="p.actualScore != null">· 得分 {{ p.actualScore }}（{{ p.gradeName }}）</template>
         </div>
       </div>
 
-      <div class="input-zone">
-        <div v-if="pendingFiles.length" class="file-chips">
-          <el-tag v-for="(f, i) in pendingFiles" :key="i" closable size="small" @close="pendingFiles.splice(i, 1)">
-            {{ f.name }}
-          </el-tag>
-        </div>
-        <el-input v-model="draftText" type="textarea" :rows="3" resize="none"
-                  placeholder="说明导入需求，或上传 Excel/CSV。只读整理步骤无需二次确认，交付前会先展示整理稿"
-                  @keydown.enter.exact.prevent="send" />
-        <div class="input-actions">
-          <el-button :icon="Paperclip" circle size="small" @click="fileEl?.click()" />
-          <input ref="fileEl" type="file" accept=".xlsx,.xls,.csv" hidden @change="onFile" />
-          <el-button type="primary" size="small" :disabled="!canSend" @click="send">发送</el-button>
+      <div v-if="run.status === 'REJECTED' || run.status === 'STALE'" class="reject">
+        <b>未通过：{{ run.failReason || '内容与导入要求不匹配' }}</b>
+        <pre v-if="evidence" class="evidence">{{ evidence }}</pre>
+        <div class="hint">请整理文件后重新发起；若认为误判，可点上方"重试解析"。</div>
+      </div>
+
+      <div v-if="run.status === 'EXHAUSTED' || run.status === 'FAILED_RETRYABLE'" class="exhausted">
+        <b>自动路径未能凑齐数据（{{ run.failReason || '轮次用尽' }}）。</b>请选择下一步：
+        <div class="exit-row">
+          <el-button size="small" type="primary" plain @click="toChat">A · 转人工对话（保留已解析上下文）</el-button>
+          <el-button size="small" plain @click="toManual">B · 转手工录入表单</el-button>
+          <el-button size="small" plain @click="toAbandon">C · 放弃本批</el-button>
         </div>
       </div>
-    </div>
+    </el-card>
+
+    <RunChatDrawer :open="chatOpen" :session-id="run?.sessionId || ''"
+                   @close="chatOpen = false" @outcome="resync" />
+
+    <!-- 历史 -->
+    <el-card class="his-card" shadow="never">
+      <template #header><span class="his-title">近 30 天批次</span></template>
+      <el-table :data="history" size="small" max-height="240">
+        <el-table-column prop="id" label="#" width="52" />
+        <el-table-column prop="file_name" label="文件" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="status" label="状态" width="130" />
+        <el-table-column prop="created_at" label="时间" width="150" />
+      </el-table>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Paperclip } from '@element-plus/icons-vue'
+import { Upload } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
+import { uploadAgentFile, commitAgentDraft, listAgentDrafts, type AgentDraftPayload } from '@/api/agent'
 import {
-  commitAgentDraft, createAgentSession, listAgentDrafts, stopAgentSession, uploadAgentFile,
-} from '@/api/agent'
-import type { AgentDraft } from '@/api/agent'
-import { getToken } from '@/utils/auth'
-import { useDimensionStore } from '@/stores/dimension'
+  answerRun, completeRun, createRun, exitRun, getRun, startRun, subscribeRun, runHistory,
+  type AskQuestion, type ImportRun,
+} from '@/api/importRun'
+import RunAskCard from '@/components/import/RunAskCard.vue'
+import RunReadyCard from '@/components/import/RunReadyCard.vue'
+import RunChatDrawer from '@/components/import/RunChatDrawer.vue'
 
-interface ChatMsg { role: 'user' | 'assistant' | 'tool' | 'error'; text: string }
-
-const dimensionStore = useDimensionStore()
-const sessionId = ref('')
-const messages = ref<ChatMsg[]>([])
-const streaming = ref('')
-const generating = ref(false)
-const closed = ref(false)
-const draftText = ref('')
-const pendingFiles = ref<{ name: string; path: string }[]>([])
+const router = useRouter()
 const fileEl = ref<HTMLInputElement>()
-const listEl = ref<HTMLDivElement>()
-const activeDraft = ref<AgentDraft | null>(null)
+const pickedFile = ref<File | null>(null)
+const rules = ref('')
+const starting = ref(false)
 const committing = ref(false)
-const commitMsg = ref<{ kind: 'ok' | 'warn'; text: string } | null>(null)
-let contextSent = false
+const run = ref<ImportRun | null>(null)
+const questions = ref<AskQuestion[]>([])
+const draftRows = ref<AgentDraftPayload['rows']>([])
+const receipt = ref<{ resourceId: number; success: boolean; message: string | null;
+  actualScore: number | null; gradeName: string | null; externalTotal: number | null; externalCovered: number | null }[]>([])
+const evidence = ref('')
+const chatOpen = ref(false)
+let abort: AbortController | null = null
 let pollTimer: number | undefined
-let abortCtrl: AbortController | null = null
 
-const canSend = computed(() => !generating.value && !closed.value
-  && (draftText.value.trim().length > 0 || pendingFiles.value.length > 0))
+type TagType = 'info' | 'warning' | 'success' | 'danger'
+const STATUS: Record<string, { text: string; type: TagType }> = {
+  DRAFT: { text: '待开始', type: 'info' }, PARSING: { text: '解析中', type: 'warning' },
+  NEED_INPUT: { text: '待补充', type: 'warning' }, EXHAUSTED: { text: '轮次用尽', type: 'danger' },
+  READY: { text: '待确认写入', type: 'success' }, WRITING: { text: '写入中', type: 'warning' },
+  DONE: { text: '已完成', type: 'success' }, FAILED_RETRYABLE: { text: '可重试', type: 'danger' },
+  REJECTED: { text: '未通过', type: 'danger' }, STALE: { text: '已超时', type: 'info' },
+  CHAT_ESC: { text: '人工对话中', type: 'warning' }, MANUAL: { text: '已转手工', type: 'info' },
+}
+const statusTag = computed(() =>
+  (run.value && STATUS[run.value.status]) || { text: run.value?.status || '', type: 'info' as TagType })
+const canRetry = computed(() => run.value?.status === 'FAILED_RETRYABLE')
 
-onMounted(async () => {
-  await startSession()
-  pollTimer = window.setInterval(refreshDrafts, 12_000)
-})
-onBeforeUnmount(() => {
-  if (pollTimer) window.clearInterval(pollTimer)
-  abortCtrl?.abort()
-})
-
-async function startSession(): Promise<void> {
-  const s = await createAgentSession()
-  sessionId.value = s.sessionId
-  contextSent = false
-  closed.value = false
-  messages.value = []
-  streaming.value = ''
-  activeDraft.value = null
-  commitMsg.value = null
+function onFile(e: Event): void {
+  const input = e.target as HTMLInputElement
+  pickedFile.value = input.files?.[0] || null
 }
 
-function newSession(): void {
-  abortCtrl?.abort()
-  generating.value = false
-  void startSession()
-}
-
-async function send(): Promise<void> {
-  if (!canSend.value) return
-  const text = draftText.value.trim() || '请解析我上传的文件并整理导入数据'
-  const dim = dimensionStore.currentId ?? ''
-  const head = `〔会话上下文：sessionId=${sessionId.value}；dimensionId=${dim}〕`
-  // 每条消息都带上下文（顶栏切维度后以最新为准，review #7）；首条附只读步骤执行确认（review #6）
-  let content = contextSent
-    ? `${head}\n${text}`
-    : `${head}\n本条消息即对只读步骤（解析/查询/校验）的执行确认，收到文件或直接指令后请执行到展示整理稿为止；交付仍需我另行确认。\n${text}`
-  contextSent = true
-  messages.value.push({ role: 'user', text })
-  const files = pendingFiles.value.map(f => f.path)
-  pendingFiles.value = []
-  draftText.value = ''
-  generating.value = true
-  streaming.value = ''
-  scrollToEnd()
-  await streamMessage(content, files)
-}
-
-/** SSE over fetch POST：解析 data: 帧（delta/tool/done/error） */
-async function streamMessage(content: string, files: string[]): Promise<void> {
-  abortCtrl = new AbortController()
+async function start(): Promise<void> {
+  if (!pickedFile.value || starting.value) return
+  starting.value = true
+  stopWatch()
   try {
-    const resp = await fetch(`/api/v1/agent/sessions/${sessionId.value}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-        'Authorization': `Bearer ${getToken() ?? ''}`,
-        'X-Dimension-Id': String(dimensionStore.currentId ?? ''),
-      },
-      body: JSON.stringify({ content, files }),
-      signal: abortCtrl.signal,
-    })
-    if (!resp.ok || !resp.body) {
-      const err = await resp.json().catch(() => null)
-      handleStreamError(err?.message || `HTTP ${resp.status}`)
-      return
-    }
-    const ctype = resp.headers.get('content-type') || ''
-    if (ctype.includes('application/json')) {
-      // 业务异常被全局处理器包成 JSON 返回（如会话已结束）
-      const body = await resp.json()
-      handleStreamError(body?.message || `HTTP ${resp.status}`)
-      return
-    }
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder('utf-8')
-    let buf = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      let idx: number
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const frame = buf.slice(0, idx)
-        buf = buf.slice(idx + 2)
-        const dataLine = frame.split('\n').find(l => l.startsWith('data:'))
-        if (!dataLine) continue
-        handleEvent(JSON.parse(dataLine.slice(5)) as StreamEvent)
-      }
-    }
-  } catch (e: unknown) {
-    if ((e as Error).name !== 'AbortError') handleStreamError(String((e as Error).message || e))
-  } finally {
-    if (generating.value) finishStreaming()
-  }
-}
-
-interface StreamEvent { type: string; text?: string; name?: string; message?: string }
-
-function handleEvent(ev: StreamEvent): void {
-  if (ev.type === 'delta') {
-    streaming.value += ev.text ?? ''
-    scrollToEnd()
-  } else if (ev.type === 'tool') {
-    finalizeStreaming()
-    messages.value.push({ role: 'tool', text: String(ev.name ?? '工具调用') })
-    if (String(ev.name) === '交付整理稿') void refreshDrafts()
-    scrollToEnd()
-  } else if (ev.type === 'error') {
-    finalizeStreaming()
-    messages.value.push({ role: 'error', text: ev.message ?? '未知错误' })
-  } else if (ev.type === 'done') {
-    finishStreaming()
-  }
-}
-
-function handleStreamError(message: string): void {
-  finishStreaming()
-  if (message.includes('已结束') || message.includes('410')) {
-    closed.value = true
-    messages.value.push({ role: 'error', text: `${message}（点「新会话」继续）` })
-  } else {
-    messages.value.push({ role: 'error', text: message })
-  }
-}
-
-function finishStreaming(): void {
-  finalizeStreaming()
-  generating.value = false
-}
-
-function finalizeStreaming(): void {
-  if (streaming.value) {
-    messages.value.push({ role: 'assistant', text: streaming.value })
-    streaming.value = ''
-  }
-}
-
-async function onFile(ev: Event): Promise<void> {
-  const input = ev.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file || !sessionId.value) return
-  try {
-    const r = await uploadAgentFile(file, sessionId.value)
-    pendingFiles.value.push(...r)
-    ElMessage.success(`已上传 ${r[0]?.name ?? ''}`)
-  } catch (e: unknown) {
+    const created = await createRun(rules.value.trim() || undefined)
+    const up = await uploadAgentFile(pickedFile.value, created.sessionId)
+    run.value = await startRun(created.id, up[0].name ? fileNameOf(up[0].path) : '')
+    questions.value = []; draftRows.value = []; receipt.value = []; evidence.value = ''
+    watchRun()
+  } catch (e) {
     ElMessage.error(errText(e))
   } finally {
-    input.value = ''
+    starting.value = false
   }
 }
 
-async function stop(): Promise<void> {
-  try {
-    await stopAgentSession(sessionId.value)
-  } catch { /* 停止失败由流收尾兜底 */ }
+function fileNameOf(path: string): string {
+  return path.split('/').pop() || path
 }
 
-async function refreshDrafts(): Promise<void> {
-  if (!sessionId.value) return
-  try {
-    const drafts = await listAgentDrafts(sessionId.value)
-    const ready = drafts.find(d => d.status === 'READY')
-    if (ready) activeDraft.value = ready
-    else if (activeDraft.value && !drafts.find(d => d.id === activeDraft.value?.id && d.status === 'READY')) {
-      activeDraft.value = null
-    }
-  } catch { /* 轮询失败静默 */ }
+/** 事件流 + 轮询双通道（SSE 断开自动落回 5s 快照） */
+function watchRun(): void {
+  stopWatch()
+  abort = new AbortController()
+  subscribeRun(run.value!.id, ev => {
+    if (ev.type === 'run') applyRunSnapshot(run.value!.id)
+  }, abort.signal).catch(() => { /* 落回轮询 */ })
+  pollTimer = window.setInterval(async () => { await applyRunSnapshot(run.value!.id).catch(() => undefined) }, 5000)
 }
 
-async function commit(): Promise<void> {
-  if (!activeDraft.value) return
+async function applyRunSnapshot(id: number): Promise<void> {
+  const r = await getRun(id)
+  const changed = run.value?.status !== r.status
+  run.value = r
+  if (changed) onStatus(r)
+  if (r.status === 'NEED_INPUT' && r.outcome) {
+    const o = safeJson(r.outcome)
+    questions.value = (o?.questions as AskQuestion[]) || []
+  } else if (r.status !== 'NEED_INPUT') {
+    questions.value = []
+  }
+  if (r.status === 'READY' && r.draftId && !draftRows.value.length) await loadDraft(r)
+  if (r.status === 'REJECTED' || r.status === 'STALE') {
+    const o = safeJson(r.outcome)
+    evidence.value = o?.evidence ? JSON.stringify(o.evidence, null, 1) : ''
+  }
+}
+
+function onStatus(r: ImportRun): void {
+  if (r.status === 'DONE' && r.result && !receipt.value.length) {
+    const res = safeJson(r.result)
+    receipt.value = (res?.persons as typeof receipt.value) || []
+  }
+}
+
+function safeJson(s?: string | null): Record<string, unknown> | null {
+  if (!s) return null
+  try { return JSON.parse(s) as Record<string, unknown> } catch { return null }
+}
+
+async function loadDraft(r: ImportRun): Promise<void> {
+  const drafts = await listAgentDrafts(r.sessionId)
+  const ready = drafts.find(d => d.id === r.draftId && d.status === 'READY')
+  draftRows.value = ready ? ready.payload.rows : []
+}
+
+async function onAnswer(answers: { questionId: string; value: string }[]): Promise<void> {
+  run.value = await answerRun(run.value!.id, answers)
+  questions.value = []
+}
+
+async function confirmWrite(): Promise<void> {
+  if (!run.value?.draftId) return
   committing.value = true
-  commitMsg.value = null
   try {
-    const r = await commitAgentDraft(activeDraft.value.id)
-    if (r.rejected) {
-      commitMsg.value = { kind: 'warn', text: `未写入：${r.reason}（${(r.blocks || []).map(b => b.message).join('；')}）请回对话重新议定` }
-    } else {
-      const persons = r.result?.persons || []
-      const fails = persons.filter(p => !p.success)
-      const allOk = persons.length > 0 && fails.length === 0
-      const scored = persons.find(p => p.actualScore != null)
-      if (allOk) {
-        commitMsg.value = { kind: 'ok', text: scored ? '已写入并出总分' : '写入完成，补齐外部要素后自动出分' }
-        activeDraft.value = null
-      } else {
-        // 部分/全部失败：稿保持 READY（upsert 幂等），再点一次只补失败者
-        commitMsg.value = { kind: 'warn', text: `部分失败（${fails.length}/${persons.length}）：${fails.map(f => f.message).join('；')}——再点一次可补写失败的人` }
-        void refreshDrafts()
-      }
+    const res = await commitAgentDraft(run.value.draftId)
+    if (res.rejected) {
+      ElMessage.warning(`${res.reason}：${(res.blocks || []).map(b => b.message).join('；')}——请重新发起或在人工对话中重议`)
+      run.value = await getRun(run.value.id)
+      return
     }
-  } catch (e: unknown) {
-    commitMsg.value = { kind: 'warn', text: errText(e) }
-    void refreshDrafts()
+    await completeRun(run.value.id, res.result)
+    receipt.value = res.result?.persons || []
+    run.value = await getRun(run.value.id)
+    void loadHistory()
+  } catch (e) {
+    ElMessage.error(errText(e))
   } finally {
     committing.value = false
   }
 }
 
+async function retry(): Promise<void> {
+  if (!run.value) return
+  run.value = await startRun(run.value.id, fileNameOf(String(run.value.fileName || '')) || String(run.value.fileName))
+  watchRun()
+}
+
+async function toChat(): Promise<void> {
+  if (!run.value) return
+  run.value = await exitRun(run.value.id, 'chat')
+  chatOpen.value = true
+}
+async function toManual(): Promise<void> {
+  if (run.value) await exitRun(run.value.id, 'manual')
+  void router.push('/external-scores')
+}
+async function toAbandon(): Promise<void> {
+  if (run.value) run.value = await exitRun(run.value.id, 'abandon')
+}
+
+async function resync(): Promise<void> {
+  if (run.value) await applyRunSnapshot(run.value.id)
+  await loadHistory()
+}
+
+const history = ref<Awaited<ReturnType<typeof runHistory>>>([])
+async function loadHistory(): Promise<void> { history.value = await runHistory().catch(() => []) }
+
+function stopWatch(): void {
+  abort?.abort(); abort = null
+  if (pollTimer) { window.clearInterval(pollTimer); pollTimer = undefined }
+}
 function errText(e: unknown): string {
   const err = e as { message?: string; response?: { data?: { message?: string } } }
   return err?.response?.data?.message || err?.message || '请求失败'
 }
 
-function scrollToEnd(): void {
-  void nextTick(() => { if (listEl.value) listEl.value.scrollTop = listEl.value.scrollHeight })
-}
+onBeforeUnmount(stopWatch)
+void loadHistory()
 </script>
 
 <style scoped>
-.agent-page { display: flex; flex-direction: column; height: calc(100vh - 120px); padding: 12px 16px; }
-.session-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.sid { color: var(--el-text-color-secondary); font-size: 12px; }
-.body { flex: 1; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--el-border-color); border-radius: 8px; }
-.msg-list { flex: 1; overflow-y: auto; padding: 12px; }
-.msg { margin-bottom: 8px; }
-.msg.user .bubble { background: var(--el-color-primary-light-9); margin-left: 40px; }
-.msg.assistant .bubble { background: var(--el-fill-color-light); margin-right: 40px; }
-.bubble { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
-.streaming::after { content: '▍'; animation: blink 1s infinite; }
-@keyframes blink { 50% { opacity: 0; } }
-.tool-chip { display: inline-block; font-size: 12px; color: var(--el-text-color-secondary); background: var(--el-fill-color-lighter); border-radius: 10px; padding: 2px 8px; }
-.err-line { color: var(--el-color-danger); font-size: 12px; }
-.draft-card { border: 1px solid var(--el-color-success-light-5); background: var(--el-color-success-light-9); border-radius: 8px; padding: 10px; margin: 10px 0; }
-.draft-head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 13px; }
-.draft-actions { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
-.commit-msg { margin-top: 8px; font-size: 13px; }
-.commit-msg.ok { color: var(--el-color-success); }
-.commit-msg.warn { color: var(--el-color-warning); }
-.input-zone { border-top: 1px solid var(--el-border-color); padding: 8px 10px; }
-.file-chips { margin-bottom: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
-.input-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+.pipeline { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+.in-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.file-name { font-size: 13px; color: var(--el-text-color-secondary); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.rules { width: 380px; }
 .hint { color: var(--el-text-color-secondary); font-size: 12px; }
+.run-head { display: flex; gap: 10px; align-items: center; }
+.parsing { margin: 10px 0; color: var(--el-color-warning); }
+.receipt { margin-top: 8px; }
+.r-line { font-size: 13px; }
+.reject, .exhausted { margin-top: 8px; font-size: 13px; }
+.evidence { background: var(--el-fill-color-light); border-radius: 6px; padding: 8px; font-size: 12px; max-height: 180px; overflow: auto; }
+.exit-row { margin-top: 8px; display: flex; gap: 8px; }
+.his-title { font-size: 13px; }
 </style>

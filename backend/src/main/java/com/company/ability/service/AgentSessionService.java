@@ -56,10 +56,15 @@ public class AgentSessionService {
         volatile String cliSessionId;      // claude --resume 用
         volatile LocalDateTime createdAt = LocalDateTime.now();
         volatile LocalDateTime lastActiveAt = LocalDateTime.now();
+        volatile LocalDateTime turnStartedAt;
+        volatile String pendingSystemPrompt;   // 本回合 --append-system-prompt 内容（run/聊天各自的行为条款）
         volatile Status status = Status.ACTIVE;
         final AtomicBoolean running = new AtomicBoolean(false);
         volatile Process process;
         final Long ownerResourceId;
+        /** 回合事件多播：聊天 SSE 与导入 run 各挂各的监听器，共用一条 spawn */
+        final java.util.concurrent.CopyOnWriteArrayList<java.util.function.Consumer<Map<String, Object>>>
+                turnListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         Session(String id, Long ownerResourceId) {
             this.id = id;
@@ -132,7 +137,7 @@ public class AgentSessionService {
     private static final String ALLOWED_TOOLS = String.join(",",
             "mcp__cp__lookup_person", "mcp__cp__get_periods", "mcp__cp__get_non_flow_elements",
             "mcp__cp__get_existing_raters", "mcp__cp__check_period_open", "mcp__cp__parse_import_file",
-            "mcp__cp__validate_draft", "mcp__cp__deliver");
+            "mcp__cp__validate_draft", "mcp__cp__deliver", "mcp__cp__submit_outcome");
 
     private static final String DISALLOWED_TOOLS = String.join(",",
             "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep",
@@ -178,17 +183,57 @@ public class AgentSessionService {
 
     /** 发消息 → SSE 流式回推。一轮一个 claude 进程（--resume 续上下文），prompt 走 stdin。 */
     public SseEmitter sendMessage(String sessionId, String content, List<String> files) {
-        Session s = requireSession(sessionId);
+        return sendMessage(sessionId, content, files, null);
+    }
+
+    public SseEmitter sendMessage(String sessionId, String content, List<String> files, String systemPrompt) {
+        String prompt = systemPrompt == null ? chatSystemPrompt : systemPrompt;
+        SseEmitter emitter = new SseEmitter(TimeUnit.MINUTES.toMillis(15));
+        startTurn(sessionId, content, files, ev -> {
+            send(emitter, ev);
+            if ("done".equals(ev.get("type")) || "error".equals(ev.get("type"))) {
+                emitter.complete();
+            }
+        }, prompt);
+        return emitter;
+    }
+
+    /** 启动一个回合（供聊天 SSE 与导入 run 共用）。listener 收到本回合全部事件后自动摘除。 */
+    public void startTurn(String sessionId, String content, List<String> files,
+                          java.util.function.Consumer<Map<String, Object>> listener) {
+        startTurn(sessionId, content, files, listener, null);
+    }
+
+    public void startTurn(String sessionId, String content, List<String> files,
+                          java.util.function.Consumer<Map<String, Object>> listener, String systemPrompt) {
+        startTurnAs(sessionId, content, files, listener, systemPrompt, requireUser().resourceId());
+    }
+
+    /** 供导入 run 派发线程使用：身份显式传入 */
+    public void startTurnAs(String sessionId, String content, List<String> files,
+                            java.util.function.Consumer<Map<String, Object>> listener,
+                            String systemPrompt, Long actingResourceId) {
+        Session s = requireSessionAs(sessionId, actingResourceId);
         if (!s.running.compareAndSet(false, true)) {
             throw new BusinessException(409, "上一轮仍在生成，请先停止或等待完成");
         }
         String fullPrompt = withFileHint(content, files);
         appendHistory(s, "user", fullPrompt);
         s.lastActiveAt = LocalDateTime.now();
+        s.pendingSystemPrompt = systemPrompt;
+        s.turnListeners.add(listener);
+        pumpPool.submit(() -> runTurn(s, fullPrompt));
+    }
 
-        SseEmitter emitter = new SseEmitter(TimeUnit.MINUTES.toMillis(15));
-        pumpPool.submit(() -> runTurn(s, fullPrompt, emitter));
-        return emitter;
+    /** run 编排用：回合是否进行中 + 起点时间（超时判定） */
+    public boolean isTurnRunning(String sessionId) {
+        Session s = sessionId == null ? null : sessions.get(sessionId);
+        return s != null && s.running.get();
+    }
+
+    public LocalDateTime turnStartedAt(String sessionId) {
+        Session s = sessionId == null ? null : sessions.get(sessionId);
+        return s == null ? null : s.turnStartedAt;
     }
 
     /** 停止本轮生成：销毁进程；stdout 到 EOF 后 runTurn 自然收尾发 done */
@@ -259,8 +304,9 @@ public class AgentSessionService {
 
     // ==================== 内部 ====================
 
-    private void runTurn(Session s, String prompt, SseEmitter emitter) {
+    private void runTurn(Session s, String prompt) {
         StringBuilder assistantText = new StringBuilder();
+        s.turnStartedAt = LocalDateTime.now();
         try {
             ProcessBuilder pb = new ProcessBuilder(buildCmd(s));
             pb.directory(new File(workspace.toString()));
@@ -281,29 +327,27 @@ public class AgentSessionService {
                     if (line.isBlank()) {
                         continue;
                     }
-                    forward(s, line, emitter, assistantText);
+                    forward(s, line, assistantText);
                 }
             }
             int code = p.waitFor();
             if (code != 0 && assistantText.isEmpty()) {
-                send(emitter, event("error", Map.of("message", "claude 进程退出码 " + code)));
+                dispatch(s, event("error", Map.of("message", "claude 进程退出码 " + code)));
             }
             if (assistantText.length() > 0) {
                 appendHistory(s, "assistant", assistantText.toString());
             }
-            send(emitter, event("done", Map.of("ok", code == 0)));
-            emitter.complete();
+            dispatch(s, event("done", Map.of("ok", code == 0)));
         } catch (Exception e) {
             log.warn("agent 轮次异常 session={}: {}", s.id, e.getMessage());
-            try {
-                send(emitter, event("error", Map.of("message", String.valueOf(e.getMessage()))));
-                emitter.complete();
-            } catch (Exception ignored) {
-                emitter.completeWithError(e);
-            }
+            dispatch(s, event("error", Map.of("message", String.valueOf(e.getMessage()))));
         } finally {
+            s.turnListeners.clear();
             s.running.set(false);
             s.process = null;
+            s.turnStartedAt = null;
+            s.pendingSystemPrompt = null;
+            s.lastActiveAt = LocalDateTime.now();
         }
     }
 
@@ -342,6 +386,9 @@ public class AgentSessionService {
         if (s.cliSessionId != null) {
             cmd.addAll(List.of("--resume", s.cliSessionId));
         }
+        if (s.pendingSystemPrompt != null && !s.pendingSystemPrompt.isBlank()) {
+            cmd.addAll(List.of("--append-system-prompt", s.pendingSystemPrompt));
+        }
         return cmd;
     }
 
@@ -350,7 +397,7 @@ public class AgentSessionService {
      * system/init 取 cli session id；assistant 文本块转 delta、tool_use 转 tool（仅公开名）；
      * result 兜底定稿；其余（thinking/user/tool_result 原文）不外发，防内部信息泄漏。
      */
-    private void forward(Session s, String line, SseEmitter emitter, StringBuilder assistantText) {
+    private void forward(Session s, String line, StringBuilder assistantText) {
         JsonNode msg;
         try {
             msg = mapper.readTree(line);
@@ -371,16 +418,39 @@ public class AgentSessionService {
                 if ("text".equals(b)) {
                     String text = block.path("text").asText("");
                     assistantText.append(text);
-                    send(emitter, event("delta", Map.of("text", text)));
+                    dispatch(s, event("delta", Map.of("text", text)));
                 } else if ("tool_use".equals(b)) {
-                    send(emitter, event("tool", Map.of("name", shortTool(block.path("name").asText("")))));
+                    dispatch(s, event("tool", Map.of("name", shortTool(block.path("name").asText("")))));
                 }
             }
             return;
         }
         if ("result".equals(type) && msg.path("is_error").asBoolean(false)) {
-            send(emitter, event("error", Map.of("message",
+            dispatch(s, event("error", Map.of("message",
                     msg.path("result").asText(msg.path("subtype").asText("agent 执行出错")))));
+        }
+    }
+
+    /** 聊天模式行为条款（模板由测评后端注入，工作空间 CLAUDE.md 仅为角色锚） */
+    private String chatSystemPrompt = "";
+
+    @jakarta.annotation.PostConstruct
+    void loadChatPrompt() throws java.io.IOException {
+        try (var in = getClass().getClassLoader().getResourceAsStream("agent/chat-prompt-system.md")) {
+            if (in != null) {
+                chatSystemPrompt = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+        }
+    }
+
+    /** 回合事件多播：监听器异常互不影响 */
+    private void dispatch(Session s, Map<String, Object> ev) {
+        for (var listener : s.turnListeners) {
+            try {
+                listener.accept(ev);
+            } catch (Exception ignored) {
+                // 单个消费者失败（如前端断开）不影响其他监听器与回合本身
+            }
         }
     }
 
@@ -390,7 +460,7 @@ public class AgentSessionService {
                 "lookup_person", "查员工", "get_periods", "查年度页面",
                 "get_non_flow_elements", "查非流程要素", "get_existing_raters", "查评价人",
                 "check_period_open", "查年度状态", "parse_import_file", "解析文件",
-                "validate_draft", "整稿校验", "deliver", "交付整理稿");
+                "validate_draft", "整稿校验", "deliver", "交付整理稿", "submit_outcome", "流水线收场");
         return zh.getOrDefault(tail, tail);
     }
 
@@ -423,13 +493,17 @@ public class AgentSessionService {
     }
 
     private Session requireSession(String sessionId) {
+        return requireSessionAs(sessionId, requireUser().resourceId());
+    }
+
+    /** 显式属主校验版（run 派发线程无 HTTP 上下文，身份由批次记录携带） */
+    private Session requireSessionAs(String sessionId, Long actingResourceId) {
         Session s = sessionId == null ? null : sessions.get(sessionId);
         if (s == null) {
             throw new BusinessException(404, "会话不存在（服务重启或从未创建），请重新进入页面");
         }
         // 会话属主门：别人的 sessionId 不可发消息/看历史/停止
-        LoginUser user = requireUser();
-        if (s.ownerResourceId != null && !s.ownerResourceId.equals(user.resourceId())) {
+        if (s.ownerResourceId != null && !s.ownerResourceId.equals(actingResourceId)) {
             throw new BusinessException(403, "无权操作他人会话");
         }
         reap(s);

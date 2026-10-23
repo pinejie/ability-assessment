@@ -111,20 +111,26 @@ public class AgentImportRunService {
 
     // ==================== 批次生命周期 ====================
 
-    /** 建批 = 建内部会话 + DRAFT run；上传沿用 /agent/upload?sessionId 走会话隔离目录 */
+    /**
+     * 建批 = 建内部会话 + DRAFT run；上传沿用 /agent/upload?sessionId 走会话隔离目录。
+     * 建批即固化操作人页面当前维度（请求头上下文，越权已被 Filter 拦）——后续 AI 回合与交付校验都以此为准，
+     * 权限再多也以当前维度为准。
+     */
     public Map<String, Object> createRun(String rules) {
         LoginUser user = requireUser();
+        long dimensionId = com.company.ability.context.DimensionContext.getOrDefault();
         String sessionId = (String) sessionService.createSession().get("sessionId");
         KeyHolder kh = new GeneratedKeyHolder();
         jdbc.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                    "INSERT INTO uf_assess_import_run (company_id, session_id, file_path, file_name, user_rules, status, prompt_version, created_by)"
-                            + " VALUES (?, ?, '', 'pending', ?, '" + S_DRAFT + "', ?, ?)", Statement.RETURN_GENERATED_KEYS);
+                    "INSERT INTO uf_assess_import_run (company_id, dimension_id, session_id, file_path, file_name, user_rules, status, prompt_version, created_by)"
+                            + " VALUES (?, ?, ?, '', 'pending', ?, '" + S_DRAFT + "', ?, ?)", Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1, companyId);
-            ps.setString(2, sessionId);
-            ps.setString(3, rules == null || rules.isBlank() ? null : rules);
-            ps.setString(4, PROMPT_VERSION);
-            ps.setLong(5, user.resourceId());
+            ps.setLong(2, dimensionId);
+            ps.setString(3, sessionId);
+            ps.setString(4, rules == null || rules.isBlank() ? null : rules);
+            ps.setString(5, PROMPT_VERSION);
+            ps.setLong(6, user.resourceId());
             return ps;
         }, kh);
         Number key = kh.getKey();
@@ -265,11 +271,19 @@ public class AgentImportRunService {
             return;
         }
         if (!Boolean.TRUE.equals(draftRes.get("ok")) || draftRes.get("draftId") == null) {
-            String blocks = String.valueOf(draftRes.get("lines"));
-            update(runId, S_FAILED, outcomeJson, null, "deliver 含阻断行，拒收：" + abbrev(blocks), null, null);
-            broadcast(runId, Map.of("type", "run", "status", S_FAILED,
-                    "reason", "数据未完全满足接口要求（模型谎报已对齐，已拒收）", "lines", draftRes.get("lines")));
-            return;
+            if (draftRes.get("reconciliation") != null) {
+                // 行对账不齐：不直接判死——有轮次则合成 NEED_INPUT 让用户表态，耗尽则带标记强制成稿
+                draftRes = reconcileOrForceDraft(runId, run, outcomeJson, payloadNode, draftRes);
+                if (draftRes == null) {
+                    return;   // 已置 NEED_INPUT，等待用户回答
+                }
+            } else {
+                String blocks = String.valueOf(draftRes.get("lines"));
+                update(runId, S_FAILED, outcomeJson, null, "deliver 含阻断行，拒收：" + abbrev(blocks), null, null);
+                broadcast(runId, Map.of("type", "run", "status", S_FAILED,
+                        "reason", "数据未完全满足接口要求（模型谎报已对齐，已拒收）", "lines", draftRes.get("lines")));
+                return;
+            }
         }
         long draftId = longOf(draftRes.get("draftId"));
         Map<String, Object> draft = jdbc.queryForMap(
@@ -278,6 +292,54 @@ public class AgentImportRunService {
         jdbc.update("UPDATE uf_assess_import_run SET year=?, dimension_id=? WHERE id=?",
                 draft.get("year"), draft.get("dimension_id"), runId);
         broadcast(runId, Map.of("type", "run", "status", S_READY, "draftId", draftId));
+    }
+
+    /**
+     * deliver 行对账不齐的处理：轮次内 → 合成 NEED_INPUT 问题请用户表态（忽略 or 补充去向），
+     * 返回 null 等待回答；轮次耗尽 → 带 unreconciled 标记强制成稿（对账豁免），返回新 draftRes 由调用方走 READY 收尾。
+     */
+    private Map<String, Object> reconcileOrForceDraft(long runId, Map<String, Object> run, String outcomeJson,
+                                                      ObjectNode payloadNode, Map<String, Object> draftRes) {
+        String recon = String.valueOf(draftRes.get("reconciliation"));
+        int round = intOf(run.get("round_count")) + 1;
+        if (round <= MAX_ASK_ROUNDS) {
+            ArrayNode transcript = parseArray(
+                    run.get("transcript_json") == null ? null : String.valueOf(run.get("transcript_json")));
+            ObjectNode entry = transcript.addObject();
+            entry.put("round", round);
+            ArrayNode questions = entry.putArray("questions");
+            ObjectNode q = questions.addObject();
+            q.put("id", "reconcile-" + round);
+            q.put("type", "choice");
+            q.put("question", "交付被后端行对账拦下。" + recon);
+            q.putArray("options")
+                    .add("确认忽略未交代的行（不导入，原因记为用户确认忽略）")
+                    .add("我来补充说明这些行的去向");
+            entry.put("note", round == MAX_ASK_ROUNDS ? "FINAL_ROUND" : "");
+            // outcome_json 存合成本身的问题（前端提问卡只认 outcome_json.questions）
+            ObjectNode outcomeForUi = mapper.createObjectNode();
+            outcomeForUi.put("kind", "reconcile");
+            outcomeForUi.set("questions", questions);
+            update(runId, S_NEED_INPUT, outcomeForUi.toString(), transcript.toString(), null, null, round);
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("type", "run");
+            ev.put("status", S_NEED_INPUT);
+            ev.put("round", round);
+            ev.put("maxRounds", MAX_ASK_ROUNDS);
+            ev.put("questions", questions);
+            ev.put("reconciliation", recon);
+            broadcast(runId, ev);
+            return null;
+        }
+        payloadNode.put("unreconciled", true);
+        Map<String, Object> forced = bridge.submitDraft(internalToken, payloadNode.toString(), false);
+        if (Boolean.TRUE.equals(forced.get("ok")) && forced.get("draftId") != null) {
+            return forced;
+        }
+        String reason = "行对账未过且无法强制成稿：" + String.valueOf(forced.get("lines"));
+        update(runId, S_FAILED, outcomeJson, null, abbrev(reason), null, null);
+        broadcast(runId, Map.of("type", "run", "status", S_FAILED, "reason", abbrev(reason)));
+        return null;
     }
 
     /** EXHAUSTED/FAILED 出口：chat（同会话转人工）/ manual（转表单）/ abandon（放弃） */
@@ -369,12 +431,16 @@ public class AgentImportRunService {
 
     private void beginRound(long runId, String sessionId, String rules, String transcriptJson, int askCount) {
         outcomeSeen.remove(runId);
+        Map<String, Object> runRow = requireRun(runId);
+        Object dim = runRow.get("dimension_id");
+        String dimText = dim == null ? "由文件人员页面判定"
+                : dim + "（操作人当前维度，强制——所有查询与写入都限定在此维度，禁止切换或借用其他维度）";
         String task = taskTemplate
                 .replace("{{round}}", String.valueOf(askCount + 1))
                 .replace("{{maxRounds}}", String.valueOf(MAX_ASK_ROUNDS))
                 .replace("{{sessionId}}", sessionId)
-                .replace("{{dimensionId}}", "由文件人员页面判定")
-                .replace("{{filePath}}", String.valueOf(requireRun(runId).get("file_path")))
+                .replace("{{dimensionId}}", dimText)
+                .replace("{{filePath}}", String.valueOf(runRow.get("file_path")))
                 .replace("{{yearHint}}", "未指定则按 get_periods 判定")
                 .replace("{{rules}}", rules == null || rules.isBlank() ? "（无）" : rules)
                 .replace("{{transcript}}", renderTranscript(transcriptJson));

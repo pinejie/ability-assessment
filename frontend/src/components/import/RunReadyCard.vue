@@ -24,19 +24,28 @@
         </template>
       </el-table-column>
     </el-table>
-    <div class="ready-note">≡ 标注行为按补充规则换算/补齐所得；跳过行由后端统计展示。写入后本稿作废。</div>
+    <div v-if="skipped && skipped.length" class="skipped-box">
+      <b>未导入 {{ skipped.length }} 行：</b>
+      <div v-for="s in skipped" :key="s.rowNo" class="skip-line">
+        第 {{ s.rowNo }} 行<span v-if="s.raw" class="skip-raw">「{{ s.raw }}」</span>——{{ s.reason }}
+      </div>
+    </div>
+    <div v-if="unreconciled" class="unrec">⚠ 行对账未完成（补充轮次用尽后放行），可能存在未交代的文件行，请对照原文件核查。</div>
+    <div class="ready-note">≡ 标注行为按补充规则换算/补齐所得；未导入行逐条交代（后端行对账强制）。写入后本稿作废。</div>
     <el-button type="primary" :loading="committing" @click="emit('confirm')">确认写入结果表</el-button>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { AgentDraftPayload } from '@/api/agent'
+import type { AgentDraftPayload, DraftSkippedRow } from '@/api/agent'
 
 defineProps<{
   draftId: number
   year: number | null
   dimensionId: number | null
   rows: AgentDraftPayload['rows']
+  skipped?: DraftSkippedRow[]
+  unreconciled?: boolean
   committing: boolean
 }>()
 const emit = defineEmits<{ (e: 'confirm'): void }>()
@@ -48,4 +57,8 @@ const emit = defineEmits<{ (e: 'confirm'): void }>()
 .ready-note { font-size: 12px; color: var(--el-text-color-secondary); margin: 8px 0; }
 .basis { color: var(--el-color-warning-dark-2); }
 .dim { color: var(--el-text-color-placeholder); }
+.skipped-box { margin: 8px 0; font-size: 12px; color: var(--el-text-color-regular); background: var(--el-fill-color-light); border-radius: 6px; padding: 8px 10px; }
+.skip-line { margin-top: 4px; }
+.skip-raw { color: var(--el-text-color-secondary); }
+.unrec { margin: 8px 0; font-size: 12px; color: var(--el-color-danger); }
 </style>

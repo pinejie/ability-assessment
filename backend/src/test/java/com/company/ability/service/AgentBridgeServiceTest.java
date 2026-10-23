@@ -30,6 +30,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -156,6 +157,88 @@ class AgentBridgeServiceTest {
         assertThat(out.get("expiresAt")).isNotNull();
     }
 
+    // ==================== deliver 行对账（skipped/coveredRows） ====================
+
+    @Test
+    @DisplayName("行对账：file_rows 未上报（旧会话/sql/29 未应用）→ 跳过对账，正常成稿")
+    void reconcileSkippedWhenFileRowsUnknown() {
+        stubSheet(); stubPreviewOk(); stubKeyHolder();
+        when(jdbc.queryForObject(contains("file_rows"), eq(Integer.class),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(null);
+        Map<String, Object> out = service.submitDraft(TOKEN, PAYLOAD, false);
+        assertThat(out.get("draftId")).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("行对账：有行未交代去向 → 拒稿返回 reconciliation 指令，不落稿")
+    void reconcileRejectsMissingRowFate() {
+        stubSheet(); stubPreviewOk();
+        stubFileRows(4); // 数据行物理行号 2..5
+        String payload = PAYLOAD.replace("}]}",
+                "}],\"coveredRows\":[2,3],\"skipped\":[{\"rowNo\":4,\"raw\":\"甲\",\"reason\":\"超范围\"}]}");
+        Map<String, Object> out = service.submitDraft(TOKEN, payload, false);
+        assertThat(out.get("ok")).isEqualTo(false);
+        assertThat(out.get("ready")).isEqualTo(false);
+        assertThat(String.valueOf(out.get("reconciliation"))).contains("[5]");
+        verify(jdbc, never()).update(any(org.springframework.jdbc.core.PreparedStatementCreator.class),
+                any(GeneratedKeyHolder.class));
+    }
+
+    @Test
+    @DisplayName("行对账：coveredRows+skipped 覆盖全部数据行 → 成稿，skipped 随 payload 原样入稿")
+    void reconcilePassPersistsSkipped() {
+        stubSheet(); stubPreviewOk(); stubKeyHolder(); stubFileRows(4);
+        String payload = PAYLOAD.replace("}]}",
+                "}],\"coveredRows\":[2,3],\"skipped\":[{\"rowNo\":4,\"raw\":\"甲\",\"reason\":\"超范围\"},"
+                        + "{\"rowNo\":5,\"raw\":\"乙\",\"reason\":\"查无此人\"}]}");
+        Map<String, Object> out = service.submitDraft(TOKEN, payload, false);
+        assertThat(out.get("draftId")).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("行对账：unreconciled 豁免标记（轮次耗尽强制成稿）→ 放行")
+    void unreconciledFlagBypassesGate() {
+        stubSheet(); stubPreviewOk(); stubKeyHolder(); stubFileRows(4);
+        String payload = PAYLOAD.replace("}]}", "}],\"unreconciled\":true}");
+        Map<String, Object> out = service.submitDraft(TOKEN, payload, false);
+        assertThat(out.get("draftId")).isEqualTo(42L);
+    }
+
+    // ==================== 批次维度硬闸 ====================
+
+    @Test
+    @DisplayName("submitDraft：交付维度与批次发起维度不一致 → 409 拒收（权限再多也只认当前维度）")
+    void dimensionMismatchAgainstBatchRejected() {
+        stubSheet(); // 解析出的维度=3
+        when(jdbc.queryForObject(contains("uf_assess_import_run"), eq(Long.class),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(9L);
+        assertThatThrownBy(() -> service.submitDraft(TOKEN, PAYLOAD, false))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("维度").hasMessageContaining("不一致");
+    }
+
+    @Test
+    @DisplayName("submitDraft：批次维度一致放行；无批次记录（聊天通道）不设闸")
+    void dimensionGatePassWhenMatchedOrAbsent() {
+        stubSheet(); stubPreviewOk(); stubKeyHolder();
+        when(jdbc.queryForObject(contains("uf_assess_import_run"), eq(Long.class),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(3L);
+        assertThat(service.submitDraft(TOKEN, PAYLOAD, false).get("draftId")).isEqualTo(42L);
+
+        org.mockito.Mockito.reset(jdbc);
+        stubSheet(); stubPreviewOk(); stubKeyHolder();   // queryForObject 未桩 → null → 放行
+        assertThat(service.submitDraft(TOKEN, PAYLOAD, false).get("draftId")).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("recordFileStats：令牌正确才写 file_rows；错误令牌 401")
+    void recordFileStatsTokenGate() {
+        assertThatThrownBy(() -> service.recordFileStats("nope", "s-1", 4))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("内部令牌无效");
+        service.recordFileStats(TOKEN, "s-1", 4);
+        verify(jdbc).update(contains("SET file_rows"), eq(4), eq("s-1"), eq(1L));
+    }
+
     // ==================== commitDraft ====================
 
     @Test
@@ -257,6 +340,23 @@ class AgentBridgeServiceTest {
     }
 
     // ==================== 辅助 ====================
+
+    private void stubPreviewOk() {
+        when(externalScoreService.preview(any())).thenReturn(preview(true, null));
+    }
+
+    private void stubKeyHolder() {
+        when(jdbc.update(any(org.springframework.jdbc.core.PreparedStatementCreator.class),
+                any(GeneratedKeyHolder.class))).thenAnswer(inv -> {
+                    ((GeneratedKeyHolder) inv.getArgument(1)).getKeyList().add(Map.of("KEY", 42L));
+                    return 1;
+                });
+    }
+
+    private void stubFileRows(int rows) {
+        when(jdbc.queryForObject(contains("file_rows"), eq(Integer.class),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(rows);
+    }
 
     private void stubSheet() {
         when(jdbc.queryForList(contains("uf_assess_sheet s"), any(Object[].class))).thenReturn(

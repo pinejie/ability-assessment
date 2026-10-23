@@ -86,11 +86,7 @@ public class AgentBridgeService {
      */
     public Map<String, Object> submitDraft(String agentToken, String payloadJson, boolean validateOnly) {
         requireEnabled();
-        if (internalToken.isBlank() || !MessageDigest.isEqual(
-                internalToken.getBytes(StandardCharsets.UTF_8),
-                agentToken == null ? new byte[0] : agentToken.getBytes(StandardCharsets.UTF_8))) {
-            throw new BusinessException(401, "内部令牌无效");
-        }
+        checkInternalToken(agentToken);
         JsonNode payload;
         try {
             payload = mapper.readTree(payloadJson);
@@ -98,6 +94,7 @@ public class AgentBridgeService {
             throw new BusinessException(400, "载荷不是合法 JSON");
         }
         Resolution res = resolveDraft(payload);
+        requireBatchDimensionMatch(payload.path("sessionId").asText(""), res.dimensionId);
         ExternalScoreVO.PreviewResult preview = withDimension(res.dimensionId,
                 () -> externalScoreService.preview(res.request));
 
@@ -115,6 +112,15 @@ public class AgentBridgeService {
             return out;
         }
 
+        // 交付前置对账：文件每一行必须交代去向（入稿 coveredRows / 弃用 skipped），杜绝异常数据无痕消失
+        String reconciliation = reconcileFileCoverage(payload);
+        if (reconciliation != null) {
+            out.put("ok", false);
+            out.put("ready", false);
+            out.put("reconciliation", reconciliation);
+            return out;
+        }
+
         long draftId = insertDraft(res, payloadJson);
         out.put("ok", true);
         out.put("draftId", draftId);
@@ -123,6 +129,105 @@ public class AgentBridgeService {
                 .isBefore(LocalDateTime.now().plusHours(maxHours))
                 ? LocalDateTime.now().plusMinutes(idleMinutes) : LocalDateTime.now().plusHours(maxHours));
         return out;
+    }
+
+    /** parse_import_file 上报解析数据行数（cp_server 尽力调用，供 deliver 对账）。 */
+    public void recordFileStats(String agentToken, String sessionId, Integer fileRows) {
+        requireEnabled();
+        checkInternalToken(agentToken);
+        if (sessionId == null || !sessionId.matches("[0-9a-zA-Z_-]{1,64}")
+                || fileRows == null || fileRows < 0 || fileRows > 20000) {
+            throw new BusinessException(400, "参数不合法");
+        }
+        try {
+            jdbc.update("UPDATE uf_assess_import_run SET file_rows = ? WHERE session_id = ? AND company_id = ?",
+                    fileRows, sessionId, companyId);
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.warn("记录 file_rows 失败（请确认 sql/29 已应用到库）：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 文件行对账：parse 阶段上报的 file_rows 划定数据行范围（物理行号 2..file_rows+1，首行为表头），
+     * deliver 载荷必须携带 coveredRows（稿行覆盖的物理行号）与 skipped[{rowNo,raw,reason}]（未导入行及原因），
+     * 两者并集未覆盖全部数据行、或引用了越界行号 → 返回给 agent 的纠错指令（不落稿）；
+     * 无需对账（未上报 file_rows：旧会话/未经 parse 的交付）或列不存在（sql/29 未应用）→ 返回 null 放行。
+     */
+    private String reconcileFileCoverage(JsonNode payload) {
+        if (payload.path("unreconciled").asBoolean(false)) {
+            return null;   // 轮次耗尽后由流水线强制成稿的豁免标记
+        }
+        String sessionId = payload.path("sessionId").asText("");
+        Integer fileRows;
+        try {
+            fileRows = jdbc.queryForObject(
+                    "SELECT file_rows FROM uf_assess_import_run WHERE session_id = ? AND company_id = ?",
+                    Integer.class, sessionId, companyId);
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.warn("文件行对账跳过（file_rows 查询失败，请确认 sql/29 已应用到库）：{}", e.getMessage());
+            return null;
+        }
+        if (fileRows == null || fileRows <= 0) {
+            return null;
+        }
+        java.util.Set<Integer> declared = new java.util.TreeSet<>();
+        payload.path("coveredRows").forEach(n -> declared.add(n.asInt()));
+        payload.path("skipped").forEach(n -> declared.add(n.path("rowNo").asInt(0)));
+        int firstLine = 2;
+        int lastLine = fileRows + 1;
+        List<Integer> missing = new ArrayList<>();
+        for (int line = firstLine; line <= lastLine; line++) {
+            if (!declared.contains(line)) {
+                missing.add(line);
+            }
+        }
+        List<Integer> bogus = new ArrayList<>();
+        for (int line : declared) {
+            if (line < firstLine || line > lastLine) {
+                bogus.add(line);
+            }
+        }
+        if (missing.isEmpty() && bogus.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder("文件共 " + fileRows + " 行数据（物理行号 " + firstLine + "–" + lastLine + "）：");
+        if (!missing.isEmpty()) {
+            sb.append("未交代去向的行号 ").append(missing).append("；");
+        }
+        if (!bogus.isEmpty()) {
+            sb.append("越界行号 ").append(bogus).append("；");
+        }
+        sb.append("deliver 必须交代文件每一行——入稿行号放 coveredRows，未导入行放 skipped[{rowNo,raw,reason}]")
+          .append("（超范围列/查无此人/无能力要求/冲突取一等都算 skipped）；信息不足时先 submit_outcome kind=ask 问用户。");
+        return sb.toString();
+    }
+
+    /**
+     * 交付维度硬闸：建批已固化操作人页面当前维度（uf_assess_import_run.dimension_id），
+     * 稿件解析出的维度与之不一致 → 拒收。操作人权限再多，也只认发起时的当前维度。
+     * 无批次记录（聊天通道旧路径）或 run 未记维度 → 不设闸（维持原歧义阻断语义）。
+     */
+    private void requireBatchDimensionMatch(String sessionId, long draftDimensionId) {
+        Long runDim;
+        try {
+            runDim = jdbc.queryForObject(
+                    "SELECT dimension_id FROM uf_assess_import_run WHERE session_id = ? AND company_id = ?",
+                    Long.class, sessionId, companyId);
+        } catch (org.springframework.dao.DataAccessException e) {
+            return;
+        }
+        if (runDim != null && runDim.longValue() != draftDimensionId) {
+            throw new BusinessException(409, "交付维度（" + draftDimensionId + "）与批次发起维度（" + runDim
+                    + "）不一致——导入必须在操作人当前维度内进行");
+        }
+    }
+
+    private void checkInternalToken(String agentToken) {
+        if (internalToken.isBlank() || !MessageDigest.isEqual(
+                internalToken.getBytes(StandardCharsets.UTF_8),
+                agentToken == null ? new byte[0] : agentToken.getBytes(StandardCharsets.UTF_8))) {
+            throw new BusinessException(401, "内部令牌无效");
+        }
     }
 
     // ==================== draft：查询与写入（前端登录态） ====================

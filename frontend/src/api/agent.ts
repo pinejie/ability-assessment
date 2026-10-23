@@ -20,11 +20,24 @@ export interface DraftRow {
   annualScore?: number | null
 }
 
+/** 交付对账：未入稿行及原因（agent 必须逐行交代，确认页与回执展示） */
+export interface DraftSkippedRow {
+  rowNo: number
+  raw?: string | null
+  reason: string
+}
+
 export interface AgentDraftPayload {
   sessionId: string
   year: number
   dimensionId?: number | null
   rows: DraftRow[]
+  /** rows 覆盖到的文件物理行号（表头=第1行） */
+  coveredRows?: number[]
+  /** 未导入的行（超范围/查无此人/无要求/冲突弃用等），后端逐行对账依据 */
+  skipped?: DraftSkippedRow[]
+  /** 轮次耗尽后带标记强制成稿：行对账未完成 */
+  unreconciled?: boolean
 }
 
 export interface AgentDraft {

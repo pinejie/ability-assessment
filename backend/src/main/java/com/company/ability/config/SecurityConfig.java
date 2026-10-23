@@ -48,7 +48,8 @@ public class SecurityConfig {
                     // SSO 引导接口（发起跳转 / 回调换 token）
                     .requestMatchers("/api/v1/auth/sso/**").permitAll()
                     // Agent 交付稿/三出口（内网 cp_server 调用，无 JWT；服务内强校验 X-Agent-Token）
-                    .requestMatchers(HttpMethod.POST, "/api/v1/agent/draft", "/api/v1/agent/outcome").permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/agent/draft", "/api/v1/agent/outcome",
+                            "/api/v1/agent/parse-stats").permitAll()   // cp_server 内部令牌通道，鉴权在服务内
                     // 接口文档
                     .requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**",
                             "/swagger-ui/**", "/swagger-ui.html", "/favicon.ico").permitAll();

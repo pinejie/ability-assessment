@@ -86,6 +86,16 @@ public class AgentController {
         return ResponseEntity.ok(result);
     }
 
+    @Operation(summary = "parse_import_file 上报解析数据行数（内部令牌，供交付对账）")
+    @PostMapping("/parse-stats")
+    public ResponseEntity<Result<Map<String, Object>>> parseStats(
+            @RequestHeader(value = "X-Agent-Token", required = false) String agentToken,
+            @RequestBody Map<String, Object> body) {
+        Integer fileRows = body.get("fileRows") instanceof Number n ? n.intValue() : null;
+        agentBridgeService.recordFileStats(agentToken, String.valueOf(body.get("sessionId")), fileRows);
+        return ResponseEntity.ok(Result.success(Map.of()));
+    }
+
     @Operation(summary = "按会话查最新交付稿（前端轮询=活跃心跳）")
     @GetMapping("/drafts")
     public Result<List<Map<String, Object>>> drafts(@RequestParam String sessionId) {

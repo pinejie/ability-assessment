@@ -65,6 +65,8 @@ public class AssessConfigDTO {
     @Data
     public static class LevelScoreItem {
         private Integer levelNo;
+        private String levelDesc;
+        private Integer rateValue;
         private BigDecimal score;
     }
 }

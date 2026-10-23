@@ -35,6 +35,8 @@ public class AssessConfigVO {
     @Data
     public static class LevelScoreVO {
         private Integer levelNo;
+        private String levelDesc;
+        private Integer rateValue;
         private BigDecimal score;
     }
 }

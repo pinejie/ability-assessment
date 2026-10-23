@@ -121,22 +121,44 @@
     <el-card class="config-block" v-loading="loadingLevel">
       <template #header>
         <div class="block-header">
-          <span>4. 等级分值（用于测评得分计算）</span>
-          <el-button type="primary" :disabled="!levelCanSave" :loading="savingLevel" @click="saveLevel">保存</el-button>
+          <span>4. 等级分值（等级在此定义：配置几个等级，要素配置等级就按几个走；分值用于测评得分计算，最高档分值一般为 10）</span>
+          <div>
+            <el-button @click="insertLevelRow">新增等级</el-button>
+            <el-button type="primary" :disabled="!levelCanSave" :loading="savingLevel" @click="saveLevel">保存</el-button>
+          </div>
         </div>
       </template>
-      <el-table :data="levelRows" border size="small" row-key="levelNo">
-        <el-table-column label="等级" width="160">
-          <template #default="{ row }">{{ row.levelNo }} 级</template>
+      <el-table :data="levelRows" border size="small">
+        <el-table-column label="等级" width="150">
+          <template #default="{ row }">
+            <el-input-number v-model="row.levelNo" :min="1" :max="99" :step="1" :precision="0"
+                             controls-position="right" placeholder="等级号" style="width: 120px" />
+          </template>
+        </el-table-column>
+        <el-table-column label="描述" min-width="170">
+          <template #default="{ row }">
+            <el-input v-model="row.levelDesc" maxlength="50" placeholder="如：知识级" />
+          </template>
+        </el-table-column>
+        <el-table-column label="对应的评价" width="150">
+          <template #default="{ row }">
+            <el-input-number v-model="row.rateValue" :min="1" :max="99" :step="1" :precision="0"
+                             controls-position="right" placeholder="评价值" style="width: 120px" />
+          </template>
         </el-table-column>
         <el-table-column label="分值" width="200">
           <template #default="{ row }">
             <el-input-number v-model="row.score" :min="0" :max="999.99" :precision="2" controls-position="right" placeholder="必填" style="width: 160px" />
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ $index }">
+            <el-button link type="primary" @click="removeLevelRow($index)">删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <div class="sum-line" :class="{ 'sum-error': !levelOk }">
-        {{ levelOk ? '分值校验通过（随等级升高而递增）' : levelError }}
+        {{ levelOk ? '校验通过（等级号、对应的评价各自唯一，分值大于 0）' : levelError }}
       </div>
     </el-card>
   </div>
@@ -155,7 +177,7 @@ import {
   getLevelScores,
   saveLevelScores,
 } from '@/api/assessConfig'
-import type { AssessorCode, LevelScoreVO } from '@/types/assessConfig'
+import type { AssessorCode } from '@/types/assessConfig'
 
 /**
  * 公司ID：项目目前没有"当前登录人所属公司"的工具方法，暂由前端传入。
@@ -182,6 +204,13 @@ interface GradeRow {
   upperBound: number | null
 }
 
+interface LevelRow {
+  levelNo: number | null
+  levelDesc: string
+  rateValue: number | null
+  score: number | null
+}
+
 const loadingAbility = ref(false)
 const loadingAssessor = ref(false)
 const loadingGrade = ref(false)
@@ -190,7 +219,7 @@ const savingAssessor = ref(false)
 const savingGrade = ref(false)
 const loadingLevel = ref(false)
 const savingLevel = ref(false)
-const levelRows = ref<LevelScoreVO[]>([])
+const levelRows = ref<LevelRow[]>([])
 
 const abilityRows = ref<AbilityRow[]>([])
 const assessorRows = ref<AssessorRow[]>([])
@@ -398,31 +427,53 @@ const saveGrade = async () => {
 }
 
 
-// ==================== 等级分值 ====================
+// ==================== 等级分值（等级唯一定义源，数量可配） ====================
 
 const levelError = computed(() => {
   const rows = levelRows.value
-  // 后端固定返回 1-5 级骨架（空维度为 5 行 null）；行数不对只可能是接口异常/旧版本
-  if (rows.length !== 5) return '等级分值应固定为 1-5 级共 5 行，请刷新页面重试'
-  // 未填：后端缺字段/用户清空输入（null 与 undefined 都落在这）
-  if (rows.some(r => !Number.isFinite(r.score as number))) return '请填写 1-5 级分值'
-  if (rows.some(r => (r.score as number) <= 0)) return '分值必须大于 0'
-  for (let i = 1; i < rows.length; i++) {
-    if ((rows[i].score as number) <= (rows[i - 1].score as number)) {
-      return `${rows[i].levelNo} 级分值必须大于 ${rows[i - 1].levelNo} 级`
-    }
+  if (rows.length === 0) return '至少配置一个等级，点「新增等级」添加'
+  const levels = new Set<number>()
+  const rates = new Set<number>()
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    const rowNo = `第${i + 1}行`
+    if (r.levelNo === null || r.levelNo < 1) return `${rowNo}等级必须为正整数`
+    if (levels.has(r.levelNo)) return `等级 ${r.levelNo} 重复`
+    levels.add(r.levelNo)
+    if (!r.levelDesc.trim()) return `${rowNo}等级描述不能为空`
+    if (r.rateValue === null || r.rateValue < 1) return `${rowNo}对应的评价必须为正整数`
+    if (rates.has(r.rateValue)) return `对应的评价 ${r.rateValue} 重复，一个评价值只能对应一个等级`
+    rates.add(r.rateValue)
+    if (!Number.isFinite(r.score as number)) return `${rowNo}请填写分值`
+    if ((r.score as number) <= 0) return `等级 ${r.levelNo} 的分值必须大于 0`
   }
   return ''
 })
 const levelOk = computed(() => levelError.value === '')
 const levelCanSave = computed(() => levelOk.value && !savingLevel.value)
 
+/** 新增等级：等级号与「对应的评价」默认接当前最大等级号顺延（保持旧的等级=评价恒等惯例，可手改） */
+const insertLevelRow = () => {
+  const rows = levelRows.value
+  const next = rows.length === 0 ? 1 : Math.max(...rows.map(r => r.levelNo ?? 0)) + 1
+  rows.push({ levelNo: next, levelDesc: '', rateValue: next, score: null })
+}
+
+const removeLevelRow = (index: number) => {
+  levelRows.value.splice(index, 1)
+}
+
 const loadLevel = async () => {
   loadingLevel.value = true
   try {
     const list = await getLevelScores(COMPANY_ID)
-    // 未配置的级后端返回缺 score（JSON 省略 null），归一为 null，避免 undefined 绕过校验
-    levelRows.value = list.map(v => ({ levelNo: v.levelNo, score: v.score ?? null }))
+    // JSON 省略 null 字段，统一归一，避免 undefined 绕过校验
+    levelRows.value = list.map(v => ({
+      levelNo: v.levelNo ?? null,
+      levelDesc: v.levelDesc ?? '',
+      rateValue: v.rateValue ?? null,
+      score: v.score ?? null,
+    }))
   } catch (e) {
     console.error('加载等级分值失败:', e)
   } finally {
@@ -435,7 +486,12 @@ const saveLevel = async () => {
   try {
     await saveLevelScores(
       COMPANY_ID,
-      levelRows.value.map(r => ({ levelNo: r.levelNo, score: r.score }))
+      levelRows.value.map(r => ({
+        levelNo: r.levelNo,
+        levelDesc: r.levelDesc.trim(),
+        rateValue: r.rateValue,
+        score: r.score,
+      }))
     )
     ElMessage.success('等级分值已保存')
     await loadLevel()

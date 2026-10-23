@@ -72,6 +72,10 @@ class ExternalScoreServiceTest {
         // 已覆盖外部要素（批量查询：sheet_id, element_id）
         when(jdbc.queryForList(contains("SELECT rt.sheet_id, rt.element_id FROM uf_assess_sheet_rating"),
                 any(Object[].class))).thenReturn(List.of(row("sheet_id", SHEET_ID, "element_id", 11L)));
+        // 等级分值配置的评价值集合（当前维度配了 5 级，评价 1..5 各对应一级）
+        when(jdbc.queryForList(contains("SELECT rate_value FROM uf_assess_level_score"),
+                eq(Integer.class), any(Long.class), any(Long.class)))
+                .thenReturn(List.of(1, 2, 3, 4, 5));
     }
 
     @AfterEach
@@ -100,7 +104,7 @@ class ExternalScoreServiceTest {
     void previewBlocks() {
         var req = ratings(
                 rating(100L, 99L, 3, null),   // 不在非流程白名单 → BLOCK
-                rating(100L, 11L, 9, null),   // 等级越界 → BLOCK
+                rating(100L, 11L, 9, null),   // 评价值未配置（评价 1..5 之外）→ BLOCK
                 rating(100L, 11L, 3, null),   // 合法首行 → PASS
                 rating(100L, 11L, 2, null),   // 同人同要素重复 → BLOCK
                 rating(200L, 11L, 3, null));  // 查无页面 → BLOCK
@@ -109,7 +113,7 @@ class ExternalScoreServiceTest {
         assertThat(r.getLines()).extracting("status")
                 .containsExactly("BLOCK", "BLOCK", "PASS", "BLOCK", "BLOCK");
         assertThat(r.getLines().get(0).getMessage()).contains("流程评价要素");
-        assertThat(r.getLines().get(1).getMessage()).contains("1–5");
+        assertThat(r.getLines().get(1).getMessage()).contains("对应的评价");
         assertThat(r.getLines().get(3).getMessage()).contains("重复");
         assertThat(r.getLines().get(4).getMessage()).contains("无测评页面");
     }

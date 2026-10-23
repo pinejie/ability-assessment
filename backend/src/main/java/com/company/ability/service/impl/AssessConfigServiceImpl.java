@@ -18,6 +18,7 @@ import com.company.ability.service.AssessConfigService;
 import com.company.ability.vo.AssessConfigVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,15 +51,13 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     static final int ERR_BOUNDARY_NULL = 40005;
     /** 错误码：等级标准至少保留一行 */
     static final int ERR_GRADE_EMPTY = 40006;
-    /** 错误码：等级分值不合法（序号不全、分值非正或未递增） */
+    /** 错误码：等级分值不合法（字段缺失、重复、被引用等） */
     static final int ERR_LEVEL_SCORE = 40007;
 
     private static final List<String> ASSESSOR_CODES = List.of("LEADER", "CLIENT", "SELF");
     private static final Map<String, String> ASSESSOR_NAMES = Map.of(
             "LEADER", "直接领导", "CLIENT", "客户评分", "SELF", "自评分");
     private static final BigDecimal HUNDRED = new BigDecimal("100");
-    /** 等级分值固定为 1-5 级（读取端补骨架、保存端校验共用此不变量） */
-    private static final int MAX_LEVEL_NO = 5;
     /** 分值物理上限：列类型 DECIMAL(5,2)（sql/08），超出会触发算术溢出 500，提前拦成业务提示 */
     private static final BigDecimal MAX_LEVEL_SCORE = new BigDecimal("999.99");
 
@@ -67,6 +66,8 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     private final AssessWeightAssessorMapper assessorMapper;
     private final AssessGradeLevelMapper gradeMapper;
     private final AssessLevelScoreMapper levelScoreMapper;
+    /** 等级引用保护查跨表计数（要求等级、评级数据），走 JdbcTemplate 原生 SQL */
+    private final JdbcTemplate jdbc;
 
     /**
      * 当前维度：配置读写一律显式带上（无请求头时回落默认维度 1），
@@ -288,27 +289,24 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         log.info("保存等级标准成功，companyId: {}, dimensionId: {}, 行数: {}", dto.getCompanyId(), dim, items.size());
     }
 
-    // ==================== 等级分值 ====================
+    // ==================== 等级分值（等级唯一定义源） ====================
 
     /**
-     * 固定返回 1-5 级骨架：未配置的级 score 为 null。
-     * 新维度（库里无行）页面也能直接出现 5 行供填写保存，避免"空表无法初始化"死锁。
+     * 返回当前维度实际配置的等级定义（按等级号升序）。
+     * 等级数量不固定：这里配置了几个等级，配置等级弹窗与测评算分就是几个。
      */
     @Override
     public List<AssessConfigVO.LevelScoreVO> getLevelScores(Long companyId) {
-        Map<Integer, BigDecimal> saved = new HashMap<>();
+        List<AssessConfigVO.LevelScoreVO> result = new ArrayList<>();
         for (AssessLevelScore e : levelScoreMapper.selectList(new LambdaQueryWrapper<AssessLevelScore>()
                 .eq(AssessLevelScore::getCompanyId, companyId)
-                .eq(AssessLevelScore::getDimensionId, currentDim()))) {
-            if (e.getLevelNo() != null && e.getScore() != null) {
-                saved.put(e.getLevelNo(), e.getScore());
-            }
-        }
-        List<AssessConfigVO.LevelScoreVO> result = new ArrayList<>();
-        for (int levelNo = 1; levelNo <= MAX_LEVEL_NO; levelNo++) {
+                .eq(AssessLevelScore::getDimensionId, currentDim())
+                .orderByAsc(AssessLevelScore::getLevelNo))) {
             AssessConfigVO.LevelScoreVO vo = new AssessConfigVO.LevelScoreVO();
-            vo.setLevelNo(levelNo);
-            vo.setScore(saved.get(levelNo));
+            vo.setLevelNo(e.getLevelNo());
+            vo.setLevelDesc(e.getLevelDesc());
+            vo.setRateValue(e.getRateValue());
+            vo.setScore(e.getScore());
             result.add(vo);
         }
         return result;
@@ -319,15 +317,31 @@ public class AssessConfigServiceImpl implements AssessConfigService {
     public void saveLevelScores(AssessConfigDTO.LevelScoreSaveDTO dto) {
         List<AssessConfigDTO.LevelScoreItem> items = dto.getItems() == null ? List.of() : dto.getItems();
         long dim = currentDim();
+        if (items.isEmpty()) {
+            throw new BusinessException(ERR_LEVEL_SCORE, "至少配置一个等级");
+        }
 
-        // 必须正好 1-5 级各一行
-        Map<Integer, BigDecimal> byLevel = new HashMap<>();
-        for (AssessConfigDTO.LevelScoreItem item : items) {
-            if (item.getLevelNo() == null || item.getLevelNo() < 1 || item.getLevelNo() > MAX_LEVEL_NO) {
-                throw new BusinessException(ERR_LEVEL_SCORE, "等级序号必须为 1-5");
+        // 逐行校验：等级号唯一、描述必填、对应的评价唯一、分值有效（不要求等级连续，不要求分值递增）
+        Set<Integer> levelNos = new HashSet<>();
+        Set<Integer> rateValues = new HashSet<>();
+        for (int i = 0; i < items.size(); i++) {
+            AssessConfigDTO.LevelScoreItem item = items.get(i);
+            String row = "第" + (i + 1) + "行";
+            if (item.getLevelNo() == null || item.getLevelNo() < 1) {
+                throw new BusinessException(ERR_LEVEL_SCORE, row + "等级必须为正整数");
             }
-            if (byLevel.containsKey(item.getLevelNo())) {
+            if (!levelNos.add(item.getLevelNo())) {
                 throw new BusinessException(ERR_LEVEL_SCORE, "等级 " + item.getLevelNo() + " 重复");
+            }
+            if (item.getLevelDesc() == null || item.getLevelDesc().isBlank()) {
+                throw new BusinessException(ERR_LEVEL_SCORE, row + "等级描述不能为空");
+            }
+            if (item.getRateValue() == null || item.getRateValue() < 1) {
+                throw new BusinessException(ERR_LEVEL_SCORE, row + "对应的评价必须为正整数");
+            }
+            if (!rateValues.add(item.getRateValue())) {
+                throw new BusinessException(ERR_LEVEL_SCORE,
+                        "对应的评价 " + item.getRateValue() + " 重复（一个评价值只能对应一个等级）");
             }
             if (item.getScore() == null || item.getScore().compareTo(BigDecimal.ZERO) <= 0) {
                 throw new BusinessException(ERR_LEVEL_SCORE, "等级 " + item.getLevelNo() + " 的分值必须大于 0");
@@ -335,30 +349,74 @@ public class AssessConfigServiceImpl implements AssessConfigService {
             if (item.getScore().compareTo(MAX_LEVEL_SCORE) > 0) {
                 throw new BusinessException(ERR_LEVEL_SCORE, "等级 " + item.getLevelNo() + " 的分值不能超过 999.99");
             }
-            byLevel.put(item.getLevelNo(), item.getScore());
         }
-        if (byLevel.size() != MAX_LEVEL_NO) {
-            throw new BusinessException(ERR_LEVEL_SCORE, "等级分值必须同时配置 1-5 级");
-        }
-        // 分值须随等级升高严格递增
-        for (int level = 2; level <= MAX_LEVEL_NO; level++) {
-            if (byLevel.get(level).compareTo(byLevel.get(level - 1)) <= 0) {
-                throw new BusinessException(ERR_LEVEL_SCORE,
-                        "等级 " + level + " 的分值必须大于等级 " + (level - 1) + " 的分值");
+
+        // 引用保护：等级号被 要求等级/页面数据 引用、评价值被 已录入评级 引用时禁止删除或改号
+        List<AssessLevelScore> existing = levelScoreMapper.selectList(new LambdaQueryWrapper<AssessLevelScore>()
+                .eq(AssessLevelScore::getCompanyId, dto.getCompanyId())
+                .eq(AssessLevelScore::getDimensionId, dim));
+        for (AssessLevelScore old : existing) {
+            if (old.getLevelNo() != null && !levelNos.contains(old.getLevelNo())) {
+                int refs = countLevelReferences(dto.getCompanyId(), dim, old.getLevelNo());
+                if (refs > 0) {
+                    throw new BusinessException(ERR_LEVEL_SCORE,
+                            "等级 " + old.getLevelNo() + " 已被人员能力要求或测评页面引用（" + refs + " 处），禁止删除或改号");
+                }
+            }
+            if (old.getRateValue() != null && !rateValues.contains(old.getRateValue())) {
+                int refs = countRatingReferences(dto.getCompanyId(), dim, old.getRateValue());
+                if (refs > 0) {
+                    throw new BusinessException(ERR_LEVEL_SCORE,
+                            "对应的评价 " + old.getRateValue() + " 已有测评评级数据（" + refs + " 条），禁止删除或修改");
+                }
             }
         }
 
         levelScoreMapper.delete(new LambdaQueryWrapper<AssessLevelScore>()
                 .eq(AssessLevelScore::getCompanyId, dto.getCompanyId())
                 .eq(AssessLevelScore::getDimensionId, dim));
-        for (int level = 1; level <= MAX_LEVEL_NO; level++) {
+        for (AssessConfigDTO.LevelScoreItem item : items) {
             AssessLevelScore e = new AssessLevelScore();
             e.setCompanyId(dto.getCompanyId());
             e.setDimensionId(dim);
-            e.setLevelNo(level);
-            e.setScore(byLevel.get(level));
+            e.setLevelNo(item.getLevelNo());
+            e.setLevelDesc(item.getLevelDesc().trim());
+            e.setRateValue(item.getRateValue());
+            e.setScore(item.getScore());
             levelScoreMapper.insert(e);
         }
-        log.info("保存等级分值成功，companyId: {}, dimensionId: {}", dto.getCompanyId(), dim);
+
+        // 被删等级清理孤儿要素等级行（引用已在上面全部拦掉，这里只剩只填过等级要求的行）
+        for (AssessLevelScore old : existing) {
+            if (old.getLevelNo() != null && !levelNos.contains(old.getLevelNo())) {
+                jdbc.update("DELETE FROM uf_ability_element_level WHERE level = ? AND dimension_id = ?",
+                        old.getLevelNo(), dim);
+            }
+        }
+        log.info("保存等级分值成功，companyId: {}, dimensionId: {}, 等级数: {}", dto.getCompanyId(), dim, items.size());
+    }
+
+    /** 等级号引用计数：人员能力要求明细（经要素等级行）、测评页面行（要求等级快照） */
+    private int countLevelReferences(Long companyId, long dim, int levelNo) {
+        Integer n = jdbc.queryForObject(
+                "SELECT (SELECT COUNT(*) FROM uf_user_ability_req_item i" +
+                "          JOIN uf_ability_element_level l ON i.level_id = l.id" +
+                "          WHERE l.level = ? AND l.dimension_id = ?)" +
+                "     + (SELECT COUNT(*) FROM uf_assess_sheet_row r" +
+                "          JOIN uf_assess_sheet s ON s.id = r.sheet_id" +
+                "          WHERE r.required_level_no = ? AND ISNULL(r.dimension_id, s.dimension_id) = ?" +
+                "            AND s.company_id = ?)",
+                Integer.class, levelNo, dim, levelNo, dim, companyId);
+        return n == null ? 0 : n;
+    }
+
+    /** 评价值引用计数：已录入的页面评级明细 */
+    private int countRatingReferences(Long companyId, long dim, int rateValue) {
+        Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM uf_assess_sheet_rating rt" +
+                " JOIN uf_assess_sheet s ON s.id = rt.sheet_id" +
+                " WHERE rt.level_no = ? AND ISNULL(rt.dimension_id, s.dimension_id) = ? AND s.company_id = ?",
+                Integer.class, rateValue, dim, companyId);
+        return n == null ? 0 : n;
     }
 }

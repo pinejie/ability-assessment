@@ -155,9 +155,9 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
+  { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
   { path: '/ability-categories', title: '能力类别管理', icon: '📋' },
   { path: '/ability-elements', title: '能力要素管理', icon: '🎯' },
-  { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
   // { path: '/org-ability-reqs', title: '组织能力要求', icon: '🏢' },
   { path: '/position-ability-reqs', title: '岗位能力要求', icon: '💼' },
   { path: '/assess-periods', title: '年度设置', icon: '📅' },

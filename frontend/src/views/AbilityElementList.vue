@@ -203,7 +203,7 @@
       </template>
     </el-dialog>
 
-    <!-- 等级配置对话框 -->
+    <!-- 等级配置对话框：等级与等级名称来自「能力测评配置-等级分值」，此处仅编辑等级要求 -->
     <el-dialog
       v-model="levelDialogVisible"
       :title="`配置等级 - ${currentElement?.elementName || ''}`"
@@ -211,34 +211,18 @@
       class="level-dialog"
     >
       <div class="level-config-container">
-        <div v-for="levelNum in 5" :key="levelNum" class="level-card">
+        <div v-for="form in levelForms" :key="form.level" class="level-card">
           <div class="level-header">
-            <h3 class="level-title">等级{{ levelNum }}</h3>
-            <span class="level-badge" :class="'level-' + levelNum">{{ getLevelName(levelNum) }}</span>
+            <h3 class="level-title">等级{{ form.level }}</h3>
+            <span class="level-badge" :class="'level-' + form.level">{{ form.levelName }}</span>
           </div>
-          <el-form
-            :model="levelForms[levelNum - 1]"
-            label-width="80px"
-            class="level-form"
-          >
-            <el-form-item label="等级名称">
-              <el-input v-model="levelForms[levelNum - 1].levelName" placeholder="如：知识级" />
-            </el-form-item>
+          <el-form :model="form" label-width="80px" class="level-form">
             <el-form-item label="等级要求">
               <el-input
-                v-model="levelForms[levelNum - 1].levelRequirement"
+                v-model="form.levelRequirement"
                 type="textarea"
                 :rows="4"
                 placeholder="请输入该等级的要求描述"
-              />
-            </el-form-item>
-            <el-form-item label="分数">
-              <el-input-number
-                v-model="levelForms[levelNum - 1].score"
-                :min="0"
-                :max="100"
-                :precision="2"
-                style="width: 100%"
               />
             </el-form-item>
           </el-form>
@@ -261,6 +245,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { pageAbilityElements, pageElementsByCategoryId, createAbilityElement, updateAbilityElement, deleteAbilityElement } from '@/api/abilityElement'
 import { listAbilityCategories } from '@/api/abilityCategory'
 import { listAbilityElementLevelsByElementId, createAbilityElementLevel, updateAbilityElementLevel } from '@/api/abilityElementLevel'
+import { getLevelScores } from '@/api/assessConfig'
 import type { AbilityElementVO } from '@/types/abilityElement'
 import type { AbilityCategoryVO } from '@/types/abilityCategory'
 
@@ -309,9 +294,12 @@ const formRules: FormRules = {
   ],
 }
 
-// 等级配置相关
+// 等级配置相关：等级定义（等级号/描述/分值）唯一来源是「能力测评配置-等级分值」，
+// 弹窗按配置动态渲染，仅「等级要求」按要素编辑；levelName/score 保存时按配置自动回填
 const levelDialogVisible = ref(false)
 const currentElement = ref<AbilityElementVO | null>(null)
+/** 与能力测评配置页一致：暂无"当前登录人所属公司"工具方法，前端固定传入 */
+const COMPANY_ID = 1
 
 interface LevelForm {
   id?: number
@@ -321,24 +309,7 @@ interface LevelForm {
   score: number
 }
 
-const levelForms = reactive<LevelForm[]>([
-  { level: 1, levelName: '知识级', levelRequirement: '', score: 60 },
-  { level: 2, levelName: '规范级', levelRequirement: '', score: 70 },
-  { level: 3, levelName: '技巧级', levelRequirement: '', score: 80 },
-  { level: 4, levelName: '技能级', levelRequirement: '', score: 90 },
-  { level: 5, levelName: '变通级', levelRequirement: '', score: 100 },
-])
-
-const getLevelName = (level: number): string => {
-  const names: Record<number, string> = {
-    1: '知识级',
-    2: '规范级',
-    3: '技巧级',
-    4: '技能级',
-    5: '变通级',
-  }
-  return names[level] || ''
-}
+const levelForms = reactive<LevelForm[]>([])
 
 const loadData = async () => {
   try {
@@ -477,33 +448,28 @@ const resetForm = () => {
 const handleConfigLevels = async (row: AbilityElementVO) => {
   currentElement.value = row
 
-  // 加载已有的等级配置
+  // 等级列表来自当前维度的等级分值配置，已有的等级要求按等级号回填
   try {
-    const levels = await listAbilityElementLevelsByElementId(row.id)
-
-    // 重置表单
-    for (let i = 0; i < 5; i++) {
-      levelForms[i] = {
-        level: i + 1,
-        levelName: getLevelName(i + 1),
-        levelRequirement: '',
-        score: 60 + i * 10,
-      }
+    const [configs, levels] = await Promise.all([
+      getLevelScores(COMPANY_ID),
+      listAbilityElementLevelsByElementId(row.id),
+    ])
+    if (configs.length === 0) {
+      ElMessage.warning('请先在「能力测评配置-等级分值」中配置等级')
+      return
     }
 
-    // 填充已有配置
-    levels.forEach(level => {
-      const index = level.level - 1
-      if (index >= 0 && index < 5) {
-        levelForms[index] = {
-          id: level.id,
-          level: level.level,
-          levelName: level.levelName,
-          levelRequirement: level.levelRequirement || '',
-          score: level.score,
-        }
-      }
-    })
+    levelForms.splice(0, levelForms.length)
+    for (const c of configs) {
+      const existing = levels.find(l => l.level === c.levelNo)
+      levelForms.push({
+        id: existing?.id,
+        level: c.levelNo,
+        levelName: c.levelDesc || '',
+        levelRequirement: existing?.levelRequirement || '',
+        score: c.score ?? 0,
+      })
+    }
 
     levelDialogVisible.value = true
   } catch (error) {

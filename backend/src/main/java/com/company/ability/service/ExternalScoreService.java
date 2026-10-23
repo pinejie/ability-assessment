@@ -131,10 +131,11 @@ public class ExternalScoreService {
         Map<Long, Set<Long>> newElementsPerRes = new HashMap<>();
         Set<String> seenRating = new HashSet<>();
         Set<Long> seenAnnual = new HashSet<>();
+        Set<Integer> allowedRates = allowedRateValues();
         int lineNo = 0;
         for (ExternalScoreDTO.RatingRow r : ratings) {
             lineNo++;
-            lines.add(checkRatingRow(lineNo, r, sheetByRes, refs, seenRating, newElementsPerRes));
+            lines.add(checkRatingRow(lineNo, r, sheetByRes, refs, seenRating, newElementsPerRes, allowedRates));
         }
         for (ExternalScoreDTO.AnnualRow a : annuals) {
             lineNo++;
@@ -195,15 +196,24 @@ public class ExternalScoreService {
         return refs;
     }
 
+    /** 当前维度等级分值配置的评价值集合（「对应的评价」；等级数量动态，导入评级必须命中其一） */
+    private Set<Integer> allowedRateValues() {
+        return new HashSet<>(jdbc.queryForList(
+                "SELECT rate_value FROM uf_assess_level_score" +
+                " WHERE company_id = ? AND dimension_id = ? AND score IS NOT NULL AND rate_value IS NOT NULL",
+                Integer.class, companyId, DimensionContext.getOrDefault()));
+    }
+
     private ExternalScoreVO.LineResult checkRatingRow(int lineNo, ExternalScoreDTO.RatingRow r,
                                                       Map<Long, Map<String, Object>> sheetByRes, SheetRefs refs,
-                                                      Set<String> seenRating, Map<Long, Set<Long>> newElementsPerRes) {
+                                                      Set<String> seenRating, Map<Long, Set<Long>> newElementsPerRes,
+                                                      Set<Integer> allowedRates) {
         String status = "PASS";
         String message = null;
         Map<String, Object> sheet = sheetByRes.get(r.getResourceId());
-        if (r.getLevelNo() == null || r.getLevelNo() < 1 || r.getLevelNo() > 5) {
+        if (r.getLevelNo() == null || !allowedRates.contains(r.getLevelNo())) {
             status = "BLOCK";
-            message = "评级必须为 1–5 整数";
+            message = "评级 " + r.getLevelNo() + " 不在当前维度等级分值配置的「对应的评价」中";
         } else if (sheet == null) {
             status = "BLOCK";
             message = "该年度此维度下无测评页面（未配备人员能力要求）";

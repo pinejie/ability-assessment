@@ -39,13 +39,17 @@ export interface GradeLevelItem {
   upperBound: number | null
 }
 
-// 等级分值（等级序号 1-5 → 分值，用于测评得分计算）
+// 等级分值（等级唯一定义源：等级、描述、对应的评价、分值；等级数量可配置，用于测评得分计算）
 export interface LevelScoreVO {
   levelNo: number
+  levelDesc: string | null
+  rateValue: number | null
   score: number | null
 }
 
 export interface LevelScoreItem {
-  levelNo: number
+  levelNo: number | null
+  levelDesc: string
+  rateValue: number | null
   score: number | null
 }

@@ -77,4 +77,56 @@ class AgentSessionServiceTest {
         assertThat(service.isLiveSession("no-such-session")).isFalse();
         assertThat(service.isLiveSession(null)).isFalse();
     }
+
+    @Test
+    @DisplayName("会话回收（闲置超窗）→ 上传目录连带删除，防弃用文件堆积")
+    void reapDeletesSessionUploadsDir() throws Exception {
+        // idleMinutes=0：任何会话一经巡检即过期回收
+        AgentSessionService expiring = new AgentSessionService(new ObjectMapper(),
+                tmp.resolve("cp2").toString(), "/bin/true", 0, 2, 6);
+        asUser("alice", 11L);
+        String sid = (String) expiring.createSession().get("sessionId");
+        java.nio.file.Path dir = tmp.resolve("cp2/uploads").resolve(sid);
+        java.nio.file.Files.createDirectories(dir);
+        java.nio.file.Files.writeString(dir.resolve("传错的文件.xlsx"), "junk");
+
+        assertThat(expiring.isLiveSession(sid)).isFalse();   // 触发回收
+        assertThat(java.nio.file.Files.exists(dir)).as("回收后上传目录应被删除").isFalse();
+    }
+
+    @Test
+    @DisplayName("巡检：重启后失联的会话目录（过回收窗口）被清理；在册会话目录不动")
+    void housekeepingCleansOrphanUploadDirs() throws Exception {
+        String sid = (String) service.createSession().get("sessionId");
+        java.nio.file.Path liveDir = tmp.resolve("uploads").resolve(sid);
+        java.nio.file.Files.createDirectories(liveDir);
+        java.nio.file.Files.writeString(liveDir.resolve("f.xlsx"), "x");
+
+        java.nio.file.Path orphan = tmp.resolve("uploads").resolve("gone-session");
+        java.nio.file.Files.createDirectories(orphan);
+        java.nio.file.Path of = orphan.resolve("old.xlsx");
+        java.nio.file.Files.writeString(of, "y");
+        var past = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 3L * 3600 * 1000);
+        java.nio.file.Files.setLastModifiedTime(of, past);
+        java.nio.file.Files.setLastModifiedTime(orphan, past);
+
+        service.housekeeping();
+
+        assertThat(java.nio.file.Files.exists(orphan)).as("失联且过窗的目录应被清理").isFalse();
+        assertThat(java.nio.file.Files.exists(liveDir.resolve("f.xlsx"))).as("在册会话目录不受影响").isTrue();
+    }
+
+    @Test
+    @DisplayName("deleteUploads：非法/穿越 sessionId 一律拒绝，不碰 uploads 根")
+    void deleteUploadsPathGuard() throws Exception {
+        java.nio.file.Path keep = tmp.resolve("uploads");
+        java.nio.file.Files.createDirectories(keep);
+        java.nio.file.Files.writeString(keep.resolve("other-session.xlsx"), "data");
+
+        service.deleteUploads("../uploads");          // 穿越
+        service.deleteUploads("a b");                 // 非法字符
+        service.deleteUploads("");                    // 空
+        service.deleteUploads(null);
+        assertThat(java.nio.file.Files.exists(keep.resolve("other-session.xlsx"))).isTrue();
+    }
 }

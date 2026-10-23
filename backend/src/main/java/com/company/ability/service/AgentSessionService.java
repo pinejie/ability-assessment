@@ -99,11 +99,54 @@ public class AgentSessionService {
     void housekeeping() {
         try {
             sessions.values().forEach(this::reap);
+            cleanOrphanUploadDirs();
             cleanOldFiles(uploadsDir);
             cleanOldFiles(sessionsDir);
         } catch (Exception e) {
             log.warn("agent 定时巡检异常: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 生命周期清理的补充：会话登记表在内存中，后端重启后旧会话目录就"失联"（reap 碰不到）。
+     * 巡检时清除"不在会话表中、且最后活动超过回收窗口（maxHours+idleMinutes 双倍缓冲，防误删）"的上传目录。
+     */
+    private void cleanOrphanUploadDirs() {
+        if (!Files.isDirectory(uploadsDir)) {
+            return;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(maxHours).minusMinutes(idleMinutes);
+        try (var dirs = Files.list(uploadsDir)) {
+            dirs.filter(Files::isDirectory)
+                    .filter(d -> !sessions.containsKey(d.getFileName().toString()))
+                    .filter(d -> lastActivity(d).isBefore(cutoff))
+                    .forEach(d -> {
+                        String sid = d.getFileName().toString();
+                        deleteUploads(sid);
+                        log.info("清理失联会话上传目录 {}（会话不在登记表，已过回收窗口）", sid);
+                    });
+        } catch (IOException e) {
+            log.warn("孤儿上传目录扫描失败: {}", e.getMessage());
+        }
+    }
+
+    /** 目录及其内文件的最后修改时间最大值；空目录取目录自身 mtime */
+    private LocalDateTime lastActivity(Path dir) {
+        LocalDateTime max = LocalDateTime.MIN;
+        try (var walk = Files.walk(dir)) {
+            var it = walk.iterator();
+            while (it.hasNext()) {
+                Path p = it.next();
+                LocalDateTime t = Files.getLastModifiedTime(p).toInstant()
+                        .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime();
+                if (t.isAfter(max)) {
+                    max = t;
+                }
+            }
+        } catch (IOException e) {
+            return LocalDateTime.now();   // 读不动就保守跳过本轮
+        }
+        return max == LocalDateTime.MIN ? LocalDateTime.now() : max;
     }
 
     private void cleanOldFiles(Path root) {
@@ -517,7 +560,7 @@ public class AgentSessionService {
         sessions.values().forEach(this::reap);
     }
 
-    /** 闲置 30min / 绝对 2h → CLOSED（联动语义：其 draft 由 AgentBridgeService 同规则作废） */
+    /** 闲置 30min / 绝对 2h → CLOSED（联动语义：其 draft 由 AgentBridgeService 同规则作废；上传文件随之清理） */
     private void reap(Session s) {
         if (s.status == Status.ACTIVE) {
             LocalDateTime now = LocalDateTime.now();
@@ -529,8 +572,35 @@ public class AgentSessionService {
                 if (p != null && p.isAlive()) {
                     p.destroyForcibly();
                 }
-                log.info("agent 会话回收 {} ({})", s.id, idle ? "闲置超时" : "超过时长上限");
+                deleteUploads(s.id);
+                log.info("agent 会话回收 {} ({})，上传目录已清理", s.id, idle ? "闲置超时" : "超过时长上限");
             }
+        }
+    }
+
+    /**
+     * 会话生命周期清理：删除 uploads/{sessionId}/ 整个目录（含传错后被弃用的文件，防堆积）。
+     * 严格限定在 uploads 根目录之下；单次失败仅告警（5 分钟巡检与 90 天兜底会再扫）。
+     * 副作用（已知口径）：会话回收后，仍处 DRAFT 的批次再点"开始解析"会提示文件不存在——重新上传即可。
+     */
+    void deleteUploads(String sessionId) {
+        if (sessionId == null || !sessionId.matches("[0-9a-zA-Z_-]{1,64}")) {
+            return;
+        }
+        Path dir = uploadsDir.resolve(sessionId).normalize();
+        if (!dir.startsWith(uploadsDir) || !Files.isDirectory(dir)) {
+            return;
+        }
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // 留待下次巡检
+                }
+            });
+        } catch (IOException e) {
+            log.warn("清理 agent 会话上传目录失败 {}: {}", sessionId, e.getMessage());
         }
     }
 

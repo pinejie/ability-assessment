@@ -39,17 +39,25 @@
       <el-table-column label="综合评定" width="110">
         <template #default="{ row }">{{ row.gradeName || '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="250" fixed="right">
+      <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button size="small" type="primary" plain :disabled="!row.periodOpen" @click="openEdit(row)">
             录入
           </el-button>
-          <el-button size="small" plain :disabled="!row.periodOpen || coveredOf(row) === 0" @click="doRefill(row)">
-            按上稿重填
-          </el-button>
-          <el-button size="small" type="danger" plain :disabled="!row.periodOpen || coveredOf(row) === 0" @click="doClear(row)">
-            清空
-          </el-button>
+          <el-dropdown trigger="click" :disabled="!row.periodOpen || coveredOf(row) === 0"
+                       @command="(cmd: string) => (cmd === 'refill' ? doRefill(row) : doClear(row))">
+            <el-button size="small" plain style="margin-left: 8px">
+              更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="refill">重新导入</el-dropdown-item>
+                <el-dropdown-item command="clear" divided>
+                  <span style="color: var(--el-color-danger)">清空外部导入</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </template>
       </el-table-column>
       <template #empty>
@@ -58,7 +66,7 @@
     </el-table>
 
     <!-- 录入对话框 -->
-    <el-dialog v-model="editVisible" :title="`外部评分录入 — ${editCtx?.resourceName || ''}（${editCtx?.year}）`" width="760px">
+    <el-dialog v-model="editVisible" :title="`外部评分录入 — ${editCtx?.resourceName || ''}（${editCtx?.year}）`" width="920px">
       <el-alert
         v-if="editCtx && editCtx.elements.length === 0"
         type="info" :closable="false"
@@ -72,25 +80,28 @@
           <span class="hint">年度分与钩子同源落库（usp_assess_annual_score），测评页面只读展示。</span>
         </div>
         <el-table :data="editRows" border size="small">
-          <el-table-column prop="categoryName" label="类别" width="110" />
-          <el-table-column prop="elementName" label="要素" min-width="160" show-overflow-tooltip />
-          <el-table-column label="要求等级" width="90" align="center">
+          <el-table-column prop="categoryName" label="类别" width="100" />
+          <el-table-column prop="elementName" label="要素" min-width="140" show-overflow-tooltip />
+          <el-table-column label="要求等级" width="80" align="center">
             <template #default="{ row }">{{ row.requiredLevelNo ?? '-' }}</template>
           </el-table-column>
-          <el-table-column label="当前外部评级" width="110" align="center">
+          <el-table-column label="当前外部评级" width="165" align="center">
             <template #default="{ row }">
-              <el-tag v-if="row.currentLevelNo" size="small" effect="plain">{{ row.currentLevelNo }} 级</el-tag>
+              <template v-if="row.currentLevelNo">
+                <el-tag size="small" effect="plain">{{ row.currentLevelNo }} 级</el-tag>
+                <span v-if="row.currentOriginal != null" class="hint">（原始分 {{ row.currentOriginal }}）</span>
+              </template>
               <span v-else class="hint">未导入</span>
             </template>
           </el-table-column>
-          <el-table-column label="新评级" width="120" align="center">
+          <el-table-column label="新评级" width="110" align="center">
             <template #default="{ row }">
-              <el-select v-model="row.levelNo" placeholder="不改" clearable size="small">
-                <el-option v-for="n in 5" :key="n" :label="`${n} 级`" :value="n" />
+              <el-select v-model="row.levelNo" placeholder="不改" clearable size="small" @change="onLevelPick(row)">
+                <el-option v-for="opt in levelOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-select>
             </template>
           </el-table-column>
-          <el-table-column label="原始分（选填，仅留存）" min-width="150">
+          <el-table-column label="原始分（选填，仅留存）" min-width="140">
             <template #default="{ row }">
               <el-input-number v-model="row.originalScore" :min="0" :max="100" :precision="2"
                                :disabled="!row.levelNo" controls-position="right" size="small" style="width: 130px" />
@@ -113,8 +124,9 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, Refresh } from '@element-plus/icons-vue'
 import { getPeriods } from '@/api/assessSheet'
+import { getLevelScores } from '@/api/assessConfig'
 import {
   clearExternalImport,
   commitExternalImport,
@@ -130,12 +142,35 @@ import type { ExternalElementCell, ExternalImportRequest, ExternalSheetContext }
 interface EditRow extends ExternalElementCell {
   levelNo: number | null
   originalScore: number | null
+  /** 打开对话框时的已存原始分快照（编辑缓冲不影响展示） */
+  currentOriginal: number | null
 }
 
 const periods = ref<PeriodItem[]>([])
 const year = ref<number | null>(null)
 const contexts = ref<ExternalSheetContext[]>([])
 const loading = ref(false)
+
+/** 与其他配置页一致：暂无"当前登录人所属公司"工具方法，前端固定传入 */
+const COMPANY_ID = 1
+
+/** 可导入的评价值：来自当前维度「等级分值」配置（等级数量动态，不再是固定 1-5） */
+const levelOptions = ref<{ value: number; label: string }[]>([])
+
+async function loadLevelOptions(): Promise<void> {
+  try {
+    const list = await getLevelScores(COMPANY_ID)
+    levelOptions.value = [...list]
+      .filter(v => v.rateValue != null)
+      .sort((a, b) => (a.rateValue as number) - (b.rateValue as number))
+      .map(v => ({
+        value: v.rateValue as number,
+        label: `评价 ${v.rateValue}（等级 ${v.levelNo}${v.levelDesc ? ` ${v.levelDesc}` : ''}）`,
+      }))
+  } catch (e) {
+    console.error('加载等级分值配置失败:', e)
+  }
+}
 
 const editVisible = ref(false)
 const editCtx = ref<ExternalSheetContext | null>(null)
@@ -149,6 +184,7 @@ async function init(): Promise<void> {
     periods.value = await getPeriods()
     const open = periods.value.find(p => p.status === 0)
     year.value = open?.year ?? periods.value[0]?.year ?? null
+    await loadLevelOptions()
     await loadList()
   } finally {
     loading.value = false
@@ -196,12 +232,16 @@ async function openEdit(ctx: ExternalSheetContext): Promise<void> {
     const fresh = await getExternalContext(ctx.year, ctx.resourceId)
     editCtx.value = fresh
     editRows.splice(0, editRows.length)
-    fresh.elements.forEach(el => editRows.push({ ...el, levelNo: null, originalScore: null }))
+    fresh.elements.forEach(el => editRows.push({ ...el, levelNo: null, originalScore: el.originalScore ?? null, currentOriginal: el.originalScore ?? null }))
     editAnnual.value = undefined
     editVisible.value = true
   } catch (e) {
     ElMessage.error(errText(e))
   }
+}
+
+function onLevelPick(row: EditRow): void {
+  if (row.levelNo != null && row.originalScore == null) row.originalScore = row.currentOriginal
 }
 
 function buildRequest(): ExternalImportRequest | null {
@@ -255,13 +295,13 @@ async function save(): Promise<void> {
 async function doRefill(ctx: ExternalSheetContext): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `将 ${ctx.resourceName} 的最后一次成功导入稿按当前评价人名单重放（客户名单变化后恢复出分）。确认？`,
-      '按上稿重填', { type: 'warning' },
+      `按当前评价人名单，将 ${ctx.resourceName} 最后一次成功导入的数值原样重新写入（分值不变，客户名单变化后用于恢复出分）。确认？`,
+      '重新导入', { type: 'warning' },
     )
     const result = await refillExternalImport(ctx.year, ctx.resourceId)
     const p = result.persons[0]
-    if (p?.success) ElMessage.success(p.message || '重填完成')
-    else ElMessage.error(p?.message || '重填失败')
+    if (p?.success) ElMessage.success(p.message || '重新导入完成')
+    else ElMessage.error(p?.message || '重新导入失败')
     await loadList()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error(errText(e))

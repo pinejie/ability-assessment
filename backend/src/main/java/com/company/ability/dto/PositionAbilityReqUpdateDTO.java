@@ -1,6 +1,7 @@
 package com.company.ability.dto;
 
 import lombok.Data;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.util.List;
 
@@ -17,6 +18,7 @@ public class PositionAbilityReqUpdateDTO {
 
     private Long jobTitleId;
 
+    @Valid
     private List<PositionAbilityReqCreateDTO.ElementItem> items;
 
     private String description;

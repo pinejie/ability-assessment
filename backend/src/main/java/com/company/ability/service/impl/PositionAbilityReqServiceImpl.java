@@ -25,8 +25,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -39,6 +44,8 @@ public class PositionAbilityReqServiceImpl
     extends ServiceImpl<PositionAbilityReqMapper, PositionAbilityReq>
     implements PositionAbilityReqService {
 
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
+
     private final AbilityElementService abilityElementService;
     private final PositionAbilityReqItemService itemService;
 
@@ -48,6 +55,9 @@ public class PositionAbilityReqServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createPositionAbilityReq(PositionAbilityReqCreateDTO dto) {
+        validateItems(dto.getItems());
+        checkDuplicatePosition(dto.getDepartmentId(), dto.getJobTitleId(), null);
+
         // 创建主记录
         PositionAbilityReq req = new PositionAbilityReq();
         req.setDepartmentId(dto.getDepartmentId());
@@ -68,6 +78,7 @@ public class PositionAbilityReqServiceImpl
             item.setReqId(req.getId());
             item.setCategoryId(elementItem.getCategoryId());
             item.setElementId(elementItem.getElementId());
+            item.setWeight(elementItem.getWeight());
             items.add(item);
         }
 
@@ -91,6 +102,7 @@ public class PositionAbilityReqServiceImpl
 
         // 更新主记录
         BeanUtils.copyProperties(dto, req);
+        checkDuplicatePosition(req.getDepartmentId(), req.getJobTitleId(), req.getId());
         updateById(req);
 
         // 删除旧的明细
@@ -100,6 +112,7 @@ public class PositionAbilityReqServiceImpl
 
         // 创建新的明细
         if (dto.getItems() != null && !dto.getItems().isEmpty()) {
+            validateItems(dto.getItems());
             List<PositionAbilityReqItem> items = new ArrayList<>();
             for (PositionAbilityReqCreateDTO.ElementItem elementItem : dto.getItems()) {
                 AbilityElement element = abilityElementService.getById(elementItem.getElementId());
@@ -111,6 +124,7 @@ public class PositionAbilityReqServiceImpl
                 item.setReqId(dto.getId());
                 item.setCategoryId(elementItem.getCategoryId());
                 item.setElementId(elementItem.getElementId());
+                item.setWeight(elementItem.getWeight());
                 items.add(item);
             }
 
@@ -188,6 +202,51 @@ public class PositionAbilityReqServiceImpl
         return convertToVO(req);
     }
 
+    /**
+     * 岗位权重校验：权重只到能力类别。
+     * - 同一要素不能重复配置；
+     * - 同一类别下的所有要素必须携带同一个权重（该权重作用于类别内每个要素，不按要素数均分）；
+     * - 每个类别权重 0~100，不要求岗位合计 100（岗位可能只选部分全局类别）。
+     * 全局类别权重只是带出模板，落到岗位后以岗位配置为准。
+     */
+    private void validateItems(List<PositionAbilityReqCreateDTO.ElementItem> items) {
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException("能力要素列表不能为空");
+        }
+        Set<Long> elementIds = new HashSet<>();
+        Map<Long, BigDecimal> categoryWeight = new HashMap<>();
+        for (PositionAbilityReqCreateDTO.ElementItem item : items) {
+            if (!elementIds.add(item.getElementId())) {
+                throw new BusinessException("同一能力要素不能重复配置，ID: " + item.getElementId());
+            }
+            BigDecimal weight = item.getWeight();
+            if (weight == null) {
+                throw new BusinessException("能力类别权重不能为空，类别ID: " + item.getCategoryId());
+            }
+            if (weight.compareTo(BigDecimal.ZERO) < 0 || weight.compareTo(HUNDRED) > 0) {
+                throw new BusinessException("能力类别权重必须在 0~100 之间，类别ID: " + item.getCategoryId());
+            }
+            BigDecimal existing = categoryWeight.putIfAbsent(item.getCategoryId(), weight);
+            if (existing != null && existing.compareTo(weight) != 0) {
+                throw new BusinessException("同一能力类别下的要素权重必须一致，类别ID: " + item.getCategoryId());
+            }
+        }
+    }
+
+    /** 同一维度下「部门 + 岗位」只能有一份岗位能力要求，避免算分取权重时命中多份配置 */
+    private void checkDuplicatePosition(Long departmentId, Long jobTitleId, Long excludeId) {
+        if (departmentId == null || jobTitleId == null) {
+            return;
+        }
+        LambdaQueryWrapper<PositionAbilityReq> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(PositionAbilityReq::getDepartmentId, departmentId)
+               .eq(PositionAbilityReq::getJobTitleId, jobTitleId)
+               .ne(excludeId != null, PositionAbilityReq::getId, excludeId);
+        if (count(wrapper) > 0) {
+            throw new BusinessException("该部门+岗位已配置能力要求，请直接编辑现有配置");
+        }
+    }
+
     private PositionAbilityReqVO convertToVO(PositionAbilityReq req) {
         PositionAbilityReqVO vo = new PositionAbilityReqVO();
         BeanUtils.copyProperties(req, vo);
@@ -227,6 +286,7 @@ public class PositionAbilityReqServiceImpl
                 itemVO.setId(item.getId());
                 itemVO.setCategoryId(item.getCategoryId());
                 itemVO.setElementId(item.getElementId());
+                itemVO.setWeight(item.getWeight());
 
                 // 查询类别名称
                 try {

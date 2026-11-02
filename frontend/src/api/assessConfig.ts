@@ -18,11 +18,11 @@ export const getAbilityWeights = (companyId: number): Promise<AbilityWeightVO[]>
 export const saveAbilityWeights = (companyId: number, items: AbilityWeightItem[]): Promise<void> =>
   request.put('/assess-config/ability-weights', { companyId, items })
 
-/** 查询测评对象权重 */
+/** 查询测评人权重 */
 export const getAssessorWeights = (companyId: number): Promise<AssessorWeightVO[]> =>
   request.get('/assess-config/assessor-weights', { params: { companyId } })
 
-/** 保存测评对象权重（整体保存） */
+/** 保存测评人权重（整体保存） */
 export const saveAssessorWeights = (companyId: number, items: AssessorWeightItem[]): Promise<void> =>
   request.put('/assess-config/assessor-weights', { companyId, items })
 

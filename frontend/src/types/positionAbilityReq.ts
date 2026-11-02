@@ -5,6 +5,7 @@ export interface PositionAbilityReqItemVO {
   categoryName: string
   elementId: number
   elementName: string
+  weight: number | null
 }
 
 // 岗位能力要求 VO
@@ -27,6 +28,7 @@ export interface PositionAbilityReqCreateDTO {
   items: {
     categoryId: number
     elementId: number
+    weight: number
   }[]
   description?: string
 }
@@ -39,6 +41,7 @@ export interface PositionAbilityReqUpdateDTO {
   items?: {
     categoryId: number
     elementId: number
+    weight: number
   }[]
   description?: string
 }

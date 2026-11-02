@@ -122,7 +122,7 @@ ability-assessment/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 │
-├── sql/                              # 建表/运维脚本 01-30（按序执行；22 默认维度清理，23 要素「流程需评价」开关列，25 外部评分导入：source/original_score、导入稿快照表、usp_assess_external_score/_clear、recalc v5，30 等级分值动态化：level_desc/rate_value 列、评级 CHECK 放宽、usp_assess_rate/recalc v6/外部导入按「对应的评价」匹配）
+├── sql/                              # 建表/运维脚本 01-32（按序执行；22 默认维度清理，23 要素「流程需评价」开关列，25 外部评分导入：source/original_score、导入稿快照表、usp_assess_external_score/_clear、recalc v5，30 等级分值动态化：level_desc/rate_value 列、评级 CHECK 放宽、usp_assess_rate/recalc v6/外部导入按「对应的评价」匹配，31 岗位权重列：uf_position_ability_req_item.weight / uf_assess_sheet_row.element_weight、recalc v7（要素级口径，已被 32 修正），32 岗位能力类别权重：明细权重重置为全局类别权重、recalc v8）
 ├── docs/                             # 项目内补充文档
 ├── CLAUDE.md                         # 本文件
 └── README.md
@@ -141,7 +141,7 @@ ability-assessment/
 | 组织能力要求 | `/api/v1/org-ability-reqs` | 组织能力要求（菜单已隐藏） | 按部门配置能力要求 |
 | 岗位能力要求 | `/api/v1/position-ability-reqs` | 岗位能力要求 | 按部门 + 岗位配置能力要求 |
 | 人员能力要求 | `/api/v1/user-ability-reqs-new` | 人员能力要求 | 按人员配置，记录岗位来源，被引用时禁止删除 |
-| 能力测评配置 | `/api/v1/assess-config` | 能力测评配置 | 能力类型权重、测评对象权重、等级标准、等级分值 |
+| 能力测评配置 | `/api/v1/assess-config` | 能力测评配置 | 能力类型权重、测评人权重、等级标准、等级分值 |
 | 外部评分导入 | `/api/v1/external/*` | 外部评分导入 | 非流程要素评级与年度分导入通道：preview/commit（要素级 upsert）、refill 按上稿重填、clear 显式清空；全部经存储过程落库 |
 | 泛微组织数据 | `/api/v1/sub-companies`、`/departments`、`/job-titles`、`/resources`、`/search/*` 等 | 各选择器组件 | 通过 `JdbcTemplate` 只读查询泛微 `Hr*` 表 |
 | 认证（SSO） | `/api/v1/auth/sso/login`、`/sso/callback`、`/me`、`/logout` | SsoCallback/SsoError 页、路由守卫 | 泛微 OAuth2 单点登录，JWT 签发校验（详见 SSO 一节）；`/me` 含 `admin` 角色标记 |
@@ -152,7 +152,7 @@ ability-assessment/
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET / PUT | `/ability-weights` | 能力类型权重（粒度：能力类别） |
-| GET / PUT | `/assessor-weights` | 测评对象权重 |
+| GET / PUT | `/assessor-weights` | 测评人权重 |
 | GET / PUT | `/grade-levels` | 等级标准 |
 | GET / PUT | `/level-scores` | 等级分值（等级唯一定义源：等级/描述/对应的评价/分值，等级数量动态） |
 
@@ -192,9 +192,10 @@ ability-assessment/
   - 维度与授权：`uf_assess_dimension` / `uf_assess_dimension_auth`（授权对象=分部/人员；**无授权行=仅管理员**［2026-10-22 语义，原为所有人可用］；配置后人员 ID 命中，或人员分部**沿上级链**命中授权分部；分部授权只提供**一级分部**（选择器平铺多选，数据源 `/api/v1/sub-companies/level1`；勾一级=覆盖整条下级分支，服务端链匹配实现，见 14.7/14.8）。接口 `/api/v1/assess-dimensions`。零租户普通用户前端显示引导页（不发业务请求）。详见 `project/能力测评/02-架构设计.md` 第十三、十四节（14.6~14.8）。
 - **客户评价开关（UI 名「需客户评价」）：** `uf_ability_element.allow_client_assess`（1-允许/0-不允许）。不允许的要素客户分按 **0** 计入加权总分（做法 B），落点：`usp_assess_recalc` v4 与 `AssessArchiveServiceImpl`。
 - **年度唯一激活（2026-10-22）：** 同一公司+维度下「进行中」（status=0）年度至多一个。`AssessPeriodService` 的 create（新增即激活）与 changeStatus(0)（激活）都会**先自动关闭**同维度其他进行中年度（复用关闭链路：status=1 + `reportService.freezePeriod` 报告快照冻结，先关后开以兼容唯一索引），再打开目标；库层兜底为筛选唯一索引 `UX_assess_period_active`（sql/24）。前端年度页在新增/激活确认框中列出将被自动关闭的年度。
-- **流程需评价开关（2026-10-22，10-23 展示口径修订）：** `uf_ability_element.assess_in_flow`（1-需评价/0-不需评价，`sql/23`）。不需评价的要素：人员要求仍可选并记要求等级（任职标准），**不进泛微流程评价**——同步服务为其**生成页面行但 `active=0`**（2026-10-23 起；此前免评要素不建行，导致汇总/报告不可见且外部导入无挂靠），需评价行 `active=1`；`n_c`/标准分/完整性校验只数计分口径行（`usp_assess_recalc` v5：active=1 ∪ 有 EXTERNAL 评级）；归档（`AssessArchiveServiceImpl.loadAssessInFlow`）同口径过滤；全免评的需求拒绝同步/归档。**测评汇总明细与个人报告展示要求内免评要素**（`AssessSheetQueryService.detail`）：未导入外部评级的免评行标 `nonFlow`，显示要求等级与**当前类别权重**（`uf_assess_weight_ability`，不取行上残值），得分/标准分按 null 掩蔽（读侧兜底；写侧同步已清空停用行冗余分值列——有 EXTERNAL 评级的停用行不清，避免重算前空白窗口），不参与客户合计与报告类别汇总（纯免评类别在报告中为占位行，分值"—"，verify 只核对含计分行的类别）；前端汇总弹窗以「非流程要素」标签展示。**外部导入标签判据**=有 EXTERNAL 评级且（免评 flag 或行停用），与 recalc v5 的 is_ext 同向；**不展示**"flag 改回需评价但未重同步"的 active=0 无外部评级行（沿用旧口径，防残留值破坏合计一致性）。联动：`assess_in_flow=0` 时服务端强制 `allow_client_assess=0`（`AbilityElementServiceImpl.normalizeAssessFlags`，非报错）。详见 `project/能力测评/02-架构设计.md` 第十五节。
+- **流程需评价开关（2026-10-22，10-23 展示口径修订）：** `uf_ability_element.assess_in_flow`（1-需评价/0-不需评价，`sql/23`）。不需评价的要素：人员要求仍可选并记要求等级（任职标准），**不进泛微流程评价**——同步服务为其**生成页面行但 `active=0`**（2026-10-23 起；此前免评要素不建行，导致汇总/报告不可见且外部导入无挂靠），需评价行 `active=1`；`n_c`/标准分/完整性校验只数计分口径行（`usp_assess_recalc` v5：active=1 ∪ 有 EXTERNAL 评级）；归档（`AssessArchiveServiceImpl.loadAssessInFlow`）同口径过滤；全免评的需求拒绝同步/归档。**测评汇总明细与个人报告展示要求内免评要素**（`AssessSheetQueryService.detail`）：未导入外部评级的免评行标 `nonFlow`，显示要求等级、权重列留空（岗位口径不可得），得分/标准分按 null 掩蔽（读侧兜底；写侧同步已清空停用行冗余分值列——有 EXTERNAL 评级的停用行不清，避免重算前空白窗口），不参与客户合计与报告类别汇总（纯免评类别在报告中为占位行，分值"—"，verify 只核对含计分行的类别）；前端汇总弹窗以「非流程要素」标签展示。**外部导入标签判据**=有 EXTERNAL 评级且（免评 flag 或行停用），与 recalc v5 的 is_ext 同向；**不展示**"flag 改回需评价但未重同步"的 active=0 无外部评级行（沿用旧口径，防残留值破坏合计一致性）。联动：`assess_in_flow=0` 时服务端强制 `allow_client_assess=0`（`AbilityElementServiceImpl.normalizeAssessFlags`，非报错）。详见 `project/能力测评/02-架构设计.md` 第十五节。
 - **外部评分导入（2026-10-22，sql/25）：** `assess_in_flow=0` 的要素可经外部通道导入评级：`uf_assess_sheet_rating` 加 `source`（FLOW/EXTERNAL）与 `original_score`（原始分留存，不参与计算）；导入按**要素级 upsert** 写入（只覆盖本批人×要素，删除仅走显式 clear），每个要素展开到当前 领导/自评/全部客户；`usp_assess_recalc` **v5** 将「active=0 但有 EXTERNAL 评级」的行纳入标准分/完整性/客户计数（做法 B 置 0 对 EXTERNAL 要素豁免；无 EXTERNAL 评级的页面与 v4.1 逐位一致）。Java 侧同口径落点：`AssessArchiveServiceImpl`（EXTERNAL 评级并入归档载荷）、`AssessSheetQueryService`（明细展示外部行与原始分）。导入稿快照表 `uf_assess_external_import_log` 支撑"按上稿重填"与审计。方案：`project/能力测评/10-外部评分导入与Agent交互方案.md`。**注意：sql/25 尚未应用到 ecology 库（MCP 通道只读），应用前本功能接口会报对象名无效。**
-- **等级分值动态化（2026-10-23，sql/30）：** `uf_assess_level_score` 升级为等级唯一定义源，四字段（等级号 level_no、描述 level_desc、对应的评价 rate_value、分值 score）全可编辑、行数动态（3/5/7 级皆可）。取分双键：**要求等级/标准分按等级号**匹配；**评价人评级按「对应的评价」**匹配（`usp_assess_recalc` v6、`usp_assess_rate`、`usp_assess_external_score` 同步改造；评级 CHECK 由 1-5 放宽为 ≥1）。要素「配置等级」弹窗不再写死 5 级：等级号与等级名称只读取自配置，仅「等级要求」可编辑，分数与等级名称输入框删除（`uf_ability_element_level.score` 本就无计算引用，保存时按配置自动回填）。引用保护（`AssessConfigServiceImpl.saveLevelScores`）：等级号被人员要求/页面行引用、评价值被已有评级引用时禁止删除/改号（描述、分值随便改）；未引用等级删除时清理其孤儿要素等级行。分值递增校验按业务决议**移除**；总分公式仍为 分值÷10×权重，最高档分值应取 10 以保持"满分=权重"语义。**泛微侧评价档位（跨系统）待议**：现流程回传仍为 1-5，等级分值配置的评价号超出 1-5 时，须待泛微评价控件同步改造后才能用于流程。方案：`project/能力测评/12-等级分值动态化.md`。**注意：sql/30 尚未应用到 ecology 库（MCP 通道只读），必须先执行 sql/30 再重启后端，否则等级分值配置接口报列名无效。**
+- **等级分值动态化（2026-10-23，sql/30）：** `uf_assess_level_score` 升级为等级唯一定义源，四字段（等级号 level_no、描述 level_desc、对应的评价 rate_value、分值 score）全可编辑、行数动态（3/5/7 级皆可）。取分双键：**要求等级/标准分按等级号**匹配；**评价人评级按「对应的评价」**匹配（`usp_assess_recalc` v6、`usp_assess_rate`、`usp_assess_external_score` 同步改造；评级 CHECK 由 1-5 放宽为 ≥1）。要素「配置等级」弹窗不再写死 5 级：等级号与等级名称只读取自配置，仅「等级要求」可编辑，分数与等级名称输入框删除（`uf_ability_element_level.score` 本就无计算引用，保存时按配置自动回填）。引用保护（`AssessConfigServiceImpl.saveLevelScores`）：等级号被人员要求/页面行引用、评价值被已有评级引用时禁止删除/改号（描述、分值随便改）；未引用等级删除时清理其孤儿要素等级行。分值递增校验按业务决议**移除**；总分公式仍为 分值÷10×权重，最高档分值应取 10 以保持"满分=权重"语义。**泛微侧评价档位（跨系统）待议**：现流程回传仍为 1-5，等级分值配置的评价号超出 1-5 时，须待泛微评价控件同步改造后才能用于流程。方案：`project/能力测评/12-等级分值动态化.md`。**sql/30 已于 2026-11-02 核查为已应用到 ecology 库（level_desc/rate_value 列与 recalc v6 均存在）。**
+- **岗位能力类别权重（2026-11-02，sql/31 + sql/32）：** 能力类型权重从「全局类别级」带到岗位，但**权重仍然只到能力类别**：岗位选定类别下的若干要素后，为该类别配一个权重，类别内每个要素都使用完整类别权重，**不按要素数均分**。`uf_position_ability_req_item.weight`（%）存岗位类别权重（同类别每条明细冗余同值，服务层强制校验一致），由全局 `uf_assess_weight_ability` 原样带出后可手工调整；岗位只选部分类别时**不要求合计 100**（业务选项 A）。算分口径 **要素分 = 等级分值 ÷ 10 × 岗位类别权重**，岗位未配置该类别时回退**全局类别权重**（无除法、无均分；两者皆缺报配置不完整）。落点：`usp_assess_recalc` v8（按页面头 部门+岗位+维度、`pi.category_id = r.category_id` 匹配岗位明细，写 `uf_assess_sheet_row.element_weight`）、`AssessSheetSyncService.writeBaseScores`、`AssessArchiveServiceImpl`（岗位类别权重优先 + 全局回退，快照键 `positionCategoryWeights`）、`AssessSheetQueryService`（汇总行返回 elementWeight，权重列与类别列一起合并）、`AssessReportService`（类别权重 = 该类别首条计分行权重，不再求和）。前端：岗位能力要求弹窗按类别输入权重、要素只勾选、合计仅参考、「按全局权重带出」；能力测评配置「测评对象权重」更名为「测评人权重」。方案：`project/能力测评/13-岗位能力类别权重.md`。**sql/31、sql/32 均已应用到 ecology 库（2026-11-02 核查）；当前存储过程为 v8。**
 
 ### 认证与权限（2026-10-21 已落地）
 
@@ -226,7 +227,7 @@ ability-assessment/
 | uf_user_ability_req_item | 人员能力要求明细 |
 | uf_score_weight | 评分权重（已废弃，见上文） |
 | uf_assess_weight_ability | 能力测评：能力类型权重 |
-| uf_assess_weight_assessor | 能力测评：测评对象权重 |
+| uf_assess_weight_assessor | 能力测评：测评人权重 |
 | uf_assess_grade_level | 能力测评：等级标准 |
 | uf_assess_level_score | 能力测评：等级分值（等级唯一定义源：level_no/level_desc/rate_value/score，数量动态，`sql/30`） |
 

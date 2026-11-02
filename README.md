@@ -6,7 +6,7 @@
 
 - **能力体系维护**：能力类别、能力要素、要素等级的增删改查
 - **能力要求配置**：岗位能力要求、人员能力要求（记录岗位来源，被引用时禁止删除）
-- **能力测评配置**：能力类型权重、测评对象权重、等级标准、等级分值
+- **能力测评配置**：能力类型权重、测评人权重、等级标准、等级分值
 - **泛微组织数据**：分公司、部门、岗位、人员的只读选择器（直接查询泛微 `Hr*` 表）
 
 ## 技术栈
@@ -30,7 +30,7 @@
 ability-assessment/
 ├── backend/     # 后端（Spring Boot）
 ├── frontend/    # 前端（Vue 3）
-├── sql/         # 建表脚本（按 01 → 08 顺序执行）
+├── sql/         # 建表/运维脚本（按 01 → 32 顺序执行）
 ├── docs/        # 补充文档
 ├── CLAUDE.md    # 项目指令（面向 Claude Code）
 └── README.md
@@ -57,10 +57,14 @@ sql/04-create-position-ability-req.sql
 sql/05-create-user-ability-req.sql
 sql/07-create-assess-config.sql
 sql/08-create-assess-level-score.sql
+# ……09 ~ 30 为后续迭代脚本，按编号顺序执行
+sql/31-position-element-weight.sql   # 岗位权重列 + 测评页面权重快照列（recalc v7）
+sql/32-category-weight.sql           # 岗位能力类别权重修正：重置明细权重为全局类别权重（recalc v8）
 ```
 
 > `sql/06-create-score-weight.sql` 为已废弃的旧评分权重表，新部署可不执行。
-> 代码中还使用了 `uf_position_ability_req_new`、`uf_position_ability_req_item`、`uf_ability_element_level`，但目前 `sql/` 中没有对应脚本，需要补充。
+> 代码中还使用了 `uf_position_ability_req_new`、`uf_position_ability_req_item`、`uf_ability_element_level`，旧脚本未完整覆盖，以实际库结构与后续迁移脚本为准。
+> `sql/30`（等级分值动态化）、`sql/31`（岗位权重列）、`sql/32`（岗位类别权重口径修正）含列变更/存储过程重建，执行前请先备份并确认没有年度关闭操作在跑。
 
 ### 2. 配置后端
 

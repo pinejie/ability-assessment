@@ -53,7 +53,7 @@
       <el-table :data="tableRows" border size="small" :row-class-name="rowClassName" class="score-table">
         <el-table-column prop="categoryName" label="类别" width="120" align="center" />
         <el-table-column label="权重(%)" width="90" align="right">
-          <template #default="{ row }">{{ fmtInt(row.weight) }}</template>
+          <template #default="{ row }">{{ fmt(row.weight) }}</template>
         </el-table-column>
         <el-table-column label="标准分" width="100" align="right">
           <template #default="{ row }">{{ fmt(row.standardScore) }}</template>
@@ -156,7 +156,6 @@ const title = computed(() =>
 
 const fmt = (v: number | null | undefined): string => (v == null ? '—' : Number(v).toFixed(2))
 const fmtOr = (v: number | null | undefined): string => (v == null ? '未完成' : Number(v).toFixed(2))
-const fmtInt = (v: number | null | undefined): string => (v == null ? '—' : String(Math.round(v)))
 
 const gradeTagType = (name: string): 'danger' | 'warning' | 'success' | 'primary' | 'info' => {
   const order = report.value?.gradeBands.map((b) => b.levelName) ?? []
@@ -185,7 +184,9 @@ const tableRows = computed<Array<ReportCategory & { isTotal?: boolean }>>(() => 
   const t = report.value.total
   const totalRow = {
     categoryName: '合计',
-    weight: report.value.categories.reduce((s, c) => s + (c.weight ?? 0), 0),
+    // 类别权重是「每个类别各自的权重」，岗位可只选部分类别、合计不必为 100，
+    // 合计行不求和，避免把 75/120 这类正常值误显示成配置错误
+    weight: null,
     standardScore: t.standardScore,
     leaderScore: t.leaderScore,
     clientScore: t.clientScore,

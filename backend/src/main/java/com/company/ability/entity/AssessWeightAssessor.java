@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 测评对象权重配置（LEADER / CLIENT / SELF）
+ * 测评人权重配置（LEADER / CLIENT / SELF）
  */
 @Data
 @TableName("uf_assess_weight_assessor")

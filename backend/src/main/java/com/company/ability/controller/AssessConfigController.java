@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * 能力测评配置控制器
  */
-@Tag(name = "能力测评配置", description = "能力类型权重、测评对象权重、等级标准")
+@Tag(name = "能力测评配置", description = "能力类型权重、测评人权重、等级标准")
 @RestController
 @RequestMapping("/api/v1/assess-config")
 @RequiredArgsConstructor
@@ -36,13 +36,13 @@ public class AssessConfigController {
         return Result.success("保存成功", null);
     }
 
-    @Operation(summary = "查询测评对象权重")
+    @Operation(summary = "查询测评人权重")
     @GetMapping("/assessor-weights")
     public Result<List<AssessConfigVO.AssessorWeightVO>> getAssessorWeights(@RequestParam Long companyId) {
         return Result.success(assessConfigService.getAssessorWeights(companyId));
     }
 
-    @Operation(summary = "保存测评对象权重")
+    @Operation(summary = "保存测评人权重")
     @PutMapping("/assessor-weights")
     public Result<Void> saveAssessorWeights(@Valid @RequestBody AssessConfigDTO.AssessorWeightSaveDTO dto) {
         assessConfigService.saveAssessorWeights(dto);

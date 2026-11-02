@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS uf_position_ability_req_new (
     department_id BIGINT,
     job_title_id BIGINT NOT NULL,
     description VARCHAR(500),
+    dimension_id BIGINT DEFAULT 1,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -82,6 +83,8 @@ CREATE TABLE IF NOT EXISTS uf_position_ability_req_item (
     req_id BIGINT NOT NULL,
     category_id BIGINT,
     element_id BIGINT NOT NULL,
+    weight DECIMAL(10,4),
+    dimension_id BIGINT DEFAULT 1,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -270,6 +273,7 @@ CREATE TABLE IF NOT EXISTS uf_assess_sheet_row (
     active INT DEFAULT 1,
     dimension_id BIGINT DEFAULT 1,
     category_weight DECIMAL(10,4),
+    element_weight DECIMAL(10,4),
     standard_score DECIMAL(10,4),
     leader_level_no INT,
     leader_score DECIMAL(10,4),

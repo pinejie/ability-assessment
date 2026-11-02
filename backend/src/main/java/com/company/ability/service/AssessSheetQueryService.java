@@ -193,6 +193,9 @@ public class AssessSheetQueryService {
                 " OR (r.active = 0 AND COALESCE(e0.assess_in_flow, 1) = 0 AND r.element_id IN (" + inClause + "))";
 
         List<Object> args = new ArrayList<>();
+        // 占位符按 SQL 文本顺序：标量子查询(职位维度、明细维度) → wa(公司、维度) → ext(页面) → 主查询(页面)
+        args.add(dimensionId);
+        args.add(dimensionId);
         args.add(companyId);
         args.add(dimensionId);
         args.add(sheetId);
@@ -200,9 +203,18 @@ public class AssessSheetQueryService {
         args.addAll(reqIds);
 
         String sql =
-                "SELECT r.element_id, r.category_name, r.category_weight, r.element_name, r.required_level_no, r.standard_score," +
+                "SELECT r.element_id, r.category_name, r.category_weight, r.element_weight, r.element_name, r.required_level_no, r.standard_score," +
                 "       r.leader_level_no, r.leader_score, r.client_avg_score, r.self_level_no, r.self_score," +
                 "       wa.weight AS config_weight," +
+                // 类别权重展示口径：岗位类别权重优先，缺失回退全局（与 recalc v8 一致）
+                "       ISNULL((SELECT TOP 1 pi.weight" +
+                "         FROM uf_assess_sheet s2" +
+                "         JOIN uf_position_ability_req_new pr ON pr.department_id = s2.department_id" +
+                "           AND pr.job_title_id = s2.job_title_id AND pr.dimension_id = ?" +
+                "         JOIN uf_position_ability_req_item pi ON pi.req_id = pr.id AND pi.dimension_id = ?" +
+                "           AND pi.category_id = r.category_id" +
+                "         WHERE s2.id = r.sheet_id AND pi.weight IS NOT NULL" +
+                "         ORDER BY pr.update_time DESC, pr.id DESC, pi.id DESC), wa.weight) AS effective_weight," +
                 // 外部导入标签：有 EXTERNAL 评级且行不在流程正常在用状态（免评 flag 或已停用）——
                 // 与 recalc v5 的 is_ext 判定同向（flag 改回 1 未重同步的 active=1 行也带标签，来源不失真）
                 "       CASE WHEN ext.element_id IS NOT NULL AND (COALESCE(e0.assess_in_flow, 1) = 0 OR r.active = 0)" +
@@ -214,6 +226,8 @@ public class AssessSheetQueryService {
                 " LEFT JOIN uf_ability_category c0 ON c0.id = r.category_id" +
                 " LEFT JOIN uf_assess_weight_ability wa ON wa.category_id = r.category_id" +
                 "   AND wa.company_id = ? AND wa.dimension_id = ?" +
+                // 免评/停用行的 element_weight 在写侧已清空，这里按页面头部门+岗位补出当前岗位类别权重，
+                // 避免同类别合并单元格的权重与计分行实际使用的岗位权重不一致
                 " LEFT JOIN (SELECT element_id, MAX(original_score) AS original_score FROM uf_assess_sheet_rating" +
                 "            WHERE sheet_id = ? AND source = 'EXTERNAL' GROUP BY element_id) ext ON ext.element_id = r.element_id" +
                 " WHERE r.sheet_id = ? AND (r.active = 1 OR ext.element_id IS NOT NULL" + nonFlowBranch + ")" +
@@ -232,8 +246,10 @@ public class AssessSheetQueryService {
         row.setElementName(rs.getString("element_name"));
         row.setRequiredLevelNo(rs.getObject("required_level_no") == null ? null : rs.getInt("required_level_no"));
         if (nonFlow) {
-            // 未计分的免评行：分值掩蔽；类别权重取当前配置（行上停用前残留值不可信）
+            // 未计分的免评行：分值掩蔽；权重按当前生效类别权重展示（岗位优先、缺失回退全局），
+            // 与同类别计分行的岗位权重口径保持一致
             row.setCategoryWeight(rs.getBigDecimal("config_weight"));
+            row.setElementWeight(rs.getBigDecimal("effective_weight"));
             row.setStandardScore(null);
             row.setLeaderLevelNo(null);
             row.setLeaderScore(null);
@@ -242,6 +258,7 @@ public class AssessSheetQueryService {
             row.setSelfScore(null);
         } else {
             row.setCategoryWeight(rs.getBigDecimal("category_weight"));
+            row.setElementWeight(rs.getBigDecimal("element_weight"));
             row.setStandardScore(rs.getBigDecimal("standard_score"));
             row.setLeaderLevelNo(rs.getObject("leader_level_no") == null ? null : rs.getInt("leader_level_no"));
             row.setLeaderScore(rs.getBigDecimal("leader_score"));

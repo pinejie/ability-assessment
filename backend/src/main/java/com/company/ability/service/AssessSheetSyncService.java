@@ -184,7 +184,7 @@ public class AssessSheetSyncService {
         // 5c. 停用行（免评/已移出要求）冗余分值列在写侧清空，杜绝残留值泄漏到任何读方；
         //     评级历史在 uf_assess_sheet_rating，不受影响。有 EXTERNAL 评级的停用行不清——
         //     它仍属 recalc v5 计分口径，清了会在"同步后、重算前"窗口期把外部导入结果显示成空白
-        jdbc.update("UPDATE uf_assess_sheet_row SET standard_score = NULL, category_weight = NULL, " +
+        jdbc.update("UPDATE uf_assess_sheet_row SET standard_score = NULL, category_weight = NULL, element_weight = NULL, " +
                 "leader_level_no = NULL, leader_score = NULL, self_level_no = NULL, self_score = NULL, " +
                 "client_avg_score = NULL " +
                 "WHERE sheet_id = ? AND active = 0 AND NOT EXISTS (SELECT 1 FROM uf_assess_sheet_rating x" +
@@ -242,8 +242,10 @@ public class AssessSheetSyncService {
     }
 
     /**
-     * 写入基础数据：类别权重、要素标准分 S(e) 与岗位标准分。
-     * S(e) = 等级分值(要求等级) ÷ 10 × 类别权重 ÷ 类别要素数。配置缺失时对应字段置空。
+     * 写入基础数据：要素权重、要素标准分 S(e) 与岗位标准分。
+     * 权重只到能力类别：优先取岗位能力要求明细上的 weight（按页面头的部门+岗位+类别匹配），
+     * 岗位未配置该类别时回退全局能力类型权重。
+     * S(e) = 等级分值(要求等级) ÷ 10 × 类别权重（类别内每个要素都用完整类别权重）。配置缺失时对应字段置空。
      */
     private void writeBaseScores(long sheetId, List<Map<String, Object>> items, long dimensionId) {
         Map<Long, BigDecimal> catWeight = new java.util.HashMap<>();
@@ -252,14 +254,13 @@ public class AssessSheetSyncService {
                 companyId, dimensionId)) {
             catWeight.put(num(m.get("category_id")), (BigDecimal) m.get("weight"));
         }
+        Map<Long, BigDecimal> positionWeight = loadPositionWeights(sheetId, dimensionId);
         Map<Integer, BigDecimal> levelScore = new java.util.HashMap<>();
         for (Map<String, Object> m : jdbc.queryForList(
                 "SELECT level_no, score FROM uf_assess_level_score WHERE company_id = ? AND dimension_id = ?",
                 companyId, dimensionId)) {
             levelScore.put((int) num(m.get("level_no")), (BigDecimal) m.get("score"));
         }
-        Map<Long, Long> countByCat = items.stream().collect(
-                Collectors.groupingBy(m -> num(m.get("category_id")), Collectors.counting()));
 
         BigDecimal total = BigDecimal.ZERO;
         boolean complete = true;
@@ -267,23 +268,50 @@ public class AssessSheetSyncService {
             long elementId = num(m.get("element_id"));
             long categoryId = num(m.get("category_id"));
             int levelNo = (int) num(m.get("level_no"));
-            BigDecimal weight = catWeight.get(categoryId);
+            BigDecimal weight = positionWeight.get(categoryId);
+            if (weight == null) {
+                weight = catWeight.get(categoryId);
+            }
             BigDecimal score = levelScore.get(levelNo);
             BigDecimal standard = null;
             if (weight != null && score != null) {
                 standard = score.divide(BigDecimal.TEN, 10, RoundingMode.HALF_UP)
-                        .multiply(weight)
-                        .divide(BigDecimal.valueOf(countByCat.get(categoryId)), 4, RoundingMode.HALF_UP);
+                        .multiply(weight);
                 total = total.add(standard);
             } else {
                 complete = false;
             }
             jdbc.update(
-                    "UPDATE uf_assess_sheet_row SET category_weight = ?, standard_score = ? WHERE sheet_id = ? AND element_id = ?",
-                    weight, standard, sheetId, elementId);
+                    "UPDATE uf_assess_sheet_row SET category_weight = ?, element_weight = ?, standard_score = ? " +
+                    "WHERE sheet_id = ? AND element_id = ?",
+                    catWeight.get(categoryId), weight, standard, sheetId, elementId);
         }
         jdbc.update("UPDATE uf_assess_sheet SET standard_score = ? WHERE id = ?",
                 complete ? total.setScale(2, RoundingMode.HALF_UP) : null, sheetId);
+    }
+
+    /**
+     * 页面所属岗位的能力类别权重：按部门 + 岗位 + 维度匹配，键为类别 ID。
+     * 同一部门+岗位若存在多份历史配置，按更新时间/ID 取最新一份（服务层已禁止新增重复）。
+     */
+    private Map<Long, BigDecimal> loadPositionWeights(long sheetId, long dimensionId) {
+        Map<Long, BigDecimal> result = new java.util.HashMap<>();
+        // 同一部门+岗位若存在多条配置，按「最新更新」取第一条（update_time DESC, id DESC, 明细 id DESC）；
+        // 当前数据经核查无重复配置，此处只保证选择确定性，不做合并
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT pi.category_id, pi.weight " +
+                "FROM uf_assess_sheet s " +
+                "JOIN uf_position_ability_req_new pr " +
+                "  ON pr.department_id = s.department_id AND pr.job_title_id = s.job_title_id " +
+                " AND pr.dimension_id = ? " +
+                "JOIN uf_position_ability_req_item pi ON pi.req_id = pr.id AND pi.dimension_id = ? " +
+                "WHERE s.id = ? AND pi.weight IS NOT NULL " +
+                "ORDER BY pr.update_time DESC, pr.id DESC, pi.id DESC",
+                dimensionId, dimensionId, sheetId);
+        for (Map<String, Object> m : rows) {
+            result.putIfAbsent(num(m.get("category_id")), (BigDecimal) m.get("weight"));
+        }
+        return result;
     }
 
     private void writeLog(long sheetId, String action, String detailJson, long dimensionId) {

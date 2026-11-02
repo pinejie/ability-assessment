@@ -1,6 +1,7 @@
 package com.company.ability.vo;
 
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -35,5 +36,6 @@ public class PositionAbilityReqVO {
         private String categoryName;
         private Long elementId;
         private String elementName;
+        private BigDecimal weight;
     }
 }

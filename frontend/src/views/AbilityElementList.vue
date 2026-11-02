@@ -179,7 +179,7 @@
               active-text="需要"
               inactive-text="不需要"
             />
-            <div class="form-hint">不需要时，该要素不进入测评流程页面（要求配置仍保留），权重由同类别其余需评价要素分摊</div>
+            <div class="form-hint">不需要时，该要素不进入测评流程页面（要求配置仍保留）；同类别其他要素仍使用完整类别权重，不摊分</div>
           </el-form-item>
           <el-form-item label="需客户评价">
             <el-switch

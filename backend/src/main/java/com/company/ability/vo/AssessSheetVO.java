@@ -67,7 +67,10 @@ public class AssessSheetVO {
     public static class Row {
         private Long elementId;
         private String categoryName;
+        /** 全局能力类型权重（兼容展示；计分以 elementWeight 为准） */
         private BigDecimal categoryWeight;
+        /** 计分使用的岗位类别权重（%）；岗位未配置时回退为全局类别权重 */
+        private BigDecimal elementWeight;
         private String elementName;
         private Integer requiredLevelNo;
         private BigDecimal standardScore;

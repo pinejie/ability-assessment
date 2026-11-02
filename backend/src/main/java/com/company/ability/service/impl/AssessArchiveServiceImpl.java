@@ -25,7 +25,9 @@ import java.util.stream.Collectors;
 /**
  * 测评归档计算实现
  *
- * 要素分 = 等级分值 ÷ 10 × 类别权重(%) ÷ 类别要素数
+ * 要素分 = 等级分值 ÷ 10 × 岗位类别权重(%)
+ * （权重只到能力类别：类别内每个要素都用完整类别权重，不按要素数均分；
+ *   岗位未配置该类别时回退全局能力类型权重）
  * 实际得分 = 直接领导 × 领导权重% + 客户均分 × 客户权重% + 自评 × 自评权重%
  * 得分率 = 实际得分 ÷ 岗位标准分 × 100（百分比）
  */
@@ -150,12 +152,12 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             checkClientCoverage(clientRequired, requiredLevel.keySet(), cfg.rateScore.keySet(), c);
         }
 
-        // 7. 类别要素数，用于按要素平分类别权重
-        Map<Long, Long> categoryCount = elementCategory.values().stream()
-                .collect(Collectors.groupingBy(c -> c, Collectors.counting()));
-        for (Long categoryId : categoryCount.keySet()) {
-            if (!cfg.abilityWeight.containsKey(categoryId)) {
-                throw new BusinessException(ERR_CONFIG_INCOMPLETE, "类别 " + categoryId + " 未配置能力类型权重");
+        // 7. 岗位类别权重（优先口径）与全局类别权重兜底
+        Map<Long, BigDecimal> positionWeight = loadPositionWeights(req, dimensionId);
+        for (Long categoryId : new HashSet<>(elementCategory.values())) {
+            if (!positionWeight.containsKey(categoryId) && !cfg.abilityWeight.containsKey(categoryId)) {
+                throw new BusinessException(ERR_CONFIG_INCOMPLETE,
+                        "类别 " + categoryId + " 未配置岗位权重，且全局能力类型权重缺失");
             }
         }
 
@@ -172,13 +174,12 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
             Long elementId = e.getKey();
             Long categoryId = elementCategory.get(elementId);
-            BigDecimal unitWeight = cfg.abilityWeight.get(categoryId);
-            long n = categoryCount.get(categoryId);
+            BigDecimal unitWeight = effectiveWeight(categoryId, positionWeight, cfg.abilityWeight);
 
             // 标准分按等级号取分；领导/自评是评价值，按「对应的评价」取分
-            BigDecimal std = unitScore(cfg.levelScore, e.getValue(), unitWeight, n);
-            BigDecimal leaderS = unitScore(cfg.rateScore, leaderLevel.get(elementId), unitWeight, n);
-            BigDecimal selfS = unitScore(cfg.rateScore, selfLevel.get(elementId), unitWeight, n);
+            BigDecimal std = unitScore(cfg.levelScore, e.getValue(), unitWeight);
+            BigDecimal leaderS = unitScore(cfg.rateScore, leaderLevel.get(elementId), unitWeight);
+            BigDecimal selfS = unitScore(cfg.rateScore, selfLevel.get(elementId), unitWeight);
             standardTotal = standardTotal.add(std);
             leaderTotal = leaderTotal.add(leaderS);
             selfTotal = selfTotal.add(selfS);
@@ -221,7 +222,7 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
                                 && Boolean.FALSE.equals(allowClientAssess.get(elementId)))
                         ? BigDecimal.ZERO
                         : unitScore(cfg.rateScore, levels.get(elementId),
-                                cfg.abilityWeight.get(categoryId), categoryCount.get(categoryId));
+                                effectiveWeight(categoryId, positionWeight, cfg.abilityWeight));
                 personTotal = personTotal.add(s);
 
                 AssessSubjectClient cr = new AssessSubjectClient();
@@ -245,7 +246,7 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         String grade = judgeGrade(rate, cfg.grades);
 
         // 9. 快照
-        String snapshot = buildSnapshot(cfg);
+        String snapshot = buildSnapshot(cfg, positionWeight);
 
         // 10. 写入
         AssessSubject subject = new AssessSubject();
@@ -484,9 +485,8 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         return map;
     }
 
-    /** 要素得分 = 等级分值 ÷ 10 × 类别权重(%) ÷ 类别要素数（levelScore 按等级号或评价值取分，调用方决定用哪张键） */
-    private BigDecimal unitScore(Map<Integer, BigDecimal> levelScore, Integer levelNo,
-                                 BigDecimal categoryWeightPct, long categoryElementCount) {
+    /** 要素得分 = 等级分值 ÷ 10 × 岗位类别权重(%)（levelScore 按等级号或评价值取分，调用方决定用哪张键） */
+    private BigDecimal unitScore(Map<Integer, BigDecimal> levelScore, Integer levelNo, BigDecimal categoryWeightPct) {
         // 兜底：前两层（要求等级成员校验、载荷评价值校验）已挡住理论路径，此处防未知调用，报业务异常而非 NPE
         BigDecimal ls = levelNo == null ? null : levelScore.get(levelNo);
         if (ls == null) {
@@ -494,8 +494,65 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
                     "等级/评价 " + levelNo + " 的分值配置缺失，请检查当前维度的等级分值配置");
         }
         return ls.divide(TEN, CALC_SCALE, RoundingMode.HALF_UP)
-                .multiply(categoryWeightPct)
-                .divide(BigDecimal.valueOf(categoryElementCount), CALC_SCALE, RoundingMode.HALF_UP);
+                .multiply(categoryWeightPct);
+    }
+
+    /**
+     * 岗位能力类别权重：按被测人所在部门 + 岗位 + 维度读取岗位能力要求明细。
+     * 权重只到类别，同一类别下每条明细冗余同一个值；未配置类别的回退全局能力类型权重。
+     */
+    private Map<Long, BigDecimal> loadPositionWeights(AssessArchiveDTO.ArchiveRequest req, long dimensionId) {
+        Map<Long, BigDecimal> result = new HashMap<>();
+        Long departmentId = null;
+        Long jobTitleId = null;
+        // 页面头是同步与 recalc 的计分口径，快照必须优先与之一致；页面缺失时才回退钩子载荷参数。
+        // （历史上反过来优先请求参数，参数与页面头不一致时快照会和页面实际得分口径不同）
+        List<Map<String, Object>> sheet = jdbc.queryForList(
+                "SELECT department_id, job_title_id FROM uf_assess_sheet" +
+                " WHERE period_id = ? AND resource_id = ? AND dimension_id = ?",
+                req.getPeriodId(), req.getResourceId(), dimensionId);
+        if (!sheet.isEmpty()) {
+            Object dept = sheet.get(0).get("department_id");
+            Object job = sheet.get(0).get("job_title_id");
+            departmentId = dept == null ? null : ((Number) dept).longValue();
+            jobTitleId = job == null ? null : ((Number) job).longValue();
+        }
+        if (departmentId == null || jobTitleId == null) {
+            // 页面尚未生成（或页面头缺岗位）时，用钩子载荷的部门/岗位兜底
+            departmentId = req.getDepartmentId();
+            jobTitleId = req.getJobTitleId();
+        }
+        if (departmentId == null || jobTitleId == null) {
+            return result;
+        }
+        // 同一部门+岗位若存在多条配置，按「最新更新」取第一条；当前数据无重复，仅保证选择确定性
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT pi.category_id, pi.weight" +
+                " FROM uf_position_ability_req_new pr" +
+                " JOIN uf_position_ability_req_item pi ON pi.req_id = pr.id AND pi.dimension_id = ?" +
+                " WHERE pr.department_id = ? AND pr.job_title_id = ? AND pr.dimension_id = ?" +
+                "   AND pi.weight IS NOT NULL" +
+                " ORDER BY pr.update_time DESC, pr.id DESC, pi.id DESC",
+                dimensionId, departmentId, jobTitleId, dimensionId);
+        for (Map<String, Object> m : rows) {
+            result.putIfAbsent(((Number) m.get("category_id")).longValue(), (BigDecimal) m.get("weight"));
+        }
+        return result;
+    }
+
+    /** 类别权重：岗位配置优先，缺失时回退全局能力类型权重（类别内每个要素都用完整权重） */
+    private BigDecimal effectiveWeight(Long categoryId, Map<Long, BigDecimal> positionWeight,
+                                       Map<Long, BigDecimal> categoryWeight) {
+        BigDecimal weight = positionWeight.get(categoryId);
+        if (weight != null) {
+            return weight;
+        }
+        BigDecimal cat = categoryWeight.get(categoryId);
+        if (cat == null) {
+            throw new BusinessException(ERR_CONFIG_INCOMPLETE,
+                    "类别 " + categoryId + " 的岗位权重与全局能力类型权重均缺失");
+        }
+        return cat;
     }
 
     /** 左开右闭 (lower, upper]，null 为无穷 */
@@ -543,7 +600,7 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         cfg.wClient = assessor.get("CLIENT");
         cfg.wSelf = assessor.get("SELF");
         if (cfg.wLeader == null || cfg.wClient == null || cfg.wSelf == null) {
-            throw new BusinessException(ERR_CONFIG_INCOMPLETE, "测评对象权重未配置完整");
+            throw new BusinessException(ERR_CONFIG_INCOMPLETE, "测评人权重未配置完整");
         }
 
         // 等级分值动态化：两张键——等级号（要求等级/标准分用）与对应的评价（评级取分用）。
@@ -579,9 +636,10 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         return cfg;
     }
 
-    private String buildSnapshot(Config cfg) {
+    private String buildSnapshot(Config cfg, Map<Long, BigDecimal> positionWeight) {
         Map<String, Object> snap = new LinkedHashMap<>();
         snap.put("abilityWeights", cfg.abilityWeight);
+        snap.put("positionCategoryWeights", positionWeight);
         snap.put("assessorWeights", Map.of("LEADER", cfg.wLeader, "CLIENT", cfg.wClient, "SELF", cfg.wSelf));
         snap.put("levelScores", cfg.levelScore);
         snap.put("rateScores", cfg.rateScore);

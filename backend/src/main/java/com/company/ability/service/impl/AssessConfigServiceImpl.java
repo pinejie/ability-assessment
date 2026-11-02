@@ -153,7 +153,7 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         log.info("保存能力类型权重成功，companyId: {}, dimensionId: {}, 条数: {}", dto.getCompanyId(), dim, items.size());
     }
 
-    // ==================== 测评对象权重 ====================
+    // ==================== 测评人权重 ====================
 
     @Override
     public List<AssessConfigVO.AssessorWeightVO> getAssessorWeights(Long companyId) {
@@ -184,19 +184,19 @@ public class AssessConfigServiceImpl implements AssessConfigService {
         Map<String, BigDecimal> sent = new HashMap<>();
         for (AssessConfigDTO.AssessorWeightItem item : items) {
             if (!ASSESSOR_CODES.contains(item.getAssessorCode())) {
-                throw new BusinessException(500, "未知测评对象: " + item.getAssessorCode());
+                throw new BusinessException(500, "未知测评人: " + item.getAssessorCode());
             }
             if (item.getWeight() == null) {
-                throw new BusinessException(ERR_WEIGHT_MISSING, "测评对象权重不能为空");
+                throw new BusinessException(ERR_WEIGHT_MISSING, "测评人权重不能为空");
             }
             sent.put(item.getAssessorCode(), item.getWeight());
         }
         if (!sent.keySet().containsAll(ASSESSOR_CODES)) {
-            throw new BusinessException(ERR_WEIGHT_MISSING, "测评对象必须同时配置直接领导、客户评分、自评分");
+            throw new BusinessException(ERR_WEIGHT_MISSING, "测评人必须同时配置直接领导、客户评分、自评分");
         }
         BigDecimal sum = sent.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
         if (sum.compareTo(HUNDRED) != 0) {
-            throw new BusinessException(ERR_WEIGHT_SUM, "测评对象权重合计必须为100%，当前为" + sum.stripTrailingZeros().toPlainString() + "%");
+            throw new BusinessException(ERR_WEIGHT_SUM, "测评人权重合计必须为100%，当前为" + sum.stripTrailingZeros().toPlainString() + "%");
         }
 
         assessorMapper.delete(new LambdaQueryWrapper<AssessWeightAssessor>()
@@ -210,7 +210,7 @@ public class AssessConfigServiceImpl implements AssessConfigService {
             e.setWeight(sent.get(code));
             assessorMapper.insert(e);
         }
-        log.info("保存测评对象权重成功，companyId: {}, dimensionId: {}", dto.getCompanyId(), dim);
+        log.info("保存测评人权重成功，companyId: {}, dimensionId: {}", dto.getCompanyId(), dim);
     }
 
     // ==================== 等级标准 ====================

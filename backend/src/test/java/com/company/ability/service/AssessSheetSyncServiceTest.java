@@ -72,7 +72,7 @@ class AssessSheetSyncServiceTest {
         assertEquals(2, skipRequiredLevel, "免评行必须记录要求等级（任职标准）");
         assertNull(rowScore(sheetId, elementSkip, "standard_score"), "免评行不写标准分");
 
-        // S(e) = 分值(2级=40)/10 × 类别权重100 ÷ n_c(1) = 400；免评要素不占 n_c、不摊权重
+        // S(e) = 分值(2级=40)/10 × 类别权重100 = 400；权重只到类别，免评要素不参与计分
         assertClose(400, sheetStandard(sheetId));
     }
 
@@ -84,8 +84,8 @@ class AssessSheetSyncServiceTest {
         syncService.syncRequirement(RESOURCE_ID, YEAR, true);
         long sheetId = sheetId(jdbc, RESOURCE_ID, YEAR);
         assertEquals(2, allRows(sheetId).size());
-        // 同类 2 要素平摊：标准分 = 200 + 200
-        assertClose(400, sheetStandard(sheetId));
+        // 同类别 2 要素都用完整类别权重：标准分 = 400 + 400
+        assertClose(800, sheetStandard(sheetId));
 
         jdbc.update("UPDATE uf_ability_element SET assess_in_flow = 0 WHERE id = ?", elementSkip);
         syncService.syncRequirement(RESOURCE_ID, YEAR, true);
@@ -93,7 +93,7 @@ class AssessSheetSyncServiceTest {
         Map<Long, Integer> activeByElement = activeByElement(sheetId);
         assertEquals(1, activeByElement.get(elementAssess));
         assertEquals(0, activeByElement.get(elementSkip), "免评要素的历史行应被停用而非删除");
-        assertClose(400, sheetStandard(sheetId), "唯一需评价要素接管类别权重，页面标准分不变（400）");
+        assertClose(400, sheetStandard(sheetId), "唯一需评价要素保留完整类别权重，页面标准分回到 400");
     }
 
     @Test

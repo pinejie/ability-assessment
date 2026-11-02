@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="page-title-section">
         <h1 class="page-title">岗位能力要求配置</h1>
-        <p class="page-description">为各部门下的岗位配置需要的能力要素（类别+要素），用于人员能力要求自动带出</p>
+        <p class="page-description">为各部门下的岗位配置需要的能力要素（类别+要素）及权重，用于人员能力要求自动带出和测评算分</p>
       </div>
       <el-button type="primary" @click="handleAdd">新增配置</el-button>
     </div>
@@ -41,9 +41,9 @@
               <div class="expand-content">
                 <div class="items-title">能力要素配置（{{ row.items?.length || 0 }}个）</div>
                 <div class="items-list">
-                  <div v-for="item in row.items" :key="item.id" class="item-row">
-                    <span class="category-tag">{{ item.categoryName }}</span>
-                    <span class="element-name">{{ item.elementName }}</span>
+                  <div v-for="group in groupItems(row.items)" :key="group.categoryId" class="category-group">
+                    <span class="category-tag">{{ group.categoryName }} · {{ fmtWeight(group.weight) }}</span>
+                    <span v-for="name in group.elementNames" :key="name" class="element-name">{{ name }}</span>
                   </div>
                 </div>
               </div>
@@ -151,8 +151,13 @@
 
         <el-form-item label="能力要素配置" class="element-section">
           <div class="element-summary">
-            已选 <strong>{{ formData.items.length }}</strong> 个能力要素，涉及
-            <strong>{{ selectedCategoryCount }}</strong> 个类别
+            <span>
+              已选 <strong>{{ formData.items.length }}</strong> 个能力要素，涉及
+              <strong>{{ selectedCategoryCount }}</strong> 个类别
+            </span>
+            <el-button size="small" :disabled="formData.items.length === 0" @click="handleApplyGlobalWeights">
+              按全局权重带出
+            </el-button>
           </div>
           <div class="category-list">
             <div v-for="cat in visibleCategories" :key="cat.id" class="category-row">
@@ -161,26 +166,42 @@
                 <el-tag v-if="cat.status !== 1" type="info" size="small">已停用</el-tag>
                 <span class="category-count">{{ selectedIdsOf(cat.id).length }} 个</span>
               </div>
-              <el-select
-                :model-value="selectedIdsOf(cat.id)"
-                multiple
-                filterable
-                clearable
-                collapse-tags
-                collapse-tags-tooltip
-                :max-collapse-tags="4"
-                placeholder="搜索并选择能力要素"
-                :loading="!!elementLoading[cat.id]"
-                class="category-select"
-                @update:model-value="(val: number[]) => setCategoryElements(cat.id, val)"
-              >
-                <el-option
-                  v-for="elem in elementCache[cat.id] || []"
-                  :key="elem.id"
-                  :label="elem.elementName"
-                  :value="elem.id"
-                />
-              </el-select>
+              <div class="category-controls">
+                <el-select
+                  :model-value="selectedIdsOf(cat.id)"
+                  multiple
+                  filterable
+                  clearable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  :max-collapse-tags="4"
+                  placeholder="搜索并选择能力要素"
+                  :loading="!!elementLoading[cat.id]"
+                  class="category-select"
+                  @update:model-value="(val: number[]) => setCategoryElements(cat.id, val)"
+                >
+                  <el-option
+                    v-for="elem in elementCache[cat.id] || []"
+                    :key="elem.id"
+                    :label="elem.elementName"
+                    :value="elem.id"
+                  />
+                </el-select>
+                <div v-if="selectedIdsOf(cat.id).length > 0" class="category-weight">
+                  <span class="weight-label">类别权重</span>
+                  <el-input-number
+                    :model-value="categoryWeightOf(cat.id)"
+                    :min="0"
+                    :max="100"
+                    :precision="2"
+                    controls-position="right"
+                    style="width: 120px"
+                    @update:model-value="(val: number | null | undefined) => setCategoryWeight(cat.id, val)"
+                  />
+                  <span class="weight-unit">%</span>
+                </div>
+                <span v-else class="weight-placeholder">选择要素后可配置权重</span>
+              </div>
             </div>
           </div>
         </el-form-item>
@@ -210,10 +231,15 @@ import {
 } from '@/api/positionAbilityReq'
 import { listAbilityCategories, getAbilityCategoryById } from '@/api/abilityCategory'
 import { listElementsByCategoryId, getAbilityElementById } from '@/api/abilityElement'
+import { getAbilityWeights } from '@/api/assessConfig'
 import type { PositionAbilityReqVO } from '@/types/positionAbilityReq'
 import type { AbilityCategoryVO } from '@/types/abilityCategory'
 import type { AbilityElementVO } from '@/types/abilityElement'
+import type { AbilityWeightVO } from '@/types/assessConfig'
 import request from '@/utils/request'
+
+/** 能力测评配置按公司隔离，与能力测评配置页保持一致 */
+const COMPANY_ID = 1
 
 interface TreeNode {
   id: number | string
@@ -223,11 +249,14 @@ interface TreeNode {
   [key: string]: unknown
 }
 
-/** 一个已选能力要素（扁平结构，提交时直接使用） */
+/** 一个已选能力要素（扁平结构，提交时按所属类别补权重） */
 interface SelectedItem {
   categoryId: number
   elementId: number
 }
+
+/** 能力类别权重（%）：同一类别下的所有要素共用此值 */
+type CategoryWeightMap = Record<number, number | null>
 
 const reqList = ref<PositionAbilityReqVO[]>([])
 const categoryList = ref<AbilityCategoryVO[]>([])
@@ -425,6 +454,9 @@ const formData = reactive({
   items: [] as SelectedItem[],
 })
 
+/** 类别权重：只对已选类别生效，可手工调整，不要求合计 100 */
+const categoryWeights = ref<CategoryWeightMap>({})
+
 const formRules: FormRules = {
   departmentId: [
     { required: true, message: '请选择部门', trigger: 'change' },
@@ -471,6 +503,95 @@ const preloadElements = async (categoryIds: number[]) => {
   }))
 }
 
+// ==================== 岗位能力类别权重 ====================
+
+/** 全局能力类型权重：仅作为岗位类别权重的带出模板 */
+const globalWeights = ref<Record<number, number | null>>({})
+let globalWeightsPromise: Promise<void> | null = null
+
+const loadGlobalWeights = async () => {
+  try {
+    const rows: AbilityWeightVO[] = await getAbilityWeights(COMPANY_ID)
+    const map: Record<number, number | null> = {}
+    rows.forEach((row) => { map[row.categoryId] = row.weight })
+    globalWeights.value = map
+  } catch (error) {
+    console.error('加载能力类型权重失败:', error)
+  }
+}
+
+const ensureGlobalWeights = (): Promise<void> => {
+  if (!globalWeightsPromise) globalWeightsPromise = loadGlobalWeights()
+  return globalWeightsPromise
+}
+
+const fmtWeight = (weight: number | null | undefined): string =>
+  weight == null ? '未配置' : `${Number(weight).toFixed(2)}%`
+
+interface ItemGroup {
+  categoryId: number
+  categoryName: string
+  weight: number | null
+  elementNames: string[]
+}
+
+/** 列表展开行：按类别分组展示，权重为类别权重 */
+const groupItems = (items: PositionAbilityReqVO['items'] | undefined): ItemGroup[] => {
+  const groups = new Map<number, ItemGroup>()
+  ;(items || []).forEach((item) => {
+    let group = groups.get(item.categoryId)
+    if (!group) {
+      group = {
+        categoryId: item.categoryId,
+        categoryName: item.categoryName || `类别#${item.categoryId}`,
+        weight: item.weight,
+        elementNames: [],
+      }
+      groups.set(item.categoryId, group)
+    }
+    group.elementNames.push(item.elementName)
+  })
+  return [...groups.values()]
+}
+
+/** 已选类别（去重） */
+const selectedCategoryIds = computed(() => [...new Set(formData.items.map(i => i.categoryId))])
+
+const categoryWeightOf = (categoryId: number): number | undefined =>
+  categoryWeights.value[categoryId] ?? undefined
+
+const setCategoryWeight = (categoryId: number, value: number | null | undefined) => {
+  categoryWeights.value[categoryId] = value == null ? null : value
+}
+
+/**
+ * 按全局能力类型权重带出：原样复制，不做归一化。
+ * onlyMissing=true 时只补「从未填写」的类别——用 key 是否存在判断，
+ * 这样用户手动清空（值为 null 但 key 仍在）的类别不会被再次填回。
+ * 返回实际带出的类别数，供提示使用。
+ */
+const applyGlobalWeights = (onlyMissing: boolean): number => {
+  let filled = 0
+  selectedCategoryIds.value.forEach((categoryId) => {
+    if (!onlyMissing || !(categoryId in categoryWeights.value)) {
+      const global = globalWeights.value[categoryId]
+      categoryWeights.value[categoryId] = global ?? null
+      if (global != null) filled += 1
+    }
+  })
+  return filled
+}
+
+const handleApplyGlobalWeights = () => {
+  if (formData.items.length === 0) return
+  const filled = applyGlobalWeights(false)
+  if (filled > 0) {
+    ElMessage.success(`已按全局能力类型权重带出 ${filled} 个类别`)
+  } else {
+    ElMessage.warning('全局能力类型权重未配置，未能带出')
+  }
+}
+
 // 打开弹窗时预加载所有类别的要素
 watch(dialogVisible, (visible) => {
   if (visible) preloadElements(categoryList.value.map(c => c.id))
@@ -480,10 +601,18 @@ watch(dialogVisible, (visible) => {
 const selectedIdsOf = (categoryId: number): number[] =>
   formData.items.filter(i => i.categoryId === categoryId).map(i => i.elementId)
 
-// 替换某类别下的已选要素（天然去重）
+// 替换某类别下的已选要素（天然去重）：类别权重保留；新选类别缺失时按全局模板补默认值
 const setCategoryElements = (categoryId: number, ids: number[]) => {
   const others = formData.items.filter(i => i.categoryId !== categoryId)
-  formData.items = [...others, ...ids.map(elementId => ({ categoryId, elementId }))]
+  formData.items = [
+    ...others,
+    ...ids.map(elementId => ({ categoryId, elementId })),
+  ]
+  if (ids.length === 0) {
+    delete categoryWeights.value[categoryId]
+  } else {
+    applyGlobalWeights(true)
+  }
 }
 
 // 展示的类别：启用的，或已有选中项的（含已停用但仍被引用的）
@@ -493,13 +622,15 @@ const visibleCategories = computed(() =>
 
 const selectedCategoryCount = computed(() => new Set(formData.items.map(i => i.categoryId)).size)
 
-const handleAdd = () => {
+const handleAdd = async () => {
+  await ensureGlobalWeights()
   dialogTitle.value = '新增配置'
   resetForm()
   dialogVisible.value = true
 }
 
 const handleEdit = async (row: PositionAbilityReqVO) => {
+  await ensureGlobalWeights()
   dialogTitle.value = '编辑配置'
   formData.id = row.id
   formData.departmentId = row.departmentId
@@ -511,10 +642,22 @@ const handleEdit = async (row: PositionAbilityReqVO) => {
     await loadJobTitlesByDepartment(row.departmentId)
   }
   
-  // 加载明细项：扁平化为 {categoryId, elementId}
+  // 加载明细项：扁平化为 {categoryId, elementId}，类别权重从明细带出（同类别取第一个非空值）
   formData.items = (row.items || [])
     .filter(item => item.categoryId && item.elementId)
-    .map(item => ({ categoryId: item.categoryId as number, elementId: item.elementId as number }))
+    .map(item => ({
+      categoryId: item.categoryId as number,
+      elementId: item.elementId as number,
+    }))
+  const weights: CategoryWeightMap = {}
+  ;(row.items || []).forEach((item) => {
+    if (item.categoryId && item.weight != null && weights[item.categoryId] == null) {
+      weights[item.categoryId] = item.weight
+    }
+  })
+  categoryWeights.value = weights
+  // 历史数据没有岗位类别权重时，按全局模板补默认值
+  applyGlobalWeights(true)
 
   // 补充已停用的类别，保证能显示名称而非ID
   const categoryIds = [...new Set(formData.items.map(i => i.categoryId))]
@@ -584,7 +727,43 @@ const handleSubmit = async () => {
       ElMessage.error('请至少选择一个能力要素')
       return
     }
-    const items = formData.items.map(i => ({ categoryId: i.categoryId, elementId: i.elementId }))
+
+    const missingCategory = selectedCategoryIds.value.find(id => categoryWeights.value[id] == null)
+    if (missingCategory != null) {
+      ElMessage.error('请填写所有已选能力类别的权重')
+      return
+    }
+    const invalidCategory = selectedCategoryIds.value.find(id => {
+      const weight = categoryWeights.value[id] as number
+      return weight < 0 || weight > 100
+    })
+    if (invalidCategory != null) {
+      ElMessage.error('能力类别权重必须在 0~100 之间')
+      return
+    }
+
+    // 权重按类别独立计分，不强制合计 100；不为 100 时由用户确认后放行
+    const total = Math.round(
+      selectedCategoryIds.value.reduce((sum, id) => sum + (categoryWeights.value[id] as number), 0) * 100,
+    ) / 100
+    if (total !== 100) {
+      try {
+        await ElMessageBox.confirm(
+          `当前能力类别权重合计为 ${total}%，权重按类别独立计分、不要求合计 100%，是否仍要提交？`,
+          '权重合计不为 100%',
+          { confirmButtonText: '仍要提交', cancelButtonText: '返回修改', type: 'warning' },
+        )
+      } catch {
+        return
+      }
+    }
+
+    // 同一类别下的要素共用类别权重；不要求岗位合计 100
+    const items = formData.items.map(i => ({
+      categoryId: i.categoryId,
+      elementId: i.elementId,
+      weight: categoryWeights.value[i.categoryId] as number,
+    }))
 
     if (formData.id) {
       // 编辑模式
@@ -620,6 +799,7 @@ const resetForm = () => {
   formData.jobTitleId = undefined
   formData.description = ''
   formData.items = []
+  categoryWeights.value = {}
   jobTitleOptions.value = []
   formRef.value?.resetFields()
 }
@@ -628,6 +808,7 @@ onMounted(() => {
   loadData()
   loadCategoryList()
   loadDeptTree()
+  ensureGlobalWeights()
 })
 </script>
 
@@ -793,6 +974,13 @@ onMounted(() => {
   font-size: 13px;
 }
 
+.item-weight {
+  margin-left: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .action-btn {
   padding: 6px 12px;
   border: none;
@@ -838,6 +1026,10 @@ onMounted(() => {
 
 /* 能力要素配置（分组多选） */
 .element-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 13px;
   color: var(--color-text-secondary);
   margin-bottom: 10px;
@@ -882,6 +1074,58 @@ onMounted(() => {
   width: 100%;
 }
 
+.category-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.category-controls .category-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.category-weight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.weight-label {
+  white-space: nowrap;
+}
+
+.weight-unit {
+  color: var(--color-text-muted);
+}
+
+.weight-placeholder {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.category-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--color-bg);
+  border-radius: 6px;
+}
+
+.category-group .element-name {
+  padding: 2px 8px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+/* 岗位能力类别权重 */
 .text-muted {
   color: var(--color-text-muted);
 }

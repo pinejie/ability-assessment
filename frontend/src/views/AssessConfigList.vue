@@ -1,7 +1,7 @@
 <template>
   <div class="assess-config-page">
     <h1 class="page-title">能力测评配置</h1>
-    <p class="page-description">配置能力类型权重、测评对象权重和等级标准，保存后只影响之后生成的测评结果</p>
+    <p class="page-description">配置能力类型权重、测评人权重和等级标准，保存后只影响之后生成的测评结果</p>
 
     <!-- 1. 能力类型权重 -->
     <el-card class="config-block" v-loading="loadingAbility">
@@ -40,16 +40,16 @@
       </div>
     </el-card>
 
-    <!-- 2. 测评对象权重 -->
+    <!-- 2. 测评人权重 -->
     <el-card class="config-block" v-loading="loadingAssessor">
       <template #header>
         <div class="block-header">
-          <span>2. 测评对象权重</span>
+          <span>2. 测评人权重</span>
           <el-button type="primary" :disabled="!assessorCanSave" :loading="savingAssessor" @click="saveAssessor">保存</el-button>
         </div>
       </template>
       <el-table :data="assessorRows" border size="small" row-key="assessorCode">
-        <el-table-column prop="assessorName" label="测评对象" min-width="180" />
+        <el-table-column prop="assessorName" label="测评人" min-width="180" />
         <el-table-column label="权重(%)" width="200">
           <template #default="{ row }">
             <el-input-number
@@ -274,10 +274,10 @@ const saveAbility = async () => {
   }
 }
 
-// ==================== 测评对象权重 ====================
+// ==================== 测评人权重 ====================
 
 const assessorError = computed(() => {
-  if (assessorRows.value.some(r => r.weight === null)) return '测评对象权重不能为空'
+  if (assessorRows.value.some(r => r.weight === null)) return '测评人权重不能为空'
   const sum = assessorRows.value.reduce((s, r) => s + (r.weight ?? 0), 0)
   if (Math.abs(sum - 100) > 0.001) return '合计必须为 100%'
   return ''
@@ -296,7 +296,7 @@ const loadAssessor = async () => {
       weight: v.weight,
     }))
   } catch (e) {
-    console.error('加载测评对象权重失败:', e)
+    console.error('加载测评人权重失败:', e)
   } finally {
     loadingAssessor.value = false
   }
@@ -309,10 +309,10 @@ const saveAssessor = async () => {
       COMPANY_ID,
       assessorRows.value.map(r => ({ assessorCode: r.assessorCode, weight: r.weight }))
     )
-    ElMessage.success('测评对象权重已保存')
+    ElMessage.success('测评人权重已保存')
     await loadAssessor()
   } catch (e) {
-    console.error('保存测评对象权重失败:', e)
+    console.error('保存测评人权重失败:', e)
   } finally {
     savingAssessor.value = false
   }

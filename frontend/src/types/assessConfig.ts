@@ -11,7 +11,7 @@ export interface AbilityWeightItem {
   weight: number | null
 }
 
-// 测评对象权重
+// 测评人权重
 export type AssessorCode = 'LEADER' | 'CLIENT' | 'SELF'
 
 export interface AssessorWeightVO {

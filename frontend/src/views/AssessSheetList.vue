@@ -174,7 +174,7 @@
           <el-table-column prop="categoryName" label="类别" width="96" fixed="left" align="center" />
           <el-table-column label="权重(%)" width="84" align="right" fixed="left">
             <template #default="{ row }">
-              <span class="num">{{ fmt(row.categoryWeight) }}</span>
+              <span class="num">{{ fmt(row.elementWeight ?? row.categoryWeight) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="要素" width="230" fixed="left" show-overflow-tooltip>
@@ -363,6 +363,7 @@ const categorySpans = computed<number[]>(() => {
 })
 
 const spanMethod = ({ rowIndex, columnIndex }: { rowIndex: number; columnIndex: number }) => {
+  // 权重只到能力类别：类别列与权重列一起按类别合并
   if (columnIndex === 0 || columnIndex === 1) {
     const span = categorySpans.value[rowIndex]
     return { rowspan: span, colspan: span === 0 ? 0 : 1 }

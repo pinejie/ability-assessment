@@ -137,7 +137,10 @@ public class AssessReportService {
             AssessSheetVO.CategoryRow c = new AssessSheetVO.CategoryRow();
             c.setCategoryName(e.getKey());
             if (!scored.isEmpty()) {
-                c.setWeight(scored.get(0).getCategoryWeight());
+                // 类别权重：权重只到类别，取该类别计分行的岗位类别权重；尚未回填时回退全局类别权重
+                AssessSheetVO.Row firstScored = scored.get(0);
+                c.setWeight(firstScored.getElementWeight() != null
+                        ? firstScored.getElementWeight() : firstScored.getCategoryWeight());
                 c.setStandardScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getStandardScore).collect(Collectors.toList())));
                 c.setLeaderScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getLeaderScore).collect(Collectors.toList())));
                 c.setClientScore(AssessReportCalc.sumOrNull(scored.stream().map(AssessSheetVO.Row::getClientAvgScore).collect(Collectors.toList())));

@@ -14,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -70,6 +71,7 @@ class PositionAbilityReqServiceTest {
         PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
         item.setCategoryId(categoryId);
         item.setElementId(elementId);
+        item.setWeight(new BigDecimal("100"));
         dto.setItems(List.of(item));
 
         // Act
@@ -86,6 +88,52 @@ class PositionAbilityReqServiceTest {
     }
 
     @Test
+    @DisplayName("岗位类别权重合计不要求 100")
+    void shouldAllowCategoryWeightTotalNotHundred() {
+        PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
+        dto.setDepartmentId(1L);
+        dto.setJobTitleId(200L);
+
+        PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
+        item.setCategoryId(categoryId);
+        item.setElementId(elementId);
+        item.setWeight(new BigDecimal("30"));
+        dto.setItems(List.of(item));
+
+        Long id = positionAbilityReqService.createPositionAbilityReq(dto);
+
+        PositionAbilityReqVO vo = positionAbilityReqService.getPositionAbilityReqById(id);
+        assertEquals(new BigDecimal("30.0000"), vo.getItems().get(0).getWeight());
+    }
+
+    @Test
+    @DisplayName("同一类别下的要素权重必须一致")
+    void shouldRejectInconsistentCategoryWeights() {
+        var anotherElement = new com.company.ability.dto.AbilityElementCreateDTO();
+        anotherElement.setElementName("测试要素2");
+        anotherElement.setCategoryId(categoryId);
+        Long anotherElementId = abilityElementService.createElement(anotherElement);
+
+        PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
+        dto.setDepartmentId(1L);
+        dto.setJobTitleId(200L);
+
+        PositionAbilityReqCreateDTO.ElementItem item1 = new PositionAbilityReqCreateDTO.ElementItem();
+        item1.setCategoryId(categoryId);
+        item1.setElementId(elementId);
+        item1.setWeight(new BigDecimal("30"));
+
+        PositionAbilityReqCreateDTO.ElementItem item2 = new PositionAbilityReqCreateDTO.ElementItem();
+        item2.setCategoryId(categoryId);
+        item2.setElementId(anotherElementId);
+        item2.setWeight(new BigDecimal("20"));
+
+        dto.setItems(List.of(item1, item2));
+
+        assertThrows(BusinessException.class, () -> positionAbilityReqService.createPositionAbilityReq(dto));
+    }
+
+    @Test
     @DisplayName("应该更新岗位能力要求")
     void shouldUpdatePositionAbilityReq() {
         // Arrange
@@ -97,6 +145,7 @@ class PositionAbilityReqServiceTest {
         PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
         item.setCategoryId(categoryId);
         item.setElementId(elementId);
+        item.setWeight(new BigDecimal("100"));
         createDTO.setItems(List.of(item));
 
         Long id = positionAbilityReqService.createPositionAbilityReq(createDTO);
@@ -124,6 +173,7 @@ class PositionAbilityReqServiceTest {
         PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
         item.setCategoryId(categoryId);
         item.setElementId(elementId);
+        item.setWeight(new BigDecimal("100"));
         dto.setItems(List.of(item));
 
         Long id = positionAbilityReqService.createPositionAbilityReq(dto);
@@ -149,6 +199,7 @@ class PositionAbilityReqServiceTest {
             PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
             item.setCategoryId(categoryId);
             item.setElementId(elementId);
+        item.setWeight(new BigDecimal("100"));
             dto.setItems(List.of(item));
 
             positionAbilityReqService.createPositionAbilityReq(dto);
@@ -167,12 +218,13 @@ class PositionAbilityReqServiceTest {
         // Arrange
         for (int i = 1; i <= 2; i++) {
             PositionAbilityReqCreateDTO dto = new PositionAbilityReqCreateDTO();
-            dto.setDepartmentId(1L);
+            dto.setDepartmentId((long) i);
             dto.setJobTitleId(200L);
 
             PositionAbilityReqCreateDTO.ElementItem item = new PositionAbilityReqCreateDTO.ElementItem();
             item.setCategoryId(categoryId);
             item.setElementId(elementId);
+        item.setWeight(new BigDecimal("100"));
             dto.setItems(List.of(item));
 
             positionAbilityReqService.createPositionAbilityReq(dto);

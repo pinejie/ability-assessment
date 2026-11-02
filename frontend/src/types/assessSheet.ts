@@ -37,7 +37,10 @@ export interface SheetRating {
 export interface SheetRow {
   elementId: number
   categoryName: string
+  /** 全局能力类型权重（兼容字段，展示以 elementWeight 为准） */
   categoryWeight: number
+  /** 计分使用的岗位类别权重（%）；岗位未配置时为全局类别权重 */
+  elementWeight: number | null
   elementName: string
   requiredLevelNo: number | null
   standardScore: number | null

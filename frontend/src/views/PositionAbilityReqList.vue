@@ -50,9 +50,9 @@
             </template>
           </el-table-column>
           <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="departmentName" label="部门" width="180" />
-          <el-table-column prop="jobTitleName" label="岗位" width="180" />
-          <el-table-column label="能力要素" width="140">
+          <el-table-column prop="departmentName" label="部门" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="jobTitleName" label="岗位" min-width="180" show-overflow-tooltip />
+          <el-table-column label="能力要素" min-width="140">
             <template #default="{ row }">
               <span v-if="row.items && row.items.length > 0">{{ row.items.length }} 个（展开查看）</span>
               <span v-else class="text-muted">未配置</span>
@@ -957,8 +957,8 @@ onMounted(() => {
 
 .items-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .item-row {
@@ -1113,9 +1113,19 @@ onMounted(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 8px 12px;
   background: var(--color-bg);
   border-radius: 6px;
+}
+
+.category-group .category-tag {
+  flex: 0 0 150px;
+  margin-right: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .category-group .element-name {
@@ -1144,7 +1154,7 @@ onMounted(() => {
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
-  padding: 16px 0;
+  padding: 16px 20px;
 }
 
 .form-dialog :deep(.el-dialog) {

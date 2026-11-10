@@ -25,8 +25,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.company.ability.context.DimensionContext;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -170,9 +173,7 @@ public class PositionAbilityReqServiceImpl
         QueryWrapper<PositionAbilityReq> wrapper = new QueryWrapper<>();
         wrapper.orderByAsc("id");
         Page<PositionAbilityReq> result = page(page, wrapper);
-        List<PositionAbilityReqVO> voList = result.getRecords().stream()
-                .map(this::convertToVO)
-                .collect(Collectors.toList());
+        List<PositionAbilityReqVO> voList = convertToVOs(result.getRecords());
         return PageResult.from(result, voList);
     }
 
@@ -184,9 +185,7 @@ public class PositionAbilityReqServiceImpl
         wrapper.eq(PositionAbilityReq::getJobTitleId, jobTitleId)
                .orderByAsc(PositionAbilityReq::getId);
         Page<PositionAbilityReq> result = page(page, wrapper);
-        List<PositionAbilityReqVO> voList = result.getRecords().stream()
-                .map(this::convertToVO)
-                .collect(Collectors.toList());
+        List<PositionAbilityReqVO> voList = convertToVOs(result.getRecords());
         return PageResult.from(result, voList);
     }
 
@@ -248,74 +247,113 @@ public class PositionAbilityReqServiceImpl
     }
 
     private PositionAbilityReqVO convertToVO(PositionAbilityReq req) {
-        PositionAbilityReqVO vo = new PositionAbilityReqVO();
-        BeanUtils.copyProperties(req, vo);
+        List<PositionAbilityReqVO> list = convertToVOs(Collections.singletonList(req));
+        return list.isEmpty() ? null : list.get(0);
+    }
 
-        // 查询部门名称
-        try {
-            String departmentName = jdbcTemplate.queryForObject(
-                "SELECT departmentmark FROM HrmDepartment WHERE id = ?",
-                String.class,
-                req.getDepartmentId()
-            );
-            vo.setDepartmentName(departmentName);
-        } catch (Exception e) {
-            log.warn("查询部门名称失败，部门ID: {}", req.getDepartmentId());
+    /**
+     * 批量组装 VO：当前页的记录一次性取明细与各类名称，避免逐行/逐明细查库（N+1）。
+     */
+    private List<PositionAbilityReqVO> convertToVOs(List<PositionAbilityReq> reqs) {
+        if (reqs == null || reqs.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Long> reqIds = reqs.stream().map(PositionAbilityReq::getId).collect(Collectors.toList());
+
+        List<Map<String, Object>> itemRows = jdbcTemplate.queryForList(
+                "SELECT id, req_id, category_id, element_id, weight FROM uf_position_ability_req_item " +
+                        "WHERE req_id IN (" + placeholders(reqIds.size()) + ") AND dimension_id = ? ORDER BY id",
+                withDimension(reqIds));
+
+        Set<Long> departmentIds = new HashSet<>();
+        Set<Long> jobTitleIds = new HashSet<>();
+        Set<Long> categoryIds = new HashSet<>();
+        Set<Long> elementIds = new HashSet<>();
+        for (PositionAbilityReq req : reqs) {
+            if (req.getDepartmentId() != null) departmentIds.add(req.getDepartmentId());
+            if (req.getJobTitleId() != null) jobTitleIds.add(req.getJobTitleId());
+        }
+        for (Map<String, Object> row : itemRows) {
+            if (row.get("category_id") != null) categoryIds.add(num(row.get("category_id")));
+            if (row.get("element_id") != null) elementIds.add(num(row.get("element_id")));
         }
 
-        // 查询岗位名称
-        try {
-            String jobTitleName = jdbcTemplate.queryForObject(
-                "SELECT jobtitlemark FROM HrmJobTitles WHERE id = ?",
-                String.class,
-                req.getJobTitleId()
-            );
-            vo.setJobTitleName(jobTitleName);
-        } catch (Exception e) {
-            log.warn("查询岗位名称失败，岗位ID: {}", req.getJobTitleId());
+        Map<Long, String> departmentNames = loadNames(
+                "SELECT id, departmentmark AS name FROM HrmDepartment WHERE id IN (%s)", departmentIds);
+        Map<Long, String> jobTitleNames = loadNames(
+                "SELECT id, jobtitlemark AS name FROM HrmJobTitles WHERE id IN (%s)", jobTitleIds);
+        Map<Long, String> categoryNames = loadNames(
+                "SELECT id, category_name AS name FROM uf_ability_category WHERE id IN (%s)", categoryIds);
+        Map<Long, String> elementNames = loadNames(
+                "SELECT id, element_name AS name FROM uf_ability_element WHERE id IN (%s)", elementIds);
+
+        Map<Long, List<Map<String, Object>>> itemsByReq = new HashMap<>();
+        for (Map<String, Object> row : itemRows) {
+            itemsByReq.computeIfAbsent(num(row.get("req_id")), k -> new ArrayList<>()).add(row);
         }
 
-        // 查询明细
-        LambdaQueryWrapper<PositionAbilityReqItem> itemWrapper = new LambdaQueryWrapper<>();
-        itemWrapper.eq(PositionAbilityReqItem::getReqId, req.getId());
-        List<PositionAbilityReqItem> items = itemService.list(itemWrapper);
+        List<PositionAbilityReqVO> result = new ArrayList<>(reqs.size());
+        for (PositionAbilityReq req : reqs) {
+            PositionAbilityReqVO vo = new PositionAbilityReqVO();
+            BeanUtils.copyProperties(req, vo);
+            if (req.getDepartmentId() != null) {
+                vo.setDepartmentName(departmentNames.get(req.getDepartmentId()));
+            }
+            if (req.getJobTitleId() != null) {
+                vo.setJobTitleName(jobTitleNames.get(req.getJobTitleId()));
+            }
 
-        List<PositionAbilityReqVO.PositionAbilityReqItemVO> itemVOs = items.stream()
-            .map(item -> {
+            List<PositionAbilityReqVO.PositionAbilityReqItemVO> itemVOs = new ArrayList<>();
+            for (Map<String, Object> row : itemsByReq.getOrDefault(req.getId(), Collections.emptyList())) {
                 PositionAbilityReqVO.PositionAbilityReqItemVO itemVO = new PositionAbilityReqVO.PositionAbilityReqItemVO();
-                itemVO.setId(item.getId());
-                itemVO.setCategoryId(item.getCategoryId());
-                itemVO.setElementId(item.getElementId());
-                itemVO.setWeight(item.getWeight());
-
-                // 查询类别名称
-                try {
-                    String categoryName = jdbcTemplate.queryForObject(
-                        "SELECT category_name FROM uf_ability_category WHERE id = ?",
-                        String.class,
-                        item.getCategoryId()
-                    );
-                    itemVO.setCategoryName(categoryName);
-                } catch (Exception e) {
-                    log.warn("查询类别名称失败，类别ID: {}", item.getCategoryId());
+                itemVO.setId(num(row.get("id")));
+                if (row.get("category_id") != null) {
+                    long categoryId = num(row.get("category_id"));
+                    itemVO.setCategoryId(categoryId);
+                    itemVO.setCategoryName(categoryNames.get(categoryId));
                 }
-
-                // 查询要素名称
-                try {
-                    AbilityElement element = abilityElementService.getById(item.getElementId());
-                    if (element != null) {
-                        itemVO.setElementName(element.getElementName());
-                    }
-                } catch (Exception e) {
-                    log.warn("查询要素名称失败，要素ID: {}", item.getElementId());
+                if (row.get("element_id") != null) {
+                    long elementId = num(row.get("element_id"));
+                    itemVO.setElementId(elementId);
+                    itemVO.setElementName(elementNames.get(elementId));
                 }
+                itemVO.setWeight((BigDecimal) row.get("weight"));
+                itemVOs.add(itemVO);
+            }
+            vo.setItems(itemVOs);
+            result.add(vo);
+        }
+        return result;
+    }
 
-                return itemVO;
-            })
-            .collect(Collectors.toList());
+    /** 按 ID 集合批量取「id -> 名称」，缺行时对应名称为 null（与原逐条查询吞异常的行为一致）。 */
+    private Map<Long, String> loadNames(String sqlTemplate, Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return new HashMap<>();
+        }
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                String.format(sqlTemplate, placeholders(ids.size())), ids.toArray());
+        Map<Long, String> names = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            names.put(num(row.get("id")), (String) row.get("name"));
+        }
+        return names;
+    }
 
-        vo.setItems(itemVOs);
+    private Object[] withDimension(List<Long> ids) {
+        Object[] args = new Object[ids.size() + 1];
+        for (int i = 0; i < ids.size(); i++) {
+            args[i] = ids.get(i);
+        }
+        args[ids.size()] = DimensionContext.getOrDefault();
+        return args;
+    }
 
-        return vo;
+    private static String placeholders(int n) {
+        return String.join(",", Collections.nCopies(n, "?"));
+    }
+
+    private static long num(Object o) {
+        return o == null ? 0L : ((Number) o).longValue();
     }
 }

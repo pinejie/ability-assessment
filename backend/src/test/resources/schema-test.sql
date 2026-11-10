@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS HrmSubCompany (
 CREATE TABLE IF NOT EXISTS HrmDepartment (
     id BIGINT PRIMARY KEY,
     departmentname VARCHAR(100) NOT NULL,
+    departmentmark VARCHAR(100),
     canceled CHAR(1) DEFAULT '0'
 );
 

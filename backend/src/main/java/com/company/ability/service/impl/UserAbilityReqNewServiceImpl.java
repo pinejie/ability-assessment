@@ -28,9 +28,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.company.ability.context.DimensionContext;
+
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -196,9 +203,7 @@ public class UserAbilityReqNewServiceImpl
         }
         wrapper.orderByAsc("id");
         Page<UserAbilityReqNew> result = page(page, wrapper);
-        List<UserAbilityReqNewVO> voList = result.getRecords().stream()
-                .map(this::convertToVO)
-                .collect(Collectors.toList());
+        List<UserAbilityReqNewVO> voList = convertToVOs(result.getRecords());
         return PageResult.from(result, voList);
     }
 
@@ -214,78 +219,127 @@ public class UserAbilityReqNewServiceImpl
     }
 
     private UserAbilityReqNewVO convertToVO(UserAbilityReqNew req) {
-        UserAbilityReqNewVO vo = new UserAbilityReqNewVO();
-        BeanUtils.copyProperties(req, vo);
+        List<UserAbilityReqNewVO> list = convertToVOs(Collections.singletonList(req));
+        return list.isEmpty() ? null : list.get(0);
+    }
 
-        // 查询人员姓名
-        try {
-            String lastName = jdbcTemplate.queryForObject(
-                "SELECT lastname FROM HrmResource WHERE id = ?",
-                String.class,
-                req.getResourceId()
-            );
-            vo.setResourceLastName(lastName);
-        } catch (Exception e) {
-            log.warn("查询人员姓名失败，人员ID: {}", req.getResourceId());
+    /**
+     * 批量组装 VO：当前页的记录一次性取人员姓名、明细及类别/要素/等级名称，避免 N+1。
+     */
+    private List<UserAbilityReqNewVO> convertToVOs(List<UserAbilityReqNew> reqs) {
+        if (reqs == null || reqs.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Long> reqIds = reqs.stream().map(UserAbilityReqNew::getId).collect(Collectors.toList());
+
+        List<Map<String, Object>> itemRows = jdbcTemplate.queryForList(
+                "SELECT id, req_id, category_id, element_id, level_id, score FROM uf_user_ability_req_item " +
+                        "WHERE req_id IN (" + placeholders(reqIds.size()) + ") AND dimension_id = ? ORDER BY id",
+                withDimension(reqIds));
+
+        Set<Long> resourceIds = new HashSet<>();
+        Set<Long> categoryIds = new HashSet<>();
+        Set<Long> elementIds = new HashSet<>();
+        Set<Long> levelIds = new HashSet<>();
+        for (UserAbilityReqNew req : reqs) {
+            if (req.getResourceId() != null) resourceIds.add(req.getResourceId());
+        }
+        for (Map<String, Object> row : itemRows) {
+            if (row.get("category_id") != null) categoryIds.add(num(row.get("category_id")));
+            if (row.get("element_id") != null) elementIds.add(num(row.get("element_id")));
+            if (row.get("level_id") != null) levelIds.add(num(row.get("level_id")));
         }
 
-        // 查询明细
-        LambdaQueryWrapper<UserAbilityReqItem> itemWrapper = new LambdaQueryWrapper<>();
-        itemWrapper.eq(UserAbilityReqItem::getReqId, req.getId());
-        List<UserAbilityReqItem> items = itemService.list(itemWrapper);
+        Map<Long, String> resourceNames = loadNames(
+                "SELECT id, lastname AS name FROM HrmResource WHERE id IN (%s)", resourceIds);
+        Map<Long, String> categoryNames = loadNames(
+                "SELECT id, category_name AS name FROM uf_ability_category WHERE id IN (%s)", categoryIds);
+        Map<Long, String> elementNames = loadNames(
+                "SELECT id, element_name AS name FROM uf_ability_element WHERE id IN (%s)", elementIds);
 
-        List<UserAbilityReqNewVO.UserAbilityReqItemVO> itemVOs = items.stream()
-            .map(item -> {
+        Map<Long, Map<String, Object>> levels = new HashMap<>();
+        if (!levelIds.isEmpty()) {
+            List<Map<String, Object>> levelRows = jdbcTemplate.queryForList(
+                    "SELECT id, level_name, level_requirement FROM uf_ability_element_level WHERE id IN (" +
+                            placeholders(levelIds.size()) + ")", levelIds.toArray());
+            for (Map<String, Object> row : levelRows) {
+                levels.put(num(row.get("id")), row);
+            }
+        }
+
+        Map<Long, List<Map<String, Object>>> itemsByReq = new HashMap<>();
+        for (Map<String, Object> row : itemRows) {
+            itemsByReq.computeIfAbsent(num(row.get("req_id")), k -> new ArrayList<>()).add(row);
+        }
+
+        List<UserAbilityReqNewVO> result = new ArrayList<>(reqs.size());
+        for (UserAbilityReqNew req : reqs) {
+            UserAbilityReqNewVO vo = new UserAbilityReqNewVO();
+            BeanUtils.copyProperties(req, vo);
+            if (req.getResourceId() != null) {
+                vo.setResourceLastName(resourceNames.get(req.getResourceId()));
+            }
+
+            List<UserAbilityReqNewVO.UserAbilityReqItemVO> itemVOs = new ArrayList<>();
+            for (Map<String, Object> row : itemsByReq.getOrDefault(req.getId(), Collections.emptyList())) {
                 UserAbilityReqNewVO.UserAbilityReqItemVO itemVO = new UserAbilityReqNewVO.UserAbilityReqItemVO();
-                itemVO.setId(item.getId());
-                itemVO.setCategoryId(item.getCategoryId());
-                itemVO.setElementId(item.getElementId());
-                itemVO.setLevelId(item.getLevelId());
-                itemVO.setScore(item.getScore());
-
-                // 查询能力类别名称
-                if (item.getCategoryId() != null) {
-                    try {
-                        String categoryName = jdbcTemplate.queryForObject(
-                            "SELECT category_name FROM uf_ability_category WHERE id = ?",
-                            String.class,
-                            item.getCategoryId()
-                        );
-                        itemVO.setCategoryName(categoryName);
-                    } catch (Exception e) {
-                        log.warn("查询能力类别名称失败，类别ID: {}", item.getCategoryId());
+                itemVO.setId(num(row.get("id")));
+                if (row.get("category_id") != null) {
+                    long categoryId = num(row.get("category_id"));
+                    itemVO.setCategoryId(categoryId);
+                    itemVO.setCategoryName(categoryNames.get(categoryId));
+                }
+                if (row.get("element_id") != null) {
+                    long elementId = num(row.get("element_id"));
+                    itemVO.setElementId(elementId);
+                    itemVO.setElementName(elementNames.get(elementId));
+                }
+                if (row.get("level_id") != null) {
+                    long levelId = num(row.get("level_id"));
+                    itemVO.setLevelId(levelId);
+                    Map<String, Object> level = levels.get(levelId);
+                    if (level != null) {
+                        itemVO.setLevelName((String) level.get("level_name"));
+                        itemVO.setLevelRequirement((String) level.get("level_requirement"));
                     }
                 }
+                itemVO.setScore((java.math.BigDecimal) row.get("score"));
+                itemVOs.add(itemVO);
+            }
+            vo.setItems(itemVOs);
+            result.add(vo);
+        }
+        return result;
+    }
 
-                // 查询能力要素名称
-                try {
-                    AbilityElement element = abilityElementService.getById(item.getElementId());
-                    if (element != null) {
-                        itemVO.setElementName(element.getElementName());
-                    }
-                } catch (Exception e) {
-                    log.warn("查询能力要素名称失败，要素ID: {}", item.getElementId());
-                }
+    /** 按 ID 集合批量取「id -> 名称」，缺行时对应名称为 null（与原逐条查询吞异常的行为一致）。 */
+    private Map<Long, String> loadNames(String sqlTemplate, Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return new HashMap<>();
+        }
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                String.format(sqlTemplate, placeholders(ids.size())), ids.toArray());
+        Map<Long, String> names = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            names.put(num(row.get("id")), (String) row.get("name"));
+        }
+        return names;
+    }
 
-                // 查询等级信息
-                if (item.getLevelId() != null) {
-                    try {
-                        AbilityElementLevel level = abilityElementLevelService.getById(item.getLevelId());
-                        if (level != null) {
-                            itemVO.setLevelName(level.getLevelName());
-                            itemVO.setLevelRequirement(level.getLevelRequirement());
-                        }
-                    } catch (Exception e) {
-                        log.warn("查询等级信息失败，等级ID: {}", item.getLevelId());
-                    }
-                }
+    private Object[] withDimension(List<Long> ids) {
+        Object[] args = new Object[ids.size() + 1];
+        for (int i = 0; i < ids.size(); i++) {
+            args[i] = ids.get(i);
+        }
+        args[ids.size()] = DimensionContext.getOrDefault();
+        return args;
+    }
 
-                return itemVO;
-            })
-            .collect(Collectors.toList());
+    private static String placeholders(int n) {
+        return String.join(",", Collections.nCopies(n, "?"));
+    }
 
-        vo.setItems(itemVOs);
-
-        return vo;
+    private static long num(Object o) {
+        return o == null ? 0L : ((Number) o).longValue();
     }
 }

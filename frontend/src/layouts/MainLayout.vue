@@ -155,16 +155,16 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
-  { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
   { path: '/ability-categories', title: '能力类别管理', icon: '📋' },
   { path: '/ability-elements', title: '能力要素管理', icon: '🎯' },
+  { path: '/assess-config', title: '能力测评配置', icon: '🧮' },
   // { path: '/org-ability-reqs', title: '组织能力要求', icon: '🏢' },
   { path: '/position-ability-reqs', title: '岗位能力要求', icon: '💼' },
-  { path: '/assess-periods', title: '年度设置', icon: '📅' },
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
   { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
   { path: '/external-scores', title: '外部评分导入', icon: '📥' },
   { path: '/external-agent', title: '智能导入', icon: '🤖' },
+  { path: '/assess-periods', title: '年度设置', icon: '📅' },
   { path: '/assess-dimensions', title: '维度管理', icon: '🏛', adminOnly: true },
   { path: '/assess-admins', title: '管理员配置', icon: '🛡️', superOnly: true },
 ]

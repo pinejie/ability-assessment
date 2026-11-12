@@ -290,6 +290,39 @@ public class AgentSessionService {
         }
     }
 
+    /**
+     * 主动关会话：用户点「开始新批次」/换文件重来/放弃本批时调用。
+     * 不关的话 READY 批次会一直占着 ACTIVE 名额，直到闲置 30 分钟才回收——
+     * maxActive 只有 6，几次试错就撞「会话已满」，用户还得干等。
+     * 只允许关自己的会话；已关闭的重复调用按幂等处理。
+     */
+    public void closeSession(String sessionId, boolean abandonRun) {
+        Session s = sessionId == null ? null : sessions.get(sessionId);
+        if (s == null) {
+            // 已经回收掉（闲置超时/服务重启）：名额本来就还了，按幂等成功处理
+            log.info("agent 会话 {} 已不在登记表，无需关闭", sessionId);
+            return;
+        }
+        // 属主门：不能靠别人关自己的会话。run 派发线程无 HTTP 上下文，此时跳过校验。
+        LoginUser user = UserContext.currentOrNull();
+        if (user != null && s.ownerResourceId != null && !s.ownerResourceId.equals(user.resourceId())) {
+            throw new BusinessException(403, "无权操作他人会话");
+        }
+        if (s.status == Status.CLOSED) {
+            return;
+        }
+        s.lastActiveAt = LocalDateTime.now();
+        s.status = Status.CLOSED;
+        Process p = s.process;
+        if (p != null && p.isAlive()) {
+            p.destroyForcibly();
+        }
+        if (abandonRun) {
+            deleteUploads(s.id);
+        }
+        log.info("agent 会话 {} 已由用户主动关闭（abandonRun={}）", sessionId, abandonRun);
+    }
+
     public List<Map<String, Object>> history(String sessionId) {
         Session s = requireSession(sessionId);
         Path f = historyFile(s);

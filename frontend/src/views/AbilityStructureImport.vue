@@ -120,7 +120,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import { uploadAgentFile, commitAgentDraft, listAgentDrafts } from '@/api/agent'
 import {
-  answerRun, completeRun, createRun, getRun, startRun, subscribeRun,
+  answerRun, closeRun, completeRun, createRun, getRun, startRun, subscribeRun,
   type AskQuestion, type ImportRun,
 } from '@/api/importRun'
 import {
@@ -200,6 +200,7 @@ async function start(): Promise<void> {
   if (!pickedFile.value || starting.value) return
   starting.value = true
   stopWatch()
+  await releaseRun()
   try {
     // kind 决定后端选哪套提示词与交付稿 schema（sql/33）
     const created = await createRun(undefined, 'ABILITY_STRUCTURE')
@@ -223,10 +224,27 @@ function newBatch(): void {
     }
   }
   stopWatch()
+  void releaseRun()
   run.value = null
   clearStage()
   pickedFile.value = null
   lastOpen.value = false
+}
+
+/**
+ * 关掉当前批次占用的 agent 会话。
+ * 不关的话 READY / 已放弃的批次会一直占着 ACTIVE 名额（池子只有 6 个，
+ * 而且要闲置 30 分钟才回收），用户试错几轮就撞「会话已满」。
+ * 失败只影响名额回收，不该拦住用户继续操作，故吞掉异常。
+ */
+async function releaseRun(): Promise<void> {
+  const id = run.value?.id
+  if (!id) return
+  try {
+    await closeRun(id)
+  } catch {
+    /* 会话已回收/已被关：忽略 */
+  }
 }
 
 function clearStage(): void {
@@ -376,7 +394,17 @@ function errText(e: unknown): string {
   return err?.response?.data?.message || err?.message || '请求失败'
 }
 
-onBeforeUnmount(stopWatch)
+/**
+ * 离开页面时释放会话：只放「已经停在人手上」的状态（READY/DONE/REJECTED 等）。
+ * PARSING/NEED_INPUT/WRITING 还在 agent 手里跑，关掉会把批次卡死在半路，
+ * 那几种交给闲置回收兜底。
+ */
+const LEAVABLE = ['READY', 'DONE', 'REJECTED', 'STALE', 'EXHAUSTED', 'FAILED_RETRYABLE']
+onBeforeUnmount(() => {
+  stopWatch()
+  if (run.value && LEAVABLE.includes(run.value.status)) void releaseRun()
+})
+
 </script>
 
 <style scoped>

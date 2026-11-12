@@ -79,6 +79,25 @@ class AgentSessionServiceTest {
     }
 
     @Test
+    @DisplayName("closeSession：本人可关并释放名额；他人 403；未知/已关幂等")
+    void closeSessionReleasesSlot() {
+        String sid = (String) service.createSession().get("sessionId");
+        assertThat(service.isLiveSession(sid)).isTrue();
+        service.closeSession(sid, true);
+        assertThat(service.isLiveSession(sid)).as("关掉后名额应立即释放").isFalse();
+        // 幂等：重复关不抛
+        service.closeSession(sid, true);
+        // 未知 id 也按幂等成功（已被回收时前端不必区分）
+        service.closeSession("no-such-session", true);
+        service.closeSession(null, false);
+
+        String other = (String) service.createSession().get("sessionId");
+        asUser("bob", 22L);
+        assertThatThrownBy(() -> service.closeSession(other, true))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权");
+    }
+
+    @Test
     @DisplayName("会话回收（闲置超窗）→ 上传目录连带删除，防弃用文件堆积")
     void reapDeletesSessionUploadsDir() throws Exception {
         // idleMinutes=0：任何会话一经巡检即过期回收

@@ -38,6 +38,10 @@ export const exitRun = (id: number, to: 'chat' | 'manual' | 'abandon'): Promise<
 export const completeRun = (id: number, result: unknown): Promise<void> =>
   request.post(`/external/import-runs/${id}/complete`, { result: JSON.stringify(result) })
 
+/** 主动关会话释放名额（换文件重来/开始新批次时调；dropUploads 顺手清上传原件） */
+export const closeRun = (id: number, dropUploads = true): Promise<void> =>
+  request.post(`/external/import-runs/${id}/close`, { dropUploads })
+
 export const getRun = (id: number): Promise<ImportRun> => request.get(`/external/import-runs/${id}`)
 
 export const runHistory = (): Promise<{ id: number; file_name: string; status: string; year: number | null;

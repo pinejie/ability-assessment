@@ -384,10 +384,10 @@ public class AgentImportRunService {
         return null;
     }
 
-    /** EXHAUSTED/FAILED 出口：chat（同会话转人工）/ manual（转表单）/ abandon（放弃） */
+    /** EXHAUSTED/FAILED/NEED_INPUT/READY 出口：chat（同会话转人工）/ manual（转表单）/ abandon（放弃） */
     public Map<String, Object> exitRun(long runId, String to) {
         Map<String, Object> run = requireOwnedRun(runId);
-        if (!List.of(S_EXHAUSTED, S_FAILED, S_NEED_INPUT).contains((String) run.get("status"))) {
+        if (!List.of(S_EXHAUSTED, S_FAILED, S_NEED_INPUT, S_READY).contains((String) run.get("status"))) {
             throw new BusinessException(409, "当前状态无出口可选：" + run.get("status"));
         }
         String status = switch (to) {
@@ -397,6 +397,10 @@ public class AgentImportRunService {
             default -> throw new BusinessException(400, "未知出口：" + to);
         };
         update(runId, status, null, null, "abandon".equals(to) ? "用户放弃本批" : null, null, null);
+        // abandon：放弃本批，会话与上传原件都清掉，立刻还名额
+        if ("abandon".equals(to)) {
+            closeRunSession(runId, true);
+        }
         return snapshot(runId);
     }
 
@@ -409,6 +413,24 @@ public class AgentImportRunService {
         update(runId, S_DONE, null, null, null, null, null);
         jdbc.update("UPDATE uf_assess_import_run SET result_json=? WHERE id=?", resultJson, runId);
         broadcast(runId, Map.of("type", "run", "status", S_DONE));
+        // 批次已写入成功：会话不再需要，立刻释放名额（不释放要等闲置 30 分钟才回收）
+        closeRunSession(runId, false);
+    }
+
+    /**
+     * 关掉批次占用的 agent 会话，释放 maxActive 名额。
+     * 用户点「开始新批次」或批次已 DONE 时调用；失败只告警——名额最坏情况由闲置回收兜底。
+     */
+    public void closeRunSession(long runId, boolean dropUploads) {
+        try {
+            Map<String, Object> run = requireOwnedRun(runId);
+            String sessionId = (String) run.get("session_id");
+            if (sessionId != null) {
+                sessionService.closeSession(sessionId, dropUploads);
+            }
+        } catch (Exception e) {
+            log.warn("关闭批次 {} 的会话失败（不影响主流程，闲置回收兜底）：{}", runId, e.getMessage());
+        }
     }
 
     /** 排队起轮：等待该会话上一轮 CLI 进程退出（最多 120 秒），再做本轮 */

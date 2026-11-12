@@ -69,8 +69,9 @@
         <el-option label="部门" value="DEPARTMENT" />
         <el-option label="岗位" value="JOB_TITLE" />
       </el-select>
-      <el-select v-model="matchKeyword" filterable remote :remote-method="searchTargets"
-                 :loading="searching" placeholder="输入关键字搜索" class="match-input">
+      <!-- v-model 必须绑选中值：远程搜索的关键字走 remote-method，不能占用 v-model -->
+      <el-select v-model="matchTargetId" filterable remote :remote-method="searchTargets"
+                 :loading="searching" placeholder="输入关键字搜索" class="match-input" clearable>
         <el-option v-for="o in matchOptions" :key="o.id" :label="o.label" :value="o.id" />
       </el-select>
       <div class="match-hint">确认后会记住这条对应关系，同写法的文件下次自动匹配。</div>
@@ -128,7 +129,6 @@ function statusText(s: string): string {
 const matchOpen = ref(false)
 const matchRow = ref<StructureLine | null>(null)
 const matchKind = ref<'DEPARTMENT' | 'JOB_TITLE'>('DEPARTMENT')
-const matchKeyword = ref('')
 const matchTargetId = ref<number | null>(null)
 const matchTargetName = ref('')
 const matchOptions = ref<{ id: number; label: string }[]>([])
@@ -137,11 +137,11 @@ const searching = ref(false)
 function openMatch(row: StructureLine): void {
   matchRow.value = row
   matchKind.value = row.section === 'USER' ? 'JOB_TITLE' : 'DEPARTMENT'
-  matchKeyword.value = ''; matchTargetId.value = null; matchOptions.value = []
+  matchTargetId.value = null; matchOptions.value = []
   matchOpen.value = true
 }
 function onKindChange(): void {
-  matchKeyword.value = ''; matchTargetId.value = null; matchOptions.value = []
+  matchTargetId.value = null; matchOptions.value = []
 }
 
 async function searchTargets(kw: string): Promise<void> {

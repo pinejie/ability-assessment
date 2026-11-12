@@ -107,7 +107,7 @@ import { Upload } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { uploadAgentFile, commitAgentDraft, listAgentDrafts, type AgentDraftPayload, type DraftSkippedRow } from '@/api/agent'
 import {
-  answerRun, completeRun, createRun, exitRun, getRun, startRun, subscribeRun,
+  answerRun, closeRun, completeRun, createRun, exitRun, getRun, startRun, subscribeRun,
   type AskQuestion, type ImportRun,
 } from '@/api/importRun'
 import RunAskCard from '@/components/import/RunAskCard.vue'
@@ -173,6 +173,7 @@ async function start(): Promise<void> {
   if (!pickedFile.value || starting.value) return
   starting.value = true
   stopWatch()
+  await releaseRun()
   try {
     const created = await createRun()
     const up = await uploadAgentFile(pickedFile.value, created.sessionId)
@@ -196,11 +197,26 @@ function newBatch(): void {
     lastSummary.value = { id: run.value.id, text, persons: [...receipt.value], skipped: [...draftSkipped.value] }
   }
   stopWatch()
+  void releaseRun()
   run.value = null
   chatOpen.value = false
   clearStageRefs()
   pickedFile.value = null
   lastOpen.value = false
+}
+
+/**
+ * 关掉当前批次占用的 agent 会话：池子只有 6 个名额，且闲置 30 分钟才回收，
+ * READY/已放弃的批次不主动关，用户试错几轮就撞「会话已满」。
+ */
+async function releaseRun(): Promise<void> {
+  const id = run.value?.id
+  if (!id) return
+  try {
+    await closeRun(id)
+  } catch {
+    /* 会话已回收/已被关：忽略 */
+  }
 }
 
 function clearStageRefs(): void {
@@ -298,6 +314,8 @@ async function toChat(): Promise<void> {
 }
 async function toManual(): Promise<void> {
   if (run.value) await exitRun(run.value.id, 'manual')
+  // 转手工后 agent 会话再也用不上了，立刻还名额
+  await releaseRun()
   void router.push('/external-scores')
 }
 async function toAbandon(): Promise<void> {
@@ -317,7 +335,13 @@ function errText(e: unknown): string {
   return err?.response?.data?.message || err?.message || '请求失败'
 }
 
-onBeforeUnmount(stopWatch)
+/** 离开页面时释放会话：只放停在人手上的状态，跑着的批次交给闲置回收兜底 */
+const LEAVABLE = ['READY', 'DONE', 'REJECTED', 'STALE', 'EXHAUSTED', 'FAILED_RETRYABLE', 'MANUAL']
+onBeforeUnmount(() => {
+  stopWatch()
+  if (run.value && LEAVABLE.includes(run.value.status)) void releaseRun()
+})
+
 </script>
 
 <style scoped>

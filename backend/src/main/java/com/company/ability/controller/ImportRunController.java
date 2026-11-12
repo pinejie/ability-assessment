@@ -77,6 +77,14 @@ public class ImportRunController {
         return Result.success(runService.exitRun(id, String.valueOf(body.get("to"))));
     }
 
+    @Operation(summary = "主动关批次会话（换文件重来/开始新批次；不透支 6 个会话名额）")
+    @PostMapping("/api/v1/external/import-runs/{id}/close")
+    public Result<Void> close(@PathVariable long id, @RequestBody(required = false) Map<String, Object> body) {
+        boolean dropUploads = body == null || Boolean.parseBoolean(String.valueOf(body.getOrDefault("dropUploads", "true")));
+        runService.closeRunSession(id, dropUploads);
+        return Result.success();
+    }
+
     @Operation(summary = "commitDraft 成功后收尾（回执入库）")
     @PostMapping("/api/v1/external/import-runs/{id}/complete")
     public Result<Void> complete(@PathVariable long id, @RequestBody Map<String, Object> body) {

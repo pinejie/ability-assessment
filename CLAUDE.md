@@ -47,6 +47,14 @@ mvn clean package -DskipTests
 mvn test
 ```
 
+### E2E（接口级，连真实 ecology 库）
+
+```bash
+# 前置：后端已在 8080 跑；pip3 install pymssql pyyaml pyjwt
+# 自带前后清场，跑完库表行数应与开跑前一致；会真写 ecology 库，别指向生产
+python3 e2e/structure-import-e2e.py
+```
+
 ### 前端（Vue 3）
 
 ```bash
@@ -104,6 +112,9 @@ ability-assessment/
 │   │   │       └── application.yml   # 主配置（dev profile）
 │   │   └── test/                     # 测试（需修复，见「已知问题」）
 │   └── pom.xml
+│
+├── e2e/                              # 接口级 E2E（直连真实库，自带清场）
+│   └── structure-import-e2e.py       # 能力结构导入验收矩阵（方案 14 §十）
 │
 ├── frontend/                         # 前端（Vue 3）
 │   ├── src/

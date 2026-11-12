@@ -1,10 +1,12 @@
 package com.company.ability.service;
 
 import com.company.ability.context.DimensionContext;
+import com.company.ability.dto.AbilityStructureDTO;
 import com.company.ability.dto.ExternalScoreDTO;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.security.LoginUser;
 import com.company.ability.security.UserContext;
+import com.company.ability.vo.AbilityStructureVO;
 import com.company.ability.vo.ExternalScoreVO;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,6 +50,7 @@ public class AgentBridgeService {
     private final AssessDimensionService dimensionService;
     private final AdminService adminService;
     private final AgentSessionService sessionService;
+    private final AbilityStructureImportService structureImportService;
 
     private final boolean enabled;
     private final String internalToken;
@@ -60,6 +63,7 @@ public class AgentBridgeService {
                               AssessDimensionService dimensionService,
                               AdminService adminService,
                               AgentSessionService sessionService,
+                              AbilityStructureImportService structureImportService,
                               @Value("${agent.enabled:false}") boolean enabled,
                               @Value("${agent.internal-token:}") String internalToken,
                               @Value("${assess.company-id:1}") long companyId,
@@ -71,6 +75,7 @@ public class AgentBridgeService {
         this.dimensionService = dimensionService;
         this.adminService = adminService;
         this.sessionService = sessionService;
+        this.structureImportService = structureImportService;
         this.enabled = enabled;
         this.internalToken = internalToken;
         this.companyId = companyId;
@@ -92,6 +97,11 @@ public class AgentBridgeService {
             payload = mapper.readTree(payloadJson);
         } catch (Exception e) {
             throw new BusinessException(400, "载荷不是合法 JSON");
+        }
+        // 交付稿类型（sql/33）：缺省为评分导入；结构导入走各自的解析与校验
+        String draftKind = payload.path("kind").asText(AgentImportRunService.KIND_EXTERNAL).trim().toUpperCase();
+        if (AgentImportRunService.KIND_STRUCTURE.equals(draftKind)) {
+            return submitStructureDraft(payload, payloadJson, validateOnly);
         }
         Resolution res = resolveDraft(payload);
         requireBatchDimensionMatch(payload.path("sessionId").asText(""), res.dimensionId);
@@ -121,13 +131,69 @@ public class AgentBridgeService {
             return out;
         }
 
-        long draftId = insertDraft(res, payloadJson);
+        long draftId = insertDraft(res, payloadJson, draftKind);
         out.put("ok", true);
         out.put("draftId", draftId);
         out.put("ready", true);
         out.put("expiresAt", LocalDateTime.now().plusMinutes(idleMinutes)
                 .isBefore(LocalDateTime.now().plusHours(maxHours))
                 ? LocalDateTime.now().plusMinutes(idleMinutes) : LocalDateTime.now().plusHours(maxHours));
+        return out;
+    }
+
+    /**
+     * 能力结构交付稿（方案 14）：解析 → 确定性校验 → 落稿。校验未过不落稿；
+     * 行对账沿用评分导入同一套（file_rows 与 skipped/coveredRows）。
+     */
+    private Map<String, Object> submitStructureDraft(JsonNode payload, String payloadJson, boolean validateOnly) {
+        AbilityStructureDTO dto;
+        try {
+            dto = mapper.treeToValue(payload, AbilityStructureDTO.class);
+        } catch (Exception e) {
+            throw new BusinessException(400, "结构交付稿格式不合法：" + e.getMessage());
+        }
+        String sessionId = payload.path("sessionId").asText("");
+        if (!sessionId.matches("[0-9a-z-A-Z_-]{1,64}")) {
+            throw new BusinessException(400, "载荷缺少合法 sessionId");
+        }
+        if (!sessionService.isLiveSession(sessionId)) {
+            throw new BusinessException(400, "会话不存在或已结束，交付被拒");
+        }
+        Long explicitDim = dto.getDimensionId();
+        long dimensionId = explicitDim == null
+                ? com.company.ability.context.DimensionContext.getOrDefault() : explicitDim;
+        requireBatchDimensionMatch(sessionId, dimensionId);
+
+        AbilityStructureVO.PreviewResult preview = withDimension(dimensionId,
+                () -> structureImportService.preview(dto, sessionId));
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("lines", preview.getLines());
+        out.put("counts", preview.getCounts());
+        if (!preview.isCommitable()) {
+            out.put("ok", false);
+            out.put("ready", false);
+            return out;
+        }
+        // 行对账在 validate 阶段就要过：让模型自己补齐 coveredRows/skipped 再来 deliver，
+        // 而不是把"哪一行没交代"甩给用户回答（用户无从作答，只会白烧一轮）
+        String reconciliation = reconcileStructureCoverage(payload);
+        if (reconciliation != null) {
+            out.put("ok", false);
+            out.put("ready", false);
+            out.put("reconciliation", reconciliation);
+            return out;
+        }
+        if (validateOnly) {
+            out.put("ok", true);
+            out.put("validateOnly", true);
+            return out;
+        }
+        long draftId = insertDraft(sessionId, preview.getYear(), dimensionId, payloadJson,
+                AgentImportRunService.KIND_STRUCTURE);
+        out.put("ok", true);
+        out.put("draftId", draftId);
+        out.put("ready", true);
         return out;
     }
 
@@ -145,6 +211,105 @@ public class AgentBridgeService {
         } catch (org.springframework.dao.DataAccessException e) {
             log.warn("记录 file_rows 失败（请确认 sql/29 已应用到库）：{}", e.getMessage());
         }
+    }
+
+    /** parse_structure_file 上报各 sheet 的数据行块（cp_server 尽力调用，供结构交付稿对账）。 */
+    public void recordStructureStats(String agentToken, String sessionId, JsonNode sheets) {
+        requireEnabled();
+        checkInternalToken(agentToken);
+        if (sessionId == null || !sessionId.matches("[0-9a-zA-Z_-]{1,64}") || sheets == null || !sheets.isArray()
+                || sheets.size() > 50) {
+            throw new BusinessException(400, "参数不合法");
+        }
+        int total = 0;
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (JsonNode s : sheets) {
+            int first = s.path("firstLine").asInt(0);
+            int last = s.path("lastLine").asInt(0);
+            int count = s.path("rows").asInt(0);
+            if (first < 1 || last < first || last > 100000 || count <= 0 || count > 20000) {
+                throw new BusinessException(400, "sheet 行块不合法");
+            }
+            total += count;
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("name", s.path("name").asText("").length() > 100
+                    ? s.path("name").asText("").substring(0, 100) : s.path("name").asText(""));
+            one.put("kind", s.path("kind").asText("other"));
+            one.put("firstLine", first);
+            one.put("lastLine", last);
+            one.put("rows", count);
+            normalized.add(one);
+        }
+        if (total > 20000) {
+            throw new BusinessException(400, "文件行数超出上限");
+        }
+        try {
+            jdbc.update("UPDATE uf_assess_import_run SET structure_file_stats = ? WHERE session_id = ? AND company_id = ?",
+                    mapper.writeValueAsString(normalized), sessionId, companyId);
+        } catch (Exception e) {
+            log.warn("记录 structure_file_rows 失败（请确认 sql/33 已应用到库）：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 能力结构交付稿行对账：与评分导入（物理行号 2..file_rows+1）不同，结构工作簿有多张 sheet，
+     * 行号必须带表名定位。parse_structure_file 上报每张纳入解析的表的数据行块，
+     * 稿里的 coveredRows 用「表名!行号」字符串 / skipped[].rowNo 同样带表名，两块必须完全覆盖。
+     * 未上报（旧文件/未经 parse）→ 放行；unreconciled（轮次耗尽强制成稿）→ 放行。
+     */
+    private String reconcileStructureCoverage(JsonNode payload) {
+        if (payload.path("unreconciled").asBoolean(false)) {
+            return null;
+        }
+        String sessionId = payload.path("sessionId").asText("");
+        String statsJson;
+        try {
+            statsJson = jdbc.queryForObject(
+                    "SELECT structure_file_stats FROM uf_assess_import_run WHERE session_id = ? AND company_id = ?",
+                    String.class, sessionId, companyId);
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.warn("结构交付稿对账跳过（structure_file_stats 查询失败，请确认 sql/33 已应用到库）：{}", e.getMessage());
+            return null;
+        }
+        if (statsJson == null || statsJson.isBlank()) {
+            return null;
+        }
+        JsonNode stats;
+        try {
+            stats = mapper.readTree(statsJson);
+        } catch (Exception e) {
+            return null;
+        }
+        java.util.Set<String> declared = new java.util.TreeSet<>();
+        payload.path("coveredRows").forEach(n -> declared.add(n.asText()));
+        payload.path("skipped").forEach(n -> declared.add(n.path("rowNo").asText()));
+        declared.removeIf(s -> s == null || s.isBlank());
+        List<String> missing = new ArrayList<>();
+        int total = 0;
+        for (JsonNode s : stats) {
+            String name = s.path("name").asText("");
+            int first = s.path("firstLine").asInt(0);
+            int last = s.path("lastLine").asInt(0);
+            total += s.path("rows").asInt(0);
+            for (int line = first; line <= last; line++) {
+                if (!declared.contains(name + "!" + line)) {
+                    missing.add(name + "!" + line);
+                    if (missing.size() >= 20) {
+                        break;
+                    }
+                }
+            }
+            if (missing.size() >= 20) {
+                break;
+            }
+        }
+        if (missing.isEmpty()) {
+            return null;
+        }
+        return "结构文件共 " + total + " 行数据（多表，行号须写成「表名!行号」）：未交代去向例如 " + missing
+                + "；deliver 必须交代每一张结构表的数据行——入稿行放 coveredRows，未导入行放"
+                + " skipped[{rowNo:'表名!行号',raw,reason}]（标题/说明行、重复表、无能力要求、查无此人、读不懂的列都算 skipped）；"
+                + "信息不足时先 submit_outcome kind=ask 问用户。";
     }
 
     /**
@@ -236,7 +401,7 @@ public class AgentBridgeService {
     public List<Map<String, Object>> listDrafts(String sessionId) {
         requireEnabled();
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT TOP 5 id, year, dimension_id, status, payload_json," +
+                "SELECT TOP 5 id, kind, year, dimension_id, status, payload_json," +
                 "       CONVERT(VARCHAR(19), ready_time, 120) AS ready_time," +
                 "       CONVERT(VARCHAR(19), last_seen_time, 120) AS last_seen_time" +
                 " FROM uf_assess_agent_draft WHERE session_id = ? AND company_id = ? ORDER BY id DESC",
@@ -260,6 +425,7 @@ public class AgentBridgeService {
             }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", id);
+            item.put("kind", row.get("kind"));
             item.put("year", row.get("year"));
             item.put("dimensionId", row.get("dimension_id"));
             item.put("status", status);
@@ -282,7 +448,7 @@ public class AgentBridgeService {
             throw new BusinessException(401, "写入需要登录身份");
         }
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, session_id, year, dimension_id, status, payload_json, commit_time," +
+                "SELECT id, session_id, kind, year, dimension_id, status, payload_json, commit_time," +
                 "       CONVERT(VARCHAR(19), ready_time, 120) AS ready_time," +
                 "       CONVERT(VARCHAR(19), last_seen_time, 120) AS last_seen_time" +
                 " FROM uf_assess_agent_draft WHERE id = ? AND company_id = ?", draftId, companyId);
@@ -311,6 +477,10 @@ public class AgentBridgeService {
             throw new BusinessException(400, "交付稿损坏");
         }
         long dimensionId = ((Number) row.get("dimension_id")).longValue();
+        // 类型路由（sql/33）：结构导入走 AbilityStructureImportService，评分导入维持原路径
+        if (AgentImportRunService.KIND_STRUCTURE.equals(String.valueOf(row.get("kind")))) {
+            return commitStructureDraft(row, user, dimensionId);
+        }
 
         // 提交前重校验：期间钩子/流程可能改了底层数据（方案 §4 第 4 步）
         ExternalScoreVO.PreviewResult check = withDimension(dimensionId,
@@ -343,6 +513,40 @@ public class AgentBridgeService {
         out.put("rejected", false);
         out.put("result", mapper.convertValue(result, Map.class));
         return out;
+    }
+
+    /** 结构交付稿写入：重校验 → 单事务写结构 → 事务外逐人同步汇总 */
+    private Map<String, Object> commitStructureDraft(Map<String, Object> row, LoginUser user, long dimensionId) {
+        long draftId = ((Number) row.get("id")).longValue();
+        AbilityStructureDTO dto;
+        try {
+            dto = mapper.readValue(String.valueOf(row.get("payload_json")), AbilityStructureDTO.class);
+        } catch (Exception e) {
+            throw new BusinessException(400, "交付稿损坏");
+        }
+        Long batchId = jdbc.queryForList(
+                "SELECT id FROM uf_assess_import_run WHERE draft_id = ? AND company_id = ?",
+                Long.class, draftId, companyId).stream().findFirst().orElse(null);
+
+        AbilityStructureVO.CommitResult result = withDimension(dimensionId,
+                () -> structureImportService.commit(dto, String.valueOf(row.get("session_id")), batchId));
+
+        boolean clean = result.getFailed() == null || result.getFailed().isEmpty();
+        jdbc.update("UPDATE uf_assess_agent_draft SET status=?, commit_time=SYSDATETIME(), commit_by=?," +
+                        " commit_result=? WHERE id = ?",
+                clean ? "COMMITTED" : "READY", user.resourceId(), summarizeStructure(result), draftId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("rejected", false);
+        out.put("result", result);
+        return out;
+    }
+
+    private String summarizeStructure(AbilityStructureVO.CommitResult result) {
+        AbilityStructureVO.Counts c = result.getCounts();
+        return String.format("类别新增 %d/跳过 %d，要素新增 %d/跳过 %d，等级 %d，岗位新增 %d/覆盖 %d/保留 %d，人员新增 %d",
+                c.getCategoryCreate(), c.getCategorySkip(), c.getElementCreate(), c.getElementSkip(),
+                c.getLevelCreate(), c.getPositionCreate(), c.getPositionOverwrite(), c.getPositionKeep(),
+                c.getUserCreate());
     }
 
     // ==================== 内部 ====================
@@ -445,17 +649,27 @@ public class AgentBridgeService {
         return req;
     }
 
-    private long insertDraft(Resolution res, String payloadJson) {
+    private long insertDraft(Resolution res, String payloadJson, String kind) {
+        return insertDraft(res.sessionId(), res.request().getYear(), res.dimensionId(), payloadJson, kind);
+    }
+
+    /** 落稿。结构导入的年度来自载荷（可空），评分导入恒有年度。 */
+    private long insertDraft(String sessionId, Integer year, long dimensionId, String payloadJson, String kind) {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbc.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                    "INSERT INTO uf_assess_agent_draft (session_id, company_id, year, dimension_id, payload_json)" +
-                    " VALUES (?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS);
-            ps.setString(1, res.sessionId());
+                    "INSERT INTO uf_assess_agent_draft (session_id, company_id, year, dimension_id, payload_json, kind)" +
+                    " VALUES (?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, sessionId);
             ps.setLong(2, companyId);
-            ps.setInt(3, res.request().getYear());
-            ps.setLong(4, res.dimensionId());
+            if (year == null) {
+                ps.setNull(3, java.sql.Types.INTEGER);
+            } else {
+                ps.setInt(3, year);
+            }
+            ps.setLong(4, dimensionId);
             ps.setString(5, payloadJson);
+            ps.setString(6, kind);
             return ps;
         }, kh);
         Number key = kh.getKey();

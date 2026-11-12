@@ -3,6 +3,7 @@ package com.company.ability.service;
 import com.company.ability.context.DimensionContext;
 import com.company.ability.exception.BusinessException;
 import com.company.ability.security.LoginUser;
+import com.company.ability.vo.AbilityStructureVO;
 import com.company.ability.vo.ExternalScoreVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -45,6 +46,10 @@ import static org.mockito.Mockito.when;
 class AgentBridgeServiceTest {
 
     private static final String TOKEN = "cp-test-internal-token";
+    private static final String STRUCTURE_PAYLOAD =
+            "{\"kind\":\"ABILITY_STRUCTURE\",\"sessionId\":\"s-1\",\"dimensionId\":3," +
+            "\"categories\":[{\"name\":\"安全环保\"}],\"elements\":[]}";
+
     private static final String PAYLOAD =
             "{\"sessionId\":\"s-1\",\"year\":2026,\"rows\":[{\"kind\":\"RATING\",\"resourceId\":224," +
             "\"elementId\":32,\"levelNo\":4,\"originalScore\":88}]}";
@@ -54,13 +59,14 @@ class AgentBridgeServiceTest {
     @Mock private AssessDimensionService dimensionService;
     @Mock private com.company.ability.service.AdminService adminService;
     @Mock private AgentSessionService sessionService;
+    @Mock private AbilityStructureImportService structureImportService;
 
     private AgentBridgeService service;
 
     @BeforeEach
     void setUp() {
         service = new AgentBridgeService(jdbc, new ObjectMapper(), externalScoreService,
-                dimensionService, adminService, sessionService, true, TOKEN, 1L, 30, 2);
+                dimensionService, adminService, sessionService, structureImportService, true, TOKEN, 1L, 30, 2);
         LoginUser user = new LoginUser("tester", 900L, "测试员", 10L, 1L);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(user, null, List.of()));
@@ -115,6 +121,46 @@ class AgentBridgeServiceTest {
         when(jdbc.queryForList(contains("uf_assess_sheet s"), any(Object[].class))).thenReturn(List.of());
         assertThatThrownBy(() -> service.submitDraft(TOKEN, PAYLOAD, false))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("无测评页面");
+    }
+
+    @Test
+    @DisplayName("submitDraft：结构导入稿校验未过 → 返回行结果不落稿")
+    void structureDraftBlockedNotPersisted() {
+        AbilityStructureVO.PreviewResult blocked = new AbilityStructureVO.PreviewResult();
+        AbilityStructureVO.Line line = new AbilityStructureVO.Line();
+        line.setSection("ELEMENT");
+        line.setName("风险辨识");
+        line.setStatus("BLOCK");
+        line.setMessage("缺少等级描述");
+        blocked.setLines(List.of(line));
+        blocked.setCounts(new AbilityStructureVO.Counts());
+        blocked.setCommitable(false);
+        when(structureImportService.preview(any(), any())).thenReturn(blocked);
+
+        Map<String, Object> out = service.submitDraft(TOKEN, STRUCTURE_PAYLOAD, false);
+        assertThat(out.get("ok")).isEqualTo(false);
+        assertThat(out.get("ready")).isEqualTo(false);
+        verify(jdbc, never()).update(any(org.springframework.jdbc.core.PreparedStatementCreator.class),
+                any(GeneratedKeyHolder.class));
+    }
+
+    @Test
+    @DisplayName("submitDraft：结构导入稿校验通过 → 落稿 kind=ABILITY_STRUCTURE，年度可空")
+    void structureDraftPersisted() {
+        AbilityStructureVO.PreviewResult ok = new AbilityStructureVO.PreviewResult();
+        ok.setLines(List.of());
+        ok.setCounts(new AbilityStructureVO.Counts());
+        ok.setCommitable(true);
+        ok.setYear(null);
+        when(structureImportService.preview(any(), any())).thenReturn(ok);
+        when(jdbc.update(any(org.springframework.jdbc.core.PreparedStatementCreator.class),
+                any(GeneratedKeyHolder.class))).thenAnswer(inv -> {
+                    ((GeneratedKeyHolder) inv.getArgument(1)).getKeyList().add(Map.of("KEY", 77L));
+                    return 1;
+                });
+        Map<String, Object> out = service.submitDraft(TOKEN, STRUCTURE_PAYLOAD, false);
+        assertThat(out.get("draftId")).isEqualTo(77L);
+        assertThat(out.get("ready")).isEqualTo(true);
     }
 
     @Test
@@ -204,6 +250,82 @@ class AgentBridgeServiceTest {
         assertThat(out.get("draftId")).isEqualTo(42L);
     }
 
+    // ==================== 结构交付稿多 sheet 行对账 ====================
+
+    @Test
+    @DisplayName("结构对账：structure_file_stats 未上报（旧文件/未经 parse）→ 跳过对账，正常成稿")
+    void structureReconcileSkippedWhenStatsUnknown() {
+        stubStructureOk(); stubKeyHolder();
+        when(jdbc.queryForObject(contains("structure_file_stats"), eq(String.class),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(null);
+        assertThat(service.submitDraft(TOKEN, STRUCTURE_PAYLOAD, false).get("draftId")).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("结构对账：某表有行未交代去向 → 拒稿，提示行号须写「表名!行号」")
+    void structureReconcileRejectsMissingRowFate() {
+        stubStructureOk();
+        stubStructureStats("[{\"name\":\"能力素质行为表现库\",\"firstLine\":3,\"lastLine\":5,\"rows\":3}]");
+        String payload = STRUCTURE_PAYLOAD.replace("\"elements\":[]",
+                "\"elements\":[],\"coveredRows\":[\"能力素质行为表现库!3\"],"
+                        + "\"skipped\":[{\"rowNo\":\"能力素质行为表现库!4\",\"reason\":\"标题行\"}]");
+        Map<String, Object> out = service.submitDraft(TOKEN, payload, false);
+        assertThat(out.get("ok")).isEqualTo(false);
+        assertThat(String.valueOf(out.get("reconciliation")))
+                .contains("能力素质行为表现库!5").contains("表名!行号");
+        verify(jdbc, never()).update(any(org.springframework.jdbc.core.PreparedStatementCreator.class),
+                any(GeneratedKeyHolder.class));
+    }
+
+    @Test
+    @DisplayName("结构对账：每张表每一行都交代（入稿+跳过）→ 成稿")
+    void structureReconcilePass() {
+        stubStructureOk(); stubKeyHolder();
+        stubStructureStats("[{\"name\":\"行为表现库\",\"firstLine\":3,\"lastLine\":4,\"rows\":2}," +
+                "{\"name\":\"模型表\",\"firstLine\":3,\"lastLine\":3,\"rows\":1}]");
+        String payload = STRUCTURE_PAYLOAD.replace("\"elements\":[]",
+                "\"elements\":[],\"coveredRows\":[\"行为表现库!3\",\"模型表!3\"],"
+                        + "\"skipped\":[{\"rowNo\":\"行为表现库!4\",\"raw\":\"备注\",\"reason\":\"说明行\"}]");
+        assertThat(service.submitDraft(TOKEN, payload, false).get("draftId")).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("结构对账：unreconciled 豁免标记 → 放行（轮次耗尽强制成稿）")
+    void structureReconcileUnreconciledBypass() {
+        stubStructureOk(); stubKeyHolder();
+        stubStructureStats("[{\"name\":\"行为表现库\",\"firstLine\":3,\"lastLine\":9,\"rows\":7}]");
+        String payload = STRUCTURE_PAYLOAD.replace("\"elements\":[]", "\"elements\":[],\"unreconciled\":true");
+        assertThat(service.submitDraft(TOKEN, payload, false).get("draftId")).isEqualTo(42L);
+    }
+
+    @Test
+    @DisplayName("recordStructureStats：行块归一化后落库；越界行块/错误令牌一律拒绝")
+    void recordStructureStatsWritesNormalized() {
+        assertThatThrownBy(() -> service.recordStructureStats("nope", "s-1", new ObjectMapper().createArrayNode()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("内部令牌无效");
+        com.fasterxml.jackson.databind.node.ArrayNode bad = new ObjectMapper().createArrayNode();
+        bad.addObject().put("name", "x").put("firstLine", 9).put("lastLine", 3).put("rows", 1);
+        assertThatThrownBy(() -> service.recordStructureStats(TOKEN, "s-1", bad))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("sheet 行块不合法");
+        com.fasterxml.jackson.databind.node.ArrayNode good = new ObjectMapper().createArrayNode();
+        good.addObject().put("name", "行为表现库").put("firstLine", 3).put("lastLine", 5).put("rows", 3);
+        service.recordStructureStats(TOKEN, "s-1", good);
+        verify(jdbc).update(contains("SET structure_file_stats"), contains("行为表现库"), eq("s-1"), eq(1L));
+    }
+
+    private void stubStructureOk() {
+        AbilityStructureVO.PreviewResult ok = new AbilityStructureVO.PreviewResult();
+        ok.setLines(List.of());
+        ok.setCounts(new AbilityStructureVO.Counts());
+        ok.setCommitable(true);
+        when(structureImportService.preview(any(), any())).thenReturn(ok);
+    }
+
+    private void stubStructureStats(String json) {
+        when(jdbc.queryForObject(contains("structure_file_stats"), eq(String.class),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(json);
+    }
+
     // ==================== 批次维度硬闸 ====================
 
     @Test
@@ -284,6 +406,26 @@ class AgentBridgeServiceTest {
         when(dimensionService.isAuthorizedForUser(any(), any())).thenReturn(false);
         assertThatThrownBy(() -> service.commitDraft(9L))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("无权");
+        verify(externalScoreService, never()).commit(any());
+    }
+
+    @Test
+    @DisplayName("commitDraft：结构导入稿 → 走结构服务写入，不触碰评分服务（年份可空）")
+    void structureDraftCommitRejected() {
+        String now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        Map<String, Object> structure = draftRow(31L, "READY", now, now);
+        structure.put("kind", "ABILITY_STRUCTURE");
+        structure.put("year", null);
+        structure.put("payload_json", STRUCTURE_PAYLOAD);
+        when(jdbc.queryForList(contains("WHERE id = ? AND company_id"), ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any()))
+                .thenReturn(List.of(structure));
+        AbilityStructureVO.CommitResult result = new AbilityStructureVO.CommitResult();
+        result.setCounts(new AbilityStructureVO.Counts());
+        result.setFailed(List.of());
+        when(structureImportService.commit(any(), any(), any())).thenReturn(result);
+        Map<String, Object> out = service.commitDraft(31L);
+        assertThat(out.get("rejected")).isEqualTo(false);
+        verify(externalScoreService, never()).preview(any());
         verify(externalScoreService, never()).commit(any());
     }
 
@@ -387,6 +529,7 @@ class AgentBridgeServiceTest {
         Map<String, Object> m = new HashMap<>();
         m.put("id", id);
         m.put("session_id", "s-1");
+        m.put("kind", "EXTERNAL_SCORE");
         m.put("year", 2026);
         m.put("dimension_id", 3L);
         m.put("status", status);

@@ -3,6 +3,7 @@ package com.company.ability.controller;
 import com.company.ability.dto.Result;
 import com.company.ability.service.AgentBridgeService;
 import com.company.ability.service.AgentSessionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,7 @@ public class AgentController {
 
     private final AgentBridgeService agentBridgeService;
     private final AgentSessionService agentSessionService;
+    private final ObjectMapper mapper;
 
     @Operation(summary = "新建导入会话（每次进入页面调用，全新上下文）")
     @PostMapping("/sessions")
@@ -93,6 +95,16 @@ public class AgentController {
             @RequestBody Map<String, Object> body) {
         Integer fileRows = body.get("fileRows") instanceof Number n ? n.intValue() : null;
         agentBridgeService.recordFileStats(agentToken, String.valueOf(body.get("sessionId")), fileRows);
+        return ResponseEntity.ok(Result.success(Map.of()));
+    }
+
+    @Operation(summary = "parse_structure_file 上报各结构表数据行块（内部令牌，供结构交付稿对账）")
+    @PostMapping("/parse-structure-stats")
+    public ResponseEntity<Result<Map<String, Object>>> parseStructureStats(
+            @RequestHeader(value = "X-Agent-Token", required = false) String agentToken,
+            @RequestBody Map<String, Object> body) {
+        agentBridgeService.recordStructureStats(agentToken, String.valueOf(body.get("sessionId")),
+                mapper.valueToTree(body.get("sheets")));
         return ResponseEntity.ok(Result.success(Map.of()));
     }
 

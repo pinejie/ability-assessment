@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * cp 工作空间 MCP server：测评数据导入助手的全部能力边界。
- * 只有 8 个具名工具：6 个只读查询（固定 SQL + 参数绑定 + 返回列白名单）、
- * parse_import_file（限定目录 + xlsx/csv）、validate_draft/deliver（转调测评后端，deliver 不写业务表）。
+ * 只有 9 个具名工具：6 个只读查询（固定 SQL + 参数绑定 + 返回列白名单）、
+ * parse_import_file（评分导入，限定目录 + xlsx/csv 单表）、parse_structure_file（能力结构导入，多 sheet 机械归一）、
+ * validate_draft/deliver（转调测评后端，deliver 不写业务表）。
  * DB 凭据运行时从 /home/wgd/ws/.mcp.json 解析（本文件不落任何秘密）。
  */
 import fs from 'node:fs'
@@ -178,6 +179,131 @@ async function parseImportFile(a) {
   return ok({ columns: head, rows: out.slice(0, 5000), rowLimit: out.length > 5000 ? 5000 : null, parseErrors: errors })
 }
 
+// ---------- 能力结构解析（方案 14） ----------
+// 与评分导入不同：结构工作簿是「一本多表」（行为表现库 / 模型表 / 自评表），
+// 且表头位置不固定（大标题行 + 分组行 + 子列行）、存在合并单元格与成对的分值列。
+// 这里只做「机械归一」——定位表头行、展开合并单元格、逐行编号；语义判定（哪张表算什么、等级描述 vs 分值）
+// 全部交给模型。行号统一写成「表名!行号」，因为跨表行号会撞。
+const HEADER_HINTS = ['类别', '要素', '指标', '能力', '等级', '级别', '定义', '姓名', '岗位', '职位']
+const SKIP_SHEET = /(总结|说明|目录|索引|封面|填写|模板)/
+
+/**
+ * 表头行判定：前 8 行里含最多表头关键词的一行。
+ * 命中 ≥2 个关键词直接认；只命中 1 个时要求该行"看起来像表头"（≥3 个非空且都是短标签），
+ * 因为自评表表头常是「要素 | 张三 | 李四」这种只有一个关键词的全人名行。
+ */
+function findHeaderRow(rows) {
+  let best = -1
+  let bestScore = 0
+  for (let i = 0; i < Math.min(rows.length, 8); i++) {
+    const cells = (rows[i] || []).map(c => String(c ?? '').trim()).filter(c => c !== '')
+    const score = cells.filter(c => HEADER_HINTS.some(h => c.includes(h))).length
+    const labelLike = cells.length >= 3 && cells.every(c => c.length <= 20)
+    const usable = score >= 2 || (score === 1 && labelLike)
+    if (usable && score > bestScore) { bestScore = score; best = i }
+  }
+  return best
+}
+
+/** 合并单元格展开：{s:{r,c},e:{r,c}}（0 基）→ 每个覆盖位置取左上角值 */
+function expandMerges(sheet, rows, headerRow) {
+  const grid = rows.map(r => (r || []).map(c => (c === undefined ? null : c)))
+  for (const m of sheet['!merges'] || []) {
+    const v = grid[m.s.r]?.[m.s.c] ?? null
+    if (v === null) continue
+    for (let r = m.s.r; r <= m.e.r; r++) {
+      for (let c = m.s.c; c <= m.e.c; c++) {
+        if (!grid[r]) grid[r] = []
+        if (grid[r][c] === null || grid[r][c] === undefined) grid[r][c] = v
+      }
+    }
+  }
+  // 表头行若有纵向合并，向下顺延（分组表头常见：第 1 列跨两行）
+  if (headerRow >= 0 && grid[headerRow]) {
+    const width = Math.max(...grid.map(r => (r ? r.length : 0)))
+    for (let c = 0; c < width; c++) {
+      if (grid[headerRow][c] === null || grid[headerRow][c] === undefined) {
+        grid[headerRow][c] = grid[headerRow - 1]?.[c] ?? null
+      }
+    }
+  }
+  return grid
+}
+
+async function parseStructureFile(a) {
+  const sid = String(a.sessionId || '')
+  if (!/^[0-9a-zA-Z_-]{1,64}$/.test(sid)) return fail('必须携带当前会话 sessionId')
+  const abs = path.resolve(String(a.filePath || ''))
+  if (!abs.startsWith(UPLOAD_DIR + path.sep + sid + path.sep)) {
+    return fail('只允许解析当前会话上传的文件（路径与 sessionId 归属不符）')
+  }
+  if (!fs.existsSync(abs)) return fail('文件不存在')
+  const ext = path.extname(abs).toLowerCase()
+  if (!['.csv', '.xlsx', '.xls'].includes(ext)) return fail('仅支持 .xlsx / .xls / .csv')
+  const wb = ext === '.csv'
+    ? XLSX.read(fs.readFileSync(abs, 'utf8'), { type: 'string', cellDates: true })
+    : XLSX.read(fs.readFileSync(abs), { type: 'buffer', cellDates: true })
+  if (!wb.SheetNames || wb.SheetNames.length === 0) return fail('文件中没有任何工作表')
+
+  const only = a.sheet ? wb.SheetNames.filter(n => n === String(a.sheet)) : wb.SheetNames
+  if (only.length === 0) return fail(`工作表不存在：${a.sheet}`)
+  const maxSheets = 20
+  if (only.length > maxSheets) return fail(`工作表过多（${only.length} > ${maxSheets}），请拆分后上传`)
+
+  const sheets = []
+  const stats = []
+  const errors = []
+  for (const name of only) {
+    const sheet = wb.Sheets[name]
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, blankrows: true })
+    if (rows.length === 0) { sheets.push({ name, headerRowNo: null, columns: [], rows: [] }); continue }
+    if (SKIP_SHEET.test(name)) { sheets.push({ name, headerRowNo: null, columns: [], rows: [], note: '疑似说明/目录表，如与结构无关可整表 skipped' }); continue }
+    const hIdx = findHeaderRow(rows)
+    if (hIdx < 0) {
+      sheets.push({ name, headerRowNo: null, columns: [], rows: [], note: '未识别到表头（无类别/要素/等级/姓名等列名）' })
+      errors.push({ sheet: name, message: '表头无法识别，请人工确认或 skipped' })
+      continue
+    }
+    const grid = expandMerges(sheet, rows, hIdx)
+    const columns = (grid[hIdx] || []).map((c, i) => String(c ?? '').trim() || `列${i + 1}`)
+    const dataRows = []
+    for (let r = hIdx + 1; r < grid.length; r++) {
+      const row = grid[r] || []
+      if (row.every(c => c === null || c === undefined || String(c).trim() === '')) continue
+      dataRows.push({ lineNo: r + 1, cells: row.map(c => (c === null || c === undefined ? null : c)) })
+    }
+    if (dataRows.length === 0) {
+      sheets.push({ name, headerRowNo: hIdx + 1, columns, rows: [] })
+      continue
+    }
+    // 单表行数上限：结构表通常几十行，超过说明解析错了
+    const cap = 2000
+    const kept = dataRows.slice(0, cap)
+    if (dataRows.length > cap) errors.push({ sheet: name, message: `行数 ${dataRows.length} 超出上限 ${cap}，仅返回前 ${cap} 行` })
+    sheets.push({ name, headerRowNo: hIdx + 1, columns, rows: kept })
+    stats.push({ name, rows: kept.length, firstLine: kept[0].lineNo, lastLine: kept[kept.length - 1].lineNo })
+  }
+
+  // 行块上报（fire-and-forget）：供 deliver 时后端校验「每一行都交代了去向」
+  fetch(`${BACKEND}/api/v1/agent/parse-structure-stats`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify({
+      sessionId: sid,
+      sheets: stats.map(s => ({ name: s.name, firstLine: s.firstLine, lastLine: s.lastLine, rows: s.rows })),
+    }),
+  }).catch(() => {})
+
+  return ok({
+    workbook: path.basename(abs),
+    sheetNames: wb.SheetNames,
+    sheets,
+    // 行号引用格式：deliver 时 coveredRows / skipped[].rowNo 一律写「表名!行号」
+    rowRefFormat: '表名!行号',
+    parseErrors: errors,
+  })
+}
+
 async function postDraft(payload, validate) {
   const resp = await fetch(`${BACKEND}/api/v1/agent/draft`, {
     method: 'POST',
@@ -211,15 +337,66 @@ const rowSchema = z.object({
   originalScore: z.number().optional().nullable(),
   annualScore: z.number().optional().nullable(),
 })
+// 模型常把数字写成字符串（"5级" 已由提示词要求取数字，但 "5" 这种要能收），统一转成数字再交后端
+const intish = z.union([z.number(), z.string().regex(/^-?\d+$/)]).transform(v => Number(v))
+const numish = z.union([z.number(), z.string().regex(/^-?\d+(\.\d+)?$/)]).transform(v => Number(v))
 const payloadSchema = z.object({
   sessionId: z.string().min(1),
-  year: z.number().int(),
-  dimensionId: z.number().int().optional().nullable(),
-  rows: z.array(rowSchema).min(1),
-  // 行对账（后端 submitDraft 校验）：coveredRows=稿行覆盖的物理行号；skipped=未导入行交代清单
-  coveredRows: z.array(z.number().int()).optional(),
-  skipped: z.array(z.object({ rowNo: z.number().int(), raw: z.string().max(120).optional(), reason: z.string() })).optional(),
+  // 交付稿类型：评分导入（EXTERNAL_SCORE，缺省）| 能力结构导入（ABILITY_STRUCTURE，方案 14）
+  kind: z.enum(['EXTERNAL_SCORE', 'ABILITY_STRUCTURE']).optional(),
+  // 评分导入必填；结构导入不写年度（后端按开放期间取），故设为可选，由后端按 kind 校验
+  year: intish.optional().nullable(),
+  dimensionId: intish.optional().nullable(),
+  // 行对账（后端 submitDraft 校验）：coveredRows=稿行覆盖的行号（结构稿写「表名!行号」）；skipped=未导入行交代清单
+  coveredRows: z.array(z.union([z.number().int(), z.string()])).optional(),
+  skipped: z.array(z.object({
+    rowNo: z.union([z.number().int(), z.string()]),
+    raw: z.string().max(120).optional(),
+    reason: z.string(),
+  })).optional(),
   unreconciled: z.boolean().optional(),
+  // ---- 评分导入 ----
+  rows: z.array(rowSchema).optional(),
+  // ---- 能力结构导入 ----
+  categories: z.array(z.object({
+    name: z.string().min(1),
+    sort: intish.optional().nullable(),
+    description: z.string().optional().nullable(),
+  })).optional(),
+  elements: z.array(z.object({
+    categoryName: z.string().min(1),
+    name: z.string().min(1),
+    assessInFlow: intish.optional().nullable(),
+    allowClientAssess: intish.optional().nullable(),
+    description: z.string().optional().nullable(),
+    levels: z.array(z.object({
+      levelNo: intish,
+      desc: z.string().min(1),
+      levelName: z.string().optional().nullable(),
+    })).min(1),
+  })).optional(),
+  positionReqs: z.array(z.object({
+    departmentName: z.string().min(1),
+    jobTitleName: z.string().min(1),
+    description: z.string().optional().nullable(),
+    overwrite: z.boolean().optional().nullable(),
+    items: z.array(z.object({
+      categoryName: z.string().min(1),
+      elementName: z.string().min(1),
+      weight: numish.optional().nullable(),
+    })).min(1),
+  })).optional(),
+  userReqs: z.array(z.object({
+    resourceNo: z.string().optional().nullable(),
+    resourceName: z.string().optional().nullable(),
+    departmentName: z.string().optional().nullable(),
+    description: z.string().optional().nullable(),
+    items: z.array(z.object({
+      elementName: z.string().min(1),
+      levelNo: intish,
+      score: numish.optional().nullable(),
+    })).min(1),
+  })).optional(),
 })
 
 server.registerTool('lookup_person',
@@ -240,6 +417,17 @@ server.registerTool('check_period_open',
 server.registerTool('parse_import_file',
   { description: '解析用户上传的 Excel/CSV（仅限当前会话上传目录；须带上下文里的 sessionId），返回结构化行', inputSchema: { filePath: z.string(), sessionId: z.string() } },
   parseImportFile)
+server.registerTool('parse_structure_file',
+  {
+    description: '解析能力结构工作簿（多 sheet：行为表现库/模型表/自评表）。返回每张表的表头行、列名与逐行单元格（行号=表名!行号）；'
+      + '只做机械归一（定位表头、展开合并单元格），语义判定交给模型。仅限当前会话上传目录。',
+    inputSchema: {
+      filePath: z.string(),
+      sessionId: z.string(),
+      sheet: z.string().optional(),   // 只解析指定表（缺省=全部）
+    },
+  },
+  parseStructureFile)
 server.registerTool('validate_draft',
   { description: '整稿送测评后端校验（不落库），返回逐行 PASS/BLOCK 与覆盖摘要', inputSchema: { payload: payloadSchema } },
   (a) => validateDraft(a))

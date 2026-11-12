@@ -47,7 +47,9 @@ public class ImportRunController {
     @PostMapping("/api/v1/external/import-runs")
     public Result<Map<String, Object>> create(@RequestBody(required = false) Map<String, Object> body) {
         Object rules = body == null ? null : body.get("rules");
-        return Result.success(runService.createRun(rules == null ? null : String.valueOf(rules)));
+        Object kind = body == null ? null : body.get("kind");
+        return Result.success(runService.createRun(rules == null ? null : String.valueOf(rules),
+                kind == null ? null : String.valueOf(kind)));
     }
 
     @Operation(summary = "开始/重试解析（文件须属本会话上传目录）")

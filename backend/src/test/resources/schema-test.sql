@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS uf_ability_element (
     assess_in_flow INT DEFAULT 1,
     status INT DEFAULT 1,
     sort INT DEFAULT 0,
+    dimension_id BIGINT DEFAULT 1,
     create_by BIGINT,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_by BIGINT,
@@ -325,6 +326,8 @@ CREATE TABLE IF NOT EXISTS uf_user_ability_req_item (
     element_id BIGINT NOT NULL,
     category_id BIGINT,
     level_id BIGINT,
+    score DECIMAL(10,2),
+    dimension_id BIGINT DEFAULT 1,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -349,6 +352,31 @@ CREATE TABLE IF NOT EXISTS uf_assess_level_score (
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_level_score UNIQUE (company_id, dimension_id, level_no),
     CONSTRAINT uk_level_rate UNIQUE (company_id, dimension_id, rate_value)
+);
+
+
+-- 能力结构导入写入台账与别名记忆（sql/33）
+CREATE TABLE IF NOT EXISTS uf_assess_import_alias (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT NOT NULL,
+    dimension_id BIGINT NOT NULL,
+    kind VARCHAR(20) NOT NULL,
+    source_name VARCHAR(200) NOT NULL,
+    target_id BIGINT NOT NULL,
+    target_name VARCHAR(200) NOT NULL,
+    hit_count INT DEFAULT 0,
+    confirmed_by BIGINT NOT NULL,
+    confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS uf_assess_import_batch_item (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    batch_id BIGINT NOT NULL,
+    entity_type VARCHAR(20) NOT NULL,
+    entity_id BIGINT NOT NULL,
+    natural_key VARCHAR(300),
+    action VARCHAR(10) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- SQL Server 函数替身：生产 SQL 使用 SYSDATETIME()/ISNULL()，H2 无此函数（见 H2SqlServerFunctions）

@@ -47,6 +47,11 @@ public class AgentImportRunService {
     private static final int MAX_ASK_ROUNDS = 3;
     private static final int STALE_MINUTES = 30;
 
+    /** 批次类型（sql/33）：评分导入 / 能力结构导入。结构导入的编排在 S1 落地，S0 仅打通落库与路由。 */
+    public static final String KIND_EXTERNAL = "EXTERNAL_SCORE";
+    public static final String KIND_STRUCTURE = "ABILITY_STRUCTURE";
+    private static final List<String> KINDS = List.of(KIND_EXTERNAL, KIND_STRUCTURE);
+
     private static final String S_DRAFT = "DRAFT";
     private static final String S_PARSING = "PARSING";
     private static final String S_NEED_INPUT = "NEED_INPUT";
@@ -69,6 +74,9 @@ public class AgentImportRunService {
 
     private String systemPrompt = "";
     private String taskTemplate = "";
+    /** 能力结构导入（方案 14）的提示词对：与评分导入分开维护，按 run.kind 选用 */
+    private String structureSystemPrompt = "";
+    private String structureTaskTemplate = "";
     /** run 事件总线（SSE）与本回合 outcome 到达标记 */
     private final Map<Long, List<Consumer<Map<String, Object>>>> runListeners = new ConcurrentHashMap<>();
     private final Map<Long, Boolean> outcomeSeen = new ConcurrentHashMap<>();
@@ -98,6 +106,13 @@ public class AgentImportRunService {
     void loadPrompts() throws IOException {
         systemPrompt = readClasspath("agent/import-prompt-system.md");
         taskTemplate = readClasspath("agent/import-prompt-task.md");
+        structureSystemPrompt = readClasspath("agent/structure-prompt-system.md");
+        structureTaskTemplate = readClasspath("agent/structure-prompt-task.md");
+    }
+
+    /** 按批次类型选提示词对：能力结构导入与评分导入是两套交付稿 schema，混用必出错稿 */
+    private boolean isStructure(Map<String, Object> runRow) {
+        return KIND_STRUCTURE.equals(String.valueOf(runRow.get("kind")));
     }
 
     private static String readClasspath(String r) throws IOException {
@@ -117,20 +132,32 @@ public class AgentImportRunService {
      * 权限再多也以当前维度为准。
      */
     public Map<String, Object> createRun(String rules) {
+        return createRun(rules, null);
+    }
+
+    /**
+     * 建批：kind 缺省为评分导入；能力结构导入（方案 14）复用同一状态机与确认闸。
+     */
+    public Map<String, Object> createRun(String rules, String kind) {
+        String resolvedKind = kind == null || kind.isBlank() ? KIND_EXTERNAL : kind.trim().toUpperCase();
+        if (!KINDS.contains(resolvedKind)) {
+            throw new BusinessException(400, "不支持的批次类型：" + kind);
+        }
         LoginUser user = requireUser();
         long dimensionId = com.company.ability.context.DimensionContext.getOrDefault();
         String sessionId = (String) sessionService.createSession().get("sessionId");
         KeyHolder kh = new GeneratedKeyHolder();
         jdbc.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                    "INSERT INTO uf_assess_import_run (company_id, dimension_id, session_id, file_path, file_name, user_rules, status, prompt_version, created_by)"
-                            + " VALUES (?, ?, ?, '', 'pending', ?, '" + S_DRAFT + "', ?, ?)", Statement.RETURN_GENERATED_KEYS);
+                    "INSERT INTO uf_assess_import_run (company_id, dimension_id, session_id, file_path, file_name, user_rules, status, prompt_version, created_by, kind)"
+                            + " VALUES (?, ?, ?, '', 'pending', ?, '" + S_DRAFT + "', ?, ?, ?)", Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1, companyId);
             ps.setLong(2, dimensionId);
             ps.setString(3, sessionId);
             ps.setString(4, rules == null || rules.isBlank() ? null : rules);
             ps.setString(5, PROMPT_VERSION);
             ps.setLong(6, user.resourceId());
+            ps.setString(7, resolvedKind);
             return ps;
         }, kh);
         Number key = kh.getKey();
@@ -140,7 +167,7 @@ public class AgentImportRunService {
         return snapshot(key.longValue());
     }
 
-    /** 开始/重试解析：校验文件归属本会话目录后起第一轮 */
+    /** 开始/重试解析：校验文件归属本会话目录后起第一轮（结构导入按 kind 走独立提示词） */
     public Map<String, Object> startRun(long runId, String fileName) {
         Map<String, Object> run = requireOwnedRun(runId);
         if (!List.of(S_DRAFT, S_FAILED, S_STALE).contains((String) run.get("status"))) {
@@ -254,11 +281,26 @@ public class AgentImportRunService {
         ObjectNode payloadNode;
         if (outcome.path("payload").isObject()) {
             payloadNode = (ObjectNode) outcome.path("payload").deepCopy();
+        } else if (isStructure(run)) {
+            // 结构交付稿（方案 14）体量大，模型常把 categories/elements/positionReqs/userReqs 直接放顶层——
+            // 整份 outcome 当载荷，剔除收场专用字段，kind 与 sessionId 由后端强制回填
+            payloadNode = (ObjectNode) outcome.deepCopy();
+            payloadNode.remove(List.of("draftId", "kind", "payload", "unreconciled", "coveredRows", "skipped"));
+            payloadNode.set("coveredRows", outcome.path("coveredRows"));
+            payloadNode.set("skipped", outcome.path("skipped"));
+            if (outcome.path("unreconciled").asBoolean(false)) {
+                payloadNode.put("unreconciled", true);
+            }
         } else {
             payloadNode = mapper.createObjectNode();
             payloadNode.set("rows", outcome.path("rows"));
             if (outcome.hasNonNull("year")) payloadNode.set("year", outcome.get("year"));
             if (outcome.hasNonNull("dimensionId")) payloadNode.set("dimensionId", outcome.get("dimensionId"));
+        }
+        if (isStructure(run)) {
+            payloadNode.put("kind", KIND_STRUCTURE);
+            // 结构导入不写年度：模型若从表头臆造年度会撞到已关闭期间，一律由后端按开放期间判定
+            payloadNode.remove("year");
         }
         payloadNode.put("sessionId", sessionId);
         String payload = payloadNode.toString();
@@ -432,16 +474,19 @@ public class AgentImportRunService {
     private void beginRound(long runId, String sessionId, String rules, String transcriptJson, int askCount) {
         outcomeSeen.remove(runId);
         Map<String, Object> runRow = requireRun(runId);
+        boolean structure = isStructure(runRow);
         Object dim = runRow.get("dimension_id");
         String dimText = dim == null ? "由文件人员页面判定"
                 : dim + "（操作人当前维度，强制——所有查询与写入都限定在此维度，禁止切换或借用其他维度）";
-        String task = taskTemplate
+        String task = (structure ? structureTaskTemplate : taskTemplate)
                 .replace("{{round}}", String.valueOf(askCount + 1))
                 .replace("{{maxRounds}}", String.valueOf(MAX_ASK_ROUNDS))
                 .replace("{{sessionId}}", sessionId)
                 .replace("{{dimensionId}}", dimText)
                 .replace("{{filePath}}", String.valueOf(runRow.get("file_path")))
-                .replace("{{yearHint}}", "未指定则按 get_periods 判定")
+                .replace("{{yearHint}}", structure
+                        ? "结构导入不写年度，按 parse_structure_file 读表；年度仅在同步自评表时由后端取当前开放期间"
+                        : "未指定则按 get_periods 判定")
                 .replace("{{rules}}", rules == null || rules.isBlank() ? "（无）" : rules)
                 .replace("{{transcript}}", renderTranscript(transcriptJson));
         Consumer<Map<String, Object>> listener = ev -> {
@@ -471,8 +516,9 @@ public class AgentImportRunService {
             update(runId, S_FAILED, null, null, "本轮结束但未收到 submit_outcome 收场（可重试解析）", null, null);
             broadcast(runId, Map.of("type", "run", "status", S_FAILED, "reason", "回合无收场，可重试"));
         };
-                try {
-            sessionService.startTurnAs(sessionId, task, List.of(), listener, systemPrompt,
+        try {
+            sessionService.startTurnAs(sessionId, task, List.of(), listener,
+                    structure ? structureSystemPrompt : systemPrompt,
                     longOf(requireRun(runId).get("created_by")));
         } catch (BusinessException e) {
             update(runId, S_FAILED, null, null, e.getMessage(), null, null);
@@ -508,6 +554,7 @@ public class AgentImportRunService {
         Map<String, Object> run = requireRun(runId);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", run.get("id"));
+        out.put("kind", run.get("kind"));
         out.put("status", run.get("status"));
         out.put("sessionId", run.get("session_id"));
         out.put("fileName", run.get("file_name"));
@@ -527,7 +574,7 @@ public class AgentImportRunService {
     public List<Map<String, Object>> history() {
         LoginUser user = requireUser();
         return jdbc.queryForList(
-                "SELECT TOP 30 id, file_name, status, year, dimension_id, round_count, draft_id, fail_reason," +
+                "SELECT TOP 30 id, kind, file_name, status, year, dimension_id, round_count, draft_id, fail_reason," +
                 "       CONVERT(VARCHAR(19), created_at, 120) AS created_at, created_by, prompt_version" +
                 " FROM uf_assess_import_run WHERE company_id = ? AND created_at > DATEADD(day, -30, SYSDATETIME())" +
                 " ORDER BY id DESC", companyId).stream()

@@ -180,7 +180,8 @@ public class AgentSessionService {
     private static final String ALLOWED_TOOLS = String.join(",",
             "mcp__cp__lookup_person", "mcp__cp__get_periods", "mcp__cp__get_non_flow_elements",
             "mcp__cp__get_existing_raters", "mcp__cp__check_period_open", "mcp__cp__parse_import_file",
-            "mcp__cp__validate_draft", "mcp__cp__deliver", "mcp__cp__submit_outcome");
+            "mcp__cp__parse_structure_file", "mcp__cp__validate_draft", "mcp__cp__deliver",
+            "mcp__cp__submit_outcome");
 
     private static final String DISALLOWED_TOOLS = String.join(",",
             "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep",

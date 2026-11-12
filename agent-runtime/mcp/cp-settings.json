@@ -7,6 +7,7 @@
       "mcp__cp__get_existing_raters",
       "mcp__cp__check_period_open",
       "mcp__cp__parse_import_file",
+      "mcp__cp__parse_structure_file",
       "mcp__cp__validate_draft",
       "mcp__cp__deliver",
       "mcp__cp__submit_outcome"

@@ -440,6 +440,50 @@ public class AgentBridgeService {
         return out;
     }
 
+    /**
+     * 审核页取行级状态：对已落稿的结构交付稿重跑确定性校验（不落库、不改稿）。
+     * 交付稿只存原始载荷，行级 CREATE/SKIP/PENDING/BLOCK 是算出来的——审核页与
+     * "别名确认后刷新"都走这里，保证与 commit 时同一套规则。
+     */
+    public Map<String, Object> previewStructureDraft(long draftId) {
+        requireEnabled();
+        LoginUser user = UserContext.currentOrNull();
+        if (user == null) {
+            throw new BusinessException(401, "查看交付稿需要登录身份");
+        }
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT id, kind, dimension_id, status, payload_json" +
+                " FROM uf_assess_agent_draft WHERE id = ? AND company_id = ?", draftId, companyId);
+        if (rows.isEmpty()) {
+            throw new BusinessException(404, "交付稿不存在");
+        }
+        Map<String, Object> row = rows.get(0);
+        long dimensionId = ((Number) row.get("dimension_id")).longValue();
+        if (!canAccessDimension(user, dimensionId)) {
+            throw new BusinessException(403, "无权操作该维度的交付稿");
+        }
+        if (!AgentImportRunService.KIND_STRUCTURE.equals(String.valueOf(row.get("kind")))) {
+            throw new BusinessException(400, "只有能力结构交付稿可以逐行预览");
+        }
+        AbilityStructureDTO dto;
+        try {
+            dto = mapper.readValue(String.valueOf(row.get("payload_json")), AbilityStructureDTO.class);
+        } catch (Exception e) {
+            throw new BusinessException(400, "交付稿损坏");
+        }
+        AbilityStructureVO.PreviewResult preview = withDimension(dimensionId,
+                () -> structureImportService.preview(dto, dto.getSessionId()));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("draftId", draftId);
+        out.put("status", row.get("status"));
+        out.put("dimensionId", dimensionId);
+        out.put("lines", preview.getLines());
+        out.put("counts", preview.getCounts());
+        out.put("commitable", preview.isCommitable());
+        out.put("year", preview.getYear());
+        return out;
+    }
+
     /** 前端点击写入 = 确认 + 提交（原子）：过期/重复提交拒绝，数据变化被重校验挡回时保留 READY（方案 §6.3） */
     public Map<String, Object> commitDraft(long draftId) {
         requireEnabled();

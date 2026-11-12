@@ -20,8 +20,11 @@ export interface ImportRun {
 
 export interface AskQuestion { id: string; type: 'input' | 'choice'; question: string; rows?: { lineNo: number; excerpt: string }[]; options?: string[]; placeholder?: string }
 
-export const createRun = (rules?: string): Promise<ImportRun> =>
-  request.post('/external/import-runs', { rules })
+/** 批次类型：评分导入 / 能力结构导入（后端据此选提示词与交付稿 schema） */
+export type RunKind = 'EXTERNAL_SCORE' | 'ABILITY_STRUCTURE'
+
+export const createRun = (rules?: string, kind?: RunKind): Promise<ImportRun> =>
+  request.post('/external/import-runs', { rules, kind })
 
 export const startRun = (id: number, fileName: string): Promise<ImportRun> =>
   request.post(`/external/import-runs/${id}/start`, { fileName })

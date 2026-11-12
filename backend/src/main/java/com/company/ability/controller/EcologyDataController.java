@@ -376,7 +376,8 @@ public class EcologyDataController {
                          "WHERE ISNULL(t.canceled, 0) = 0 " +
                          "AND t.jobtitlemark LIKE ? " +
                          "ORDER BY t.jobtitlemark";
-            String countSql = "SELECT COUNT(*) FROM HrmJobTitles WHERE ISNULL(canceled, 0) = 0 AND t.jobtitlemark LIKE ?";
+            String countSql = "SELECT COUNT(*) FROM HrmJobTitles WHERE ISNULL(canceled, 0) = 0"
+                    + " AND jobtitlemark LIKE ?";
 
             return Result.success(JdbcPageHelper.page(
                 jdbcTemplate, baseSql, countSql, List.<Object>of("%" + keyword + "%"), pageRequest));

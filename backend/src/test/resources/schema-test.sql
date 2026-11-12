@@ -379,6 +379,29 @@ CREATE TABLE IF NOT EXISTS uf_assess_import_batch_item (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 批次表（sql/28）：撤销要靠它反查批次所属维度，跨维度误删由此挡住
+CREATE TABLE IF NOT EXISTS uf_assess_import_run (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT NOT NULL,
+    dimension_id BIGINT NULL,
+    year INT NULL,
+    session_id VARCHAR(64) NOT NULL,
+    file_path VARCHAR(400) NOT NULL,
+    file_name VARCHAR(200) NOT NULL,
+    user_rules VARCHAR(4000) NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
+    round_count INT NOT NULL DEFAULT 0,
+    transcript_json VARCHAR(4000) NULL,
+    outcome_json VARCHAR(4000) NULL,
+    draft_id BIGINT NULL,
+    result_json VARCHAR(4000) NULL,
+    fail_reason VARCHAR(500) NULL,
+    prompt_version VARCHAR(20) NOT NULL DEFAULT 'imp-v1',
+    created_by BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- SQL Server 函数替身：生产 SQL 使用 SYSDATETIME()/ISNULL()，H2 无此函数（见 H2SqlServerFunctions）
 CREATE ALIAS IF NOT EXISTS SYSDATETIME FOR "com.company.ability.h2test.H2SqlServerFunctions.sysdatetime";
 CREATE ALIAS IF NOT EXISTS ISNULL FOR "com.company.ability.h2test.H2SqlServerFunctions.isNull";

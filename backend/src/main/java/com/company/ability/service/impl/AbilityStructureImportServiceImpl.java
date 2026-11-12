@@ -312,8 +312,17 @@ public class AbilityStructureImportServiceImpl implements AbilityStructureImport
             Long deptId = findDepartmentId(deptName, dimensionId);
             Long jobId = findJobTitleId(jobName, dimensionId);
             if (deptId == null || jobId == null) {
-                pending(plan, "POSITION", label, deptId == null
-                        ? "部门未匹配：" + deptName : "岗位未匹配：" + jobName);
+                // 「未匹配」与「同名多名」要分开说：前者要人指定，后者要人在候选里挑一个，
+                // 混成一句「未匹配」会让用户去改文件名，改完还是匹配不上
+                String why;
+                if (deptId == null) {
+                    why = countDepartmentName(deptName) > 1
+                            ? "部门同名多个，需指定：" + deptName : "部门未匹配：" + deptName;
+                } else {
+                    why = countJobTitleName(jobName) > 1
+                            ? "岗位同名多个，需指定：" + jobName : "岗位未匹配：" + jobName;
+                }
+                pending(plan, "POSITION", label, why);
                 continue;
             }
             if (!validatePositionItems(row, plan, label, knownElements)) {
@@ -700,10 +709,15 @@ public class AbilityStructureImportServiceImpl implements AbilityStructureImport
         if (viaAlias != null) {
             return viaAlias;
         }
+        // canceled 在泛微库里多数是 NULL（未停用），写成 = '0' 会把正常部门全部漏掉——
+        // 与 EcologyDataController 统一口径 ISNULL(canceled, 0) = 0
+        // 同名部门大量存在（多个子公司各有「安环部」）：只认唯一命中，多条一律交给别名确认，
+        // 按 id 排序取第一条会静默把要求挂到别的公司的同名部门上
         List<Long> ids = jdbc.queryForList(
-                "SELECT id FROM HrmDepartment WHERE (departmentmark = ? OR departmentname = ?) AND canceled = '0'",
+                "SELECT id FROM HrmDepartment WHERE (departmentmark = ? OR departmentname = ?)"
+                        + " AND ISNULL(canceled, '0') = '0' ORDER BY id",
                 Long.class, name, name);
-        return ids.isEmpty() ? null : ids.get(0);
+        return ids.size() == 1 ? ids.get(0) : null;
     }
 
     private Long findJobTitleId(String name, long dimensionId) {
@@ -712,9 +726,25 @@ public class AbilityStructureImportServiceImpl implements AbilityStructureImport
             return viaAlias;
         }
         List<Long> ids = jdbc.queryForList(
-                "SELECT id FROM HrmJobTitles WHERE (jobtitlemark = ? OR jobtitlename = ?) AND canceled = '0'",
+                "SELECT id FROM HrmJobTitles WHERE (jobtitlemark = ? OR jobtitlename = ?)"
+                        + " AND ISNULL(canceled, '0') = '0' ORDER BY id",
                 Long.class, name, name);
-        return ids.isEmpty() ? null : ids.get(0);
+        return ids.size() == 1 ? ids.get(0) : null;
+    }
+
+    /** 同名部门数量：用于把「未匹配」与「同名歧义」区分开（两者都需要人确认，但处置方式不同） */
+    private int countDepartmentName(String name) {
+        Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM HrmDepartment WHERE (departmentmark = ? OR departmentname = ?)"
+                        + " AND ISNULL(canceled, '0') = '0'", Integer.class, name, name);
+        return n == null ? 0 : n;
+    }
+
+    private int countJobTitleName(String name) {
+        Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM HrmJobTitles WHERE (jobtitlemark = ? OR jobtitlename = ?)"
+                        + " AND ISNULL(canceled, '0') = '0'", Integer.class, name, name);
+        return n == null ? 0 : n;
     }
 
     /**
@@ -745,7 +775,7 @@ public class AbilityStructureImportServiceImpl implements AbilityStructureImport
     }
 
     /** 名称归一化：去首尾/中间空白，全角转半角，去常见分隔标点——别名键必须与人工确认时的写法同源 */
-    static String normalizeName(String name) {
+    public static String normalizeName(String name) {
         if (name == null) {
             return "";
         }

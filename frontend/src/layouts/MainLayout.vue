@@ -164,6 +164,7 @@ const menuItems: MenuItem[] = [
   { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
   { path: '/external-scores', title: '外部评分导入', icon: '📥' },
   { path: '/external-agent', title: '智能导入', icon: '🤖' },
+  { path: '/ability-structure-import', title: '能力结构导入', icon: '🧬', adminOnly: true },
   { path: '/assess-periods', title: '年度设置', icon: '📅' },
   { path: '/assess-dimensions', title: '维度管理', icon: '🏛', adminOnly: true },
   { path: '/assess-admins', title: '管理员配置', icon: '🛡️', superOnly: true },

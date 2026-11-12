@@ -313,6 +313,66 @@ class AgentBridgeServiceTest {
         verify(jdbc).update(contains("SET structure_file_stats"), contains("行为表现库"), eq("s-1"), eq(1L));
     }
 
+    // ==================== 结构交付稿逐行预览（审核页） ====================
+
+    @Test
+    @DisplayName("previewStructureDraft：结构稿按当前维度重跑校验，返回行级状态与 counts")
+    void previewStructureDraftRunsPreview() {
+        when(jdbc.queryForList(contains("FROM uf_assess_agent_draft"),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any()))
+                .thenReturn(List.of(draftRow(AgentImportRunService.KIND_STRUCTURE, 3L, "READY")));
+        AbilityStructureVO.PreviewResult ok = new AbilityStructureVO.PreviewResult();
+        AbilityStructureVO.Line line = new AbilityStructureVO.Line();
+        line.setSection("POSITION");
+        line.setName("安环部 · 主任");
+        line.setStatus("PENDING");
+        line.setMessage("部门未匹配：安环部");
+        ok.setLines(List.of(line));
+        ok.setCounts(new AbilityStructureVO.Counts());
+        ok.setCommitable(true);
+        when(structureImportService.preview(any(), any())).thenReturn(ok);
+
+        Map<String, Object> out = service.previewStructureDraft(7L);
+
+        assertThat(out.get("draftId")).isEqualTo(7L);
+        assertThat(out.get("status")).isEqualTo("READY");
+        assertThat(out.get("commitable")).isEqualTo(true);
+        assertThat(String.valueOf(out.get("lines"))).contains("安环部 · 主任");
+    }
+
+    @Test
+    @DisplayName("previewStructureDraft：评分稿/无权维度/不存在 分别 400/403/404")
+    void previewStructureDraftGuards() {
+        when(jdbc.queryForList(contains("FROM uf_assess_agent_draft"),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any())).thenReturn(List.of());
+        assertThatThrownBy(() -> service.previewStructureDraft(7L))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("交付稿不存在");
+
+        when(jdbc.queryForList(contains("FROM uf_assess_agent_draft"),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any()))
+                .thenReturn(List.of(draftRow(AgentImportRunService.KIND_EXTERNAL, 3L, "READY")));
+        assertThatThrownBy(() -> service.previewStructureDraft(7L))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("只有能力结构交付稿");
+
+        when(jdbc.queryForList(contains("FROM uf_assess_agent_draft"),
+                ArgumentMatchers.<Object>any(), ArgumentMatchers.<Object>any()))
+                .thenReturn(List.of(draftRow(AgentImportRunService.KIND_STRUCTURE, 9L, "READY")));
+        when(dimensionService.isAuthorizedForUser(any(), any())).thenReturn(false);
+        assertThatThrownBy(() -> service.previewStructureDraft(7L))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作");
+    }
+
+    /** 交付稿查询结果行（previewStructureDraft 只读这几列） */
+    private Map<String, Object> draftRow(String kind, long dimensionId, String status) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", 7L);
+        row.put("kind", kind);
+        row.put("dimension_id", dimensionId);
+        row.put("status", status);
+        row.put("payload_json", STRUCTURE_PAYLOAD);
+        return row;
+    }
+
     private void stubStructureOk() {
         AbilityStructureVO.PreviewResult ok = new AbilityStructureVO.PreviewResult();
         ok.setLines(List.of());

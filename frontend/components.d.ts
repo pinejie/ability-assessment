@@ -45,6 +45,7 @@ declare module 'vue' {
     RunAskCard: typeof import('./src/components/import/RunAskCard.vue')['default']
     RunChatDrawer: typeof import('./src/components/import/RunChatDrawer.vue')['default']
     RunReadyCard: typeof import('./src/components/import/RunReadyCard.vue')['default']
+    StructureReview: typeof import('./src/components/import/StructureReview.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

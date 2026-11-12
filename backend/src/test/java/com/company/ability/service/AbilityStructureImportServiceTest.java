@@ -352,7 +352,52 @@ class AbilityStructureImportServiceTest {
         assertThat(service.preview(dto, "s-1").getCounts().getUnresolved()).isZero();
     }
 
-    // ==================== 工具 ====================
+    @Test
+    @DisplayName("部门 canceled IS NULL 视为未停用（线上多数如此，写成 ='0' 会把正常部门全漏掉）")
+    void departmentWithNullCanceledMatches() {
+        jdbc.update("DELETE FROM uf_assess_import_alias");
+        jdbc.update("MERGE INTO HrmDepartment (id, departmentname, departmentmark, canceled) KEY(id)"
+                + " VALUES (911, 'NullCancel部门', 'NullCancel部门', NULL)");
+        jdbc.update("MERGE INTO HrmJobTitles (id, jobtitlemark, jobtitlename, canceled) KEY(id)"
+                + " VALUES (912, 'NullCancel岗位', 'NullCancel岗位', NULL)");
+
+        AbilityStructureDTO dto = minimal();
+        AbilityStructureDTO.PositionReqRow row = new AbilityStructureDTO.PositionReqRow();
+        row.setDepartmentName("NullCancel部门");
+        row.setJobTitleName("NullCancel岗位");
+        row.setItems(List.of(item("安全环保", "风险辨识", "100")));
+        dto.setPositionReqs(List.of(row));
+
+        assertThat(service.preview(dto, "s-1").getCounts().getUnresolved()).isZero();
+    }
+
+    @Test
+    @DisplayName("同名部门多条 → 不猜，标待确认并说明「同名多个需指定」")
+    void ambiguousDepartmentGoesPending() {
+        jdbc.update("DELETE FROM uf_assess_import_alias");
+        // 泛微库里「安环部」在多个子公司各有一条，按 id 取第一条会挂错公司
+        jdbc.update("MERGE INTO HrmDepartment (id, departmentname, departmentmark, canceled) KEY(id)"
+                + " VALUES (921, '重名部', '重名部', NULL)");
+        jdbc.update("MERGE INTO HrmDepartment (id, departmentname, departmentmark, canceled) KEY(id)"
+                + " VALUES (922, '重名部', '重名部', '0')");
+        jdbc.update("MERGE INTO HrmJobTitles (id, jobtitlemark, jobtitlename, canceled) KEY(id)"
+                + " VALUES (923, '重名岗', '重名岗', '0')");
+
+        AbilityStructureDTO dto = minimal();
+        AbilityStructureDTO.PositionReqRow row = new AbilityStructureDTO.PositionReqRow();
+        row.setDepartmentName("重名部");
+        row.setJobTitleName("重名岗");
+        row.setItems(List.of(item("安全环保", "风险辨识", "100")));
+        dto.setPositionReqs(List.of(row));
+
+        AbilityStructureVO.PreviewResult result = service.preview(dto, "s-1");
+        assertThat(result.getCounts().getUnresolved()).isEqualTo(1);
+        assertThat(result.getCounts().getPositionCreate()).isZero();
+        assertThat(result.getLines()).anySatisfy(l -> {
+            assertThat(l.getStatus()).isEqualTo("PENDING");
+            assertThat(l.getMessage()).contains("同名多个").contains("重名部");
+        });
+    }
 
     private int countAll() {
         return jdbc.queryForObject("SELECT (SELECT COUNT(*) FROM uf_ability_category)"

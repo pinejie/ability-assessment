@@ -89,6 +89,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '智能导入' },
   },
   {
+    path: '/ability-structure-import',
+    name: 'AbilityStructureImport',
+    component: () => import('@/views/AbilityStructureImport.vue'),
+    meta: { title: '能力结构智能导入', admin: true },
+  },
+  {
     path: '/assess-config',
     name: 'AssessConfig',
     component: () => import('@/views/AssessConfigList.vue'),

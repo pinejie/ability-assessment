@@ -1,8 +1,10 @@
 package com.company.ability.controller;
 
+import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.Result;
 import com.company.ability.service.AgentBridgeService;
 import com.company.ability.service.AgentImportRunService;
+import com.company.ability.service.ImportAliasUndoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -31,6 +35,7 @@ public class ImportRunController {
 
     private final AgentImportRunService runService;
     private final AgentBridgeService bridge;
+    private final ImportAliasUndoService aliasUndoService;
 
     @Operation(summary = "agent 收场回调（deliver|ask|reject，内部令牌）")
     @PostMapping("/api/v1/agent/outcome")
@@ -96,5 +101,34 @@ public class ImportRunController {
     @GetMapping("/api/v1/external/import-runs")
     public Result<List<Map<String, Object>>> history() {
         return Result.success(runService.history());
+    }
+
+    @Operation(summary = "确认别名（审核页把文件写法绑到系统部门/岗位，下次自动匹配）")
+    @PostMapping("/api/v1/external/import-runs/aliases")
+    @SuppressWarnings("unchecked")
+    public Result<Map<String, Object>> confirmAliases(@RequestBody Map<String, Object> body) {
+        List<Map<String, Object>> raw = (List<Map<String, Object>>) body.getOrDefault("items", List.of());
+        List<ImportAliasUndoService.AliasItem> items = new ArrayList<>();
+        for (Map<String, Object> m : raw) {
+            items.add(new ImportAliasUndoService.AliasItem(
+                    m.get("kind") == null ? null : String.valueOf(m.get("kind")),
+                    m.get("sourceName") == null ? null : String.valueOf(m.get("sourceName")),
+                    m.get("targetId") instanceof Number n ? n.longValue() : 0L,
+                    m.get("targetName") == null ? null : String.valueOf(m.get("targetName"))));
+        }
+        int saved = aliasUndoService.confirmAliases(items, DimensionContext.getOrDefault());
+        return Result.success(Map.of("saved", saved));
+    }
+
+    @Operation(summary = "撤销批次（默认只回滚 CREATE；含覆盖写需显式 force）")
+    @PostMapping("/api/v1/external/import-runs/{id}/undo")
+    public Result<Map<String, Object>> undo(@PathVariable long id, @RequestBody(required = false) Map<String, Object> body) {
+        boolean force = body != null && Boolean.parseBoolean(String.valueOf(body.getOrDefault("force", "false")));
+        ImportAliasUndoService.UndoResult r = aliasUndoService.undo(id, force, DimensionContext.getOrDefault());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("removed", r.removed());
+        out.put("refused", r.refused());
+        out.put("deleted", r.deleted());
+        return Result.success(out);
     }
 }

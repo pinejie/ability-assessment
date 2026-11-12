@@ -120,6 +120,12 @@ public class AgentController {
         return Result.success(agentBridgeService.commitDraft(id));
     }
 
+    @Operation(summary = "结构交付稿逐行预览（审核页/别名确认后刷新，不落库）")
+    @GetMapping("/drafts/{id}/preview")
+    public Result<Map<String, Object>> previewStructure(@PathVariable long id) {
+        return Result.success(agentBridgeService.previewStructureDraft(id));
+    }
+
     /** 消息请求体 */
     @lombok.Data
     public static class MessageRequest {

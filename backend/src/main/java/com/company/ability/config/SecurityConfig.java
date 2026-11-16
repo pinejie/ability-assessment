@@ -31,6 +31,13 @@ public class SecurityConfig {
     @Value("${assess.auth.enforced:true}")
     private boolean authEnforced;
 
+    /**
+     * 接口文档开关。生产（application-prod.yml）设为 false：
+     * /doc.html、/v3/api-docs 等直接 404，不进入 permitAll 白名单。
+     */
+    @Value("${assess.api-docs.enabled:true}")
+    private boolean apiDocsEnabled;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -51,9 +58,13 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.POST, "/api/v1/agent/draft", "/api/v1/agent/outcome",
                             "/api/v1/agent/parse-stats", "/api/v1/agent/parse-structure-stats")
                     .permitAll()   // cp_server 内部令牌通道，鉴权在服务内
-                    // 接口文档
-                    .requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**",
+                    ;
+                // 接口文档：生产 profile 关闭后不进白名单（authEnforced 时落到 anyRequest().authenticated()，
+                // 未登录即 401；同时 springdoc.api-docs.enabled=false 让端点本身不存在）
+                if (apiDocsEnabled) {
+                    auth.requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**",
                             "/swagger-ui/**", "/swagger-ui.html", "/favicon.ico").permitAll();
+                }
                 if (authEnforced) {
                     auth.anyRequest().authenticated();
                 } else {

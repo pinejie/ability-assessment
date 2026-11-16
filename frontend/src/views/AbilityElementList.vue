@@ -30,11 +30,16 @@
       <div class="card-header">
         <div class="filter-section">
           <label class="filter-label">所属类别</label>
+          <!--
+            选完即查（2026-11-14）：下拉是离散选择，一次只变一次，不需要查询按钮。
+            清空（clearable 的 ×）同样会触发 change，行为一致。
+          -->
           <el-select
             v-model="filterForm.categoryId"
             placeholder="全部类别"
             clearable
             class="filter-select"
+            @change="handleFilterChange"
           >
             <el-option
               v-for="item in categoryList"
@@ -43,7 +48,6 @@
               :value="item.id"
             />
           </el-select>
-          <el-button @click="loadData">查询</el-button>
           <el-button link @click="resetFilter">重置</el-button>
         </div>
       </div>
@@ -343,6 +347,12 @@ const loadCategoryList = async () => {
   } catch (error) {
     console.error('加载类别列表失败:', error)
   }
+}
+
+/** 筛选条件变化：回到第 1 页再查，否则会在旧页码上查出一片空白 */
+const handleFilterChange = () => {
+  pagination.currentPage = 1
+  loadData()
 }
 
 const resetFilter = () => {

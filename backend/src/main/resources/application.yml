@@ -41,6 +41,9 @@ mybatis-plus:
 
 assess:
   company-id: 1          # 测评数据所属公司（配置表按 company_id 隔离）
+  # 评价填写页对外地址：入队时写进 uf_push_msg.pc_url / mobile_url（泛微侧发消息时取用）。
+  # 必须是评价人浏览器能打开的地址，与 oa.sso.redirect-uri 同源；部署换域名时同步改这里。
+  fill-base-url: https://ca.zhongda.cn
   auth:
     enforced: true       # 业务接口强制登录（false 仅限开发调试回退，禁止公网）
   # 配置超管（OA 登录名 loginid，逗号分隔）：永远视为管理员且不可界面删除，
@@ -53,7 +56,9 @@ oa:
     base-url: http://xcx.zhongda.cn:8080
     client-id: 1feab8b2-bd67-42da-8a31-2dce003fc73a   # 泛微注册应用 CBA（weaver_sso_app.id=5）
     # client-secret 由 backend/config/secret.yml 提供
-    redirect-uri: http://172.18.28.206:3000/sso/callback   # 开发环境=本机前端；正式部署需同步改泛微注册
+    # 必须与泛微 weaver_sso_app(id=5 CBA).service_id 的 origin 一致，否则 authorize 直接回 1005。
+    # 泛微按 origin 校验（实测 /sso/callback、/、空路径都能过），但部署换域名时两边要同时改。
+    redirect-uri: https://ca.zhongda.cn/sso/callback
     connect-timeout: 5000
     read-timeout: 10000
     state-ttl-seconds: 300

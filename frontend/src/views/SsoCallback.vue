@@ -56,17 +56,22 @@ const retry = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  /* dvh 而非 vh：移动端浏览器地址栏收放时 vh 会跳变，卡片会上下抖 */
+  min-height: 100dvh;
+  padding: 16px;
+  box-sizing: border-box;
   background: #f5f7fa;
 }
 
 .callback-card {
-  width: 380px;
+  /* 死写 380px 会在 375px 宽的手机上横向溢出，改成随视口收缩 */
+  width: min(380px, 100%);
   padding: 48px 40px;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   text-align: center;
+  box-sizing: border-box;
 }
 
 .spinner {

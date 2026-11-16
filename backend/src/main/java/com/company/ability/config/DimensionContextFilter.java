@@ -41,7 +41,13 @@ public class DimensionContextFilter extends OncePerRequestFilter {
     private static final List<String> EXEMPT_URI_PREFIXES = List.of(
             "/api/v1/auth/",
             "/api/v1/assess-dimensions",
-            "/api/v1/assess-admins");
+            "/api/v1/assess-admins",
+            // 评价填写页：评价人是普通员工，通常没有维度授权，靠 token + 登录人==rater 校验，
+            // 若按维度头拦截，普通评价人一进页面就 403（2026-11-13 新增 S1/S2）。
+            "/api/v1/assess-fill/",
+            // 「我的评价」：只按登录身份查自己的待办，不接受任何维度/人员参数，
+            // 维度头对它无意义；拦截会让无授权的被评价人看不到自己的待办。
+            "/api/v1/my-assess-tasks");
 
     private final AssessDimensionService assessDimensionService;
     private final AdminService adminService;

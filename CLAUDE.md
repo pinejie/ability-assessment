@@ -133,7 +133,7 @@ ability-assessment/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 │
-├── sql/                              # 建表/运维脚本 01-32（按序执行；22 默认维度清理，23 要素「流程需评价」开关列，25 外部评分导入：source/original_score、导入稿快照表、usp_assess_external_score/_clear、recalc v5，30 等级分值动态化：level_desc/rate_value 列、评级 CHECK 放宽、usp_assess_rate/recalc v6/外部导入按「对应的评价」匹配，31 岗位权重列：uf_position_ability_req_item.weight / uf_assess_sheet_row.element_weight、recalc v7（要素级口径，已被 32 修正），32 岗位能力类别权重：明细权重重置为全局类别权重、recalc v8）
+├── sql/                              # 建表/运维脚本 01-32（按序执行；22 默认维度清理，23 要素「流程需评价」开关列，25 外部评分导入：source/original_score、导入稿快照表、usp_assess_external_score/_clear、recalc v5，30 等级分值动态化：level_desc/rate_value 列、评级 CHECK 放宽、usp_assess_rate/recalc v6/外部导入按「对应的评价」匹配，31 岗位权重列：uf_position_ability_req_item.weight / uf_assess_sheet_row.element_weight、recalc v7（要素级口径，已被 32 修正），32 岗位能力类别权重：明细权重重置为全局类别权重、recalc v8，36 usp_assess_rate 新增 @skip_recalc/@source，43/44 司机专职能力 4/5 级空行备份与删除，45 usp_assess_rate 评级校验收紧到要素级）
 ├── docs/                             # 项目内补充文档
 ├── CLAUDE.md                         # 本文件
 └── README.md

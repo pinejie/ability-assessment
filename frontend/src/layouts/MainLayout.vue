@@ -161,6 +161,10 @@ const menuItems: MenuItem[] = [
   // { path: '/org-ability-reqs', title: '组织能力要求', icon: '🏢' },
   { path: '/position-ability-reqs', title: '岗位能力要求', icon: '💼' },
   { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
+  // 「发起测评」不占菜单位（2026-11-14）：它是一次性动作，入口在「测评任务」页右上角。
+  // 路由仍然保留，直接访问 /assess-tasks 可用，只是侧边栏不出现、也不高亮任何项。
+  { path: '/assess-task-manage', title: '测评任务', icon: '📌' },
+  { path: '/my-assess-tasks', title: '我的评价', icon: '📝' },
   { path: '/assess-sheets', title: '测评汇总', icon: '📊' },
   { path: '/external-scores', title: '外部评分导入', icon: '📥' },
   { path: '/external-agent', title: '智能导入', icon: '🤖' },
@@ -177,9 +181,15 @@ const visibleMenuItems = computed(() =>
 
 const currentPath = computed(() => route.path)
 
+/**
+ * 面包屑标题：先按菜单项查，查不到退回路由 meta.title。
+ * 后者是为「不在菜单里但有独立标题」的页面准备的（如 /assess-tasks 发起测评，
+ * 它是「测评任务」的子动作，不占菜单）。两条都没有才显示"首页"，
+ * 否则这类页面会顶着"首页"的标题，看起来像迷路了。
+ */
 const currentPageTitle = computed(() => {
   const item = menuItems.find(m => m.path === route.path)
-  return item?.title || '首页'
+  return item?.title || (route.meta.title as string | undefined) || '首页'
 })
 </script>
 

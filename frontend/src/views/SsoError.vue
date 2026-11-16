@@ -21,17 +21,20 @@ const retry = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  min-height: 100dvh;
+  padding: 16px;
+  box-sizing: border-box;
   background: #f5f7fa;
 }
 
 .error-card {
-  width: 420px;
+  width: min(420px, 100%);
   padding: 40px;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   text-align: center;
+  box-sizing: border-box;
 }
 
 .error-card h2 {

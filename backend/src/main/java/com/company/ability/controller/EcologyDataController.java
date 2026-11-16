@@ -1,5 +1,6 @@
 package com.company.ability.controller;
 
+import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.PageRequest;
 import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
@@ -387,18 +388,36 @@ public class EcologyDataController {
         }
     }
 
-    @Operation(summary = "分页搜索人员（支持姓名和拼音）")
+    /**
+     * 分页搜索人员（支持姓名和拼音）。
+     *
+     * @param requireYear 可选。传了则只返回「该年度 + 当前维度已配置人员能力要求」的人。
+     *                    发起页用它把「必然发起失败」的人挡在下拉之外；不传时行为与旧版一致，
+     *                    客户评价人等场景仍需要能搜到全量在岗人员。
+     */
+    @Operation(summary = "分页搜索人员（支持姓名和拼音；可选按年度过滤已配置能力要求的人）")
     @GetMapping("/search/resources")
     public Result<PageResult<Map<String, Object>>> pageSearchResources(
             @RequestParam String keyword,
             @RequestParam(defaultValue = "1") Integer pageNum,
-            @RequestParam(defaultValue = "10") Integer pageSize) {
+            @RequestParam(defaultValue = "10") Integer pageSize,
+            @RequestParam(required = false) Integer requireYear) {
         try {
             PageRequest pageRequest = new PageRequest();
             pageRequest.setPageNum(pageNum);
             pageRequest.setPageSize(pageSize);
 
             String searchPattern = "%" + keyword + "%";
+            List<Object> params = new ArrayList<>(List.of(searchPattern, searchPattern));
+
+            // 条件片段在 base / count 两处必须完全一致，否则分页总数与实际列表对不上。
+            String requirementFilter = "";
+            if (requireYear != null) {
+                requirementFilter = " AND EXISTS (SELECT 1 FROM uf_user_ability_req_new q " +
+                        "WHERE q.resource_id = r.id AND q.assess_year = ? AND q.dimension_id = ?)";
+                params.add(requireYear);
+                params.add(DimensionContext.getOrDefault());
+            }
 
             String baseSql = "SELECT r.id, r.lastname, " +
                          "r.departmentid as departmentid, " +
@@ -410,13 +429,15 @@ public class EcologyDataController {
                          "LEFT JOIN HrmDepartment d ON r.departmentid = d.id " +
                          "LEFT JOIN HrmSubCompany s ON d.subcompanyid1 = s.id " +
                          "WHERE ISNULL(r.status, -1) IN (0, 1, 2, 3) " +
-                         "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?) " +
-                         "ORDER BY r.lastname";
-            String countSql = "SELECT COUNT(*) FROM HrmResource WHERE ISNULL(status, -1) IN (0, 1, 2, 3) " +
-                         "AND (lastname LIKE ? OR ecology_pinyin_search LIKE ?)";
+                         "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?)" +
+                         requirementFilter +
+                         " ORDER BY r.lastname";
+            String countSql = "SELECT COUNT(*) FROM HrmResource r WHERE ISNULL(r.status, -1) IN (0, 1, 2, 3) " +
+                         "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?)" +
+                         requirementFilter;
 
             return Result.success(JdbcPageHelper.page(
-                jdbcTemplate, baseSql, countSql, List.<Object>of(searchPattern, searchPattern), pageRequest));
+                jdbcTemplate, baseSql, countSql, params, pageRequest));
         } catch (Exception e) {
             log.error("搜索人员失败", e);
             return Result.success(new PageResult<>(List.of(), 0L, pageNum, pageSize));

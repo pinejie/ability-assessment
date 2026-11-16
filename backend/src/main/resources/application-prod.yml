@@ -1,0 +1,34 @@
+# 生产环境覆盖（SPRING_PROFILES_ACTIVE=prod）
+# 与 application.yml 的差异只有三类：关掉调试输出、关掉在线文档、日志收敛。
+# 数据库/SSO/JWT 等配置沿用 application.yml + config/secret.yml（或环境变量），此处不重复。
+logging:
+  level:
+    root: INFO
+    # 生产不打印业务 DEBUG（含 SQL 参数绑定，涉及身份证/手机号等个人信息）
+    com.company.ability: INFO
+  pattern:
+    # 补上 PID 与进程标识，便于在 journald 里区分多实例
+    console: '%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n'
+
+mybatis-plus:
+  configuration:
+    # 关闭 StdOutImpl：默认 NoLoggingImpl 不再把每条 SQL 与参数写到 stdout
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+# 生产禁用 Swagger/Knife4j 在线文档（/doc.html、/v3/api-docs 一律不可访问）
+# api-docs.enabled 控制 SecurityConfig 的白名单；springdoc/knife4j 控制端点本身是否生成
+assess:
+  auth:
+    enforced: true
+  api-docs:
+    enabled: false
+
+knife4j:
+  enable: false
+  production: true
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

@@ -53,3 +53,10 @@ temp/
 
 # 本地敏感配置（SSO client-secret / JWT 密钥），勿提交
 backend/config/secret.yml
+
+# 调试产物：E2E 截图与临时校验脚本。
+# 截图里是真实员工姓名/部门等个人信息，不能进仓库；
+# 脚本是一次性排查用品，留在本地即可。
+.e2e-*.png
+.tmp-verify/
+*.tmp-verify/

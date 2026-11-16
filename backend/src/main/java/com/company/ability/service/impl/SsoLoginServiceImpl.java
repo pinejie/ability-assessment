@@ -17,13 +17,25 @@ import java.util.Map;
 /**
  * 泛微 OAuth2 单点登录实现。
  * 身份锚定：OAuth profile 返回的 id（OA 登录名）→ HrmResource.loginid，
- * 要求在职（status=1，与《Ecology 账号密码校验服务》口径一致）。
+ * 要求在岗（status IN (0,1,2,3)，见 {@link #ACTIVE_STATUSES}）。
  * 不建本地账号表——组织与账号权威在泛微，本系统只读。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SsoLoginServiceImpl implements SsoLoginService {
+
+    /**
+     * 放行登录的人员状态（业务口径：只要在职就可以）。
+     * 0=试用期、1=正式、2=临时、3=试用延期 —— 四类都属「在岗在职」；
+     * 4=已解聘、5=已离职、6=已退休、7=已失效 一律拒绝。
+     *
+     * 2026-11-13 由 status=1 放宽而来：原口径要求「正式在职」，把试用期 174 人、
+     * 试用延期 61 人、临时 3 人挡在登录页外（其中 32 人有 OA 登录名，本可登录）。
+     * 放宽后 {@link com.company.ability.service.RaterEligibilityService} 与
+     * oa-job 的 PushMsgJob 必须保持同一判据，三处改动要一起上。
+     */
+    static final String ACTIVE_STATUSES = "0,1,2,3";
 
     private final OaSsoClient oaSsoClient;
     private final SsoStateService stateService;
@@ -60,14 +72,14 @@ public class SsoLoginServiceImpl implements SsoLoginService {
     }
 
     /**
-     * 按 OA 登录名查询在职人员（status=1）；不存在或已离职则拒绝登录
+     * 按 OA 登录名查询在岗人员（status IN (0,1,2,3)）；不存在或已离职则拒绝登录
      */
     private LoginUser loadActiveResource(String loginid) {
         String sql = "SELECT id, loginid, lastname, departmentid, subcompanyid1 " +
-                     "FROM HrmResource WHERE loginid = ? AND status = 1";
+                     "FROM HrmResource WHERE loginid = ? AND status IN (" + ACTIVE_STATUSES + ")";
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, loginid);
         if (rows.isEmpty()) {
-            log.warn("SSO 登录被拒：OA 登录名 [{}] 在本系统人员表中不存在或非在职", loginid);
+            log.warn("SSO 登录被拒：OA 登录名 [{}] 在本系统人员表中不存在或已离职", loginid);
             throw new BusinessException(401, "账号 " + loginid + " 在泛微中不存在或已离职，请联系管理员");
         }
         Map<String, Object> row = rows.get(0);

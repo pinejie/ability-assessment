@@ -29,21 +29,25 @@ mvn clean compile
 # 运行（默认端口 8080）——必须走 user service，禁止在聊天会话里直接 mvn spring-boot:run
 # 原因：会话进程树挂在 zd-code.service cgroup 下，该服务每次重启会 SIGTERM 整个 cgroup，
 #      会话里启动的后端会被连带杀掉（2026-10-22 排查确认）。
+# 生产形态（2026-11-16 起）：unit 跑 jar + prod profile，不再 source-run。
 export XDG_RUNTIME_DIR=/run/user/1000
 systemctl --user start ability-backend        # 启动（unit: ~/.config/systemd/user/ability-backend.service）
 systemctl --user stop ability-backend         # 停止
 systemctl --user restart ability-backend      # 重启
 systemctl --user status ability-backend       # 状态
-journalctl --user -u ability-backend -f       # 实时日志（run-8080.log 同步追加）
+journalctl --user -u ability-backend -f       # 实时日志（走 journald，不再落 run-8080.log）
 # 已 enable：开机/登录自启（依赖 Linger=yes），Restart=always 崩溃自动拉起
 
 # 前台调试（临时跑一下才用这个；mvn 不在 PATH，用绝对路径）
 /home/wgd/apache-maven-3.9.16/bin/mvn spring-boot:run
 
+# 发布（构建 jar 后必须重启服务才生效——服务跑的是产物不是源码目录）
+./deploy.sh --build
+
 # 打包
 mvn clean package -DskipTests
 
-# 运行测试（注意：当前测试代码无法编译，见「已知问题」）
+# 运行测试（2026-11-16 实测 276 个全过）
 mvn test
 ```
 
@@ -64,13 +68,15 @@ cd frontend
 # 安装依赖
 pnpm install
 
-# 开发（端口 3000，host 0.0.0.0，/api 代理到 localhost:8080）——长驻必须走 user service，
-# 禁止在聊天会话里直接 pnpm dev（同后端：会被 zd-code 重启连坐杀掉）
-# unit: ~/.config/systemd/user/ability-frontend.service（Restart=always，日志 append 到 frontend/dev-3000.log）
+# 开发（端口 3000，host 0.0.0.0，/api 代理到 localhost:8080）——仅本机/内网调试用
+# 禁止在聊天会话里直接 pnpm dev（会被 zd-code 重启连坐杀掉），长驻调试也走下面的 systemctl
+# 生产形态（2026-11-16 起）：unit 跑构建产物 dist/ + server/static-server.mjs（零依赖静态服务，
+# /api 流式代理到 8080，SSE 不缓冲）。不再对外暴露 Vite dev server（源码可读 + HMR 通道）。
+# unit: ~/.config/systemd/user/ability-frontend.service（Restart=always，日志走 journald）
 export XDG_RUNTIME_DIR=/run/user/1000
 systemctl --user start ability-frontend      # 启动
 systemctl --user stop ability-frontend       # 停止
-systemctl --user restart ability-frontend    # 重启（改 vite.config 后需要）
+systemctl --user restart ability-frontend    # 重启（改了前端代码需先 pnpm build 再重启）
 journalctl --user -u ability-frontend -f     # 实时日志
 
 # 临时前台调试才用（pnpm 装在 nvm 下，不在默认 PATH）：
@@ -110,7 +116,7 @@ ability-assessment/
 │   │   │   │   └── utils/            # 工具类（JdbcPageHelper）
 │   │   │   └── resources/
 │   │   │       └── application.yml   # 主配置（dev profile）
-│   │   └── test/                     # 测试（需修复，见「已知问题」）
+│   │   └── test/                     # 测试（H2 内存库，276 用例）
 │   └── pom.xml
 │
 ├── e2e/                              # 接口级 E2E（直连真实库，自带清场）
@@ -315,6 +321,7 @@ VITE_API_BASE_URL=/api/v1   # 开发时经 Vite 代理转发到 http://localhost
 
 ## 已知问题
 
+- **产品形态已上线（2026-11-16）：** 前后端均跑构建产物。前端改完必须 `pnpm build` 再 `systemctl --user restart ability-frontend`；后端必须 `mvn package` 再重启。**存盘不再自动生效。**
 - **工具输出掩码可污染字符串字面量（2026-10-21 实际踩过）：** 本工作环境会把形似密钥的字符串以 `***` 掩码展示；若照抄掩码结果写回文件，会把真实值毁成字面 `***`（曾使 `utils/auth.ts` 三个 localStorage key 同名，token 被 user 覆盖 → SSO 登录成功但请求永远 401 循环）。用 `awk 'NR==x{print length($0)}'` 按字节长度核验文件真实内容，勿凭显示值断言；给密钥类字面量取名避开 token/jwt/secret 等词。
 - **建表脚本不完整：** 见「数据库设计」中的三张待补充表。
 - **Maven 不在 PATH：** 本机使用 `~/apache-maven-3.9.16/bin/mvn`（下文命令中的 `mvn` 均指该路径）。

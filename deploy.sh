@@ -29,8 +29,35 @@ done
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
 if [[ $DO_BUILD -eq 1 ]]; then
+  # 前置检查：.env.production 被 .gitignore 排除、新机器上不存在。
+  # 缺它时 Vite 会把 import.meta.env.VITE_API_BASE_URL 替成字面量 undefined，
+  # 构建照常成功、dist 也照常产出，但线上 SSO 跳转会变成 undefined/auth/sso/login。
+  # 这种坏包不报错，只会在用户点登录时暴露，所以在构建前就拦住。
+  if [[ ! -f "$ROOT/frontend/.env.production" ]]; then
+    cat <<'EOF'
+❌ 缺少 frontend/.env.production —— 已中止构建
+
+   这个文件被 .gitignore 排除，需要每台机器自行创建一次：
+     printf 'VITE_API_BASE_URL=/api/v1\n' > frontend/.env.production
+
+   不建也能构建成功，但产物里 SSO 跳转会指向 undefined/auth/sso/login。
+EOF
+    exit 1
+  fi
+  # 只校验变量存在与否；值本身允许按环境覆盖（例如独立域名部署）。
+  if ! grep -q '^[[:space:]]*VITE_API_BASE_URL[[:space:]]*=' "$ROOT/frontend/.env.production"; then
+    echo "❌ frontend/.env.production 存在但未定义 VITE_API_BASE_URL，已中止构建"
+    exit 1
+  fi
+
   log "构建前端 dist"
   (cd "$ROOT/frontend" && pnpm build)
+
+  # 构建后校验产物：把 undefined 跳转挡在发布之前。
+  if grep -rqs 'undefined/auth/sso/login' "$ROOT/frontend/dist"; then
+    echo "❌ dist 中检测到 undefined/auth/sso/login，说明 VITE_API_BASE_URL 未生效，已中止发布"
+    exit 1
+  fi
 
   log "构建后端 jar（跳过测试，测试请单独跑 ./deploy.sh --test）"
   (cd "$ROOT/backend" && "$MVN" -q package -DskipTests)

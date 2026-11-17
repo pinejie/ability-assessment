@@ -170,6 +170,8 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
         BigDecimal standardTotal = BigDecimal.ZERO;
         BigDecimal leaderTotal = BigDecimal.ZERO;
         BigDecimal selfTotal = BigDecimal.ZERO;
+        // 各要素标准分：客户不评即达标口径下，供客户得分补偿使用（见下方客户循环）
+        Map<Long, BigDecimal> elementStandard = new HashMap<>();
         List<AssessSubjectItem> itemRows = new ArrayList<>();
         for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
             Long elementId = e.getKey();
@@ -183,6 +185,7 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             standardTotal = standardTotal.add(std);
             leaderTotal = leaderTotal.add(leaderS);
             selfTotal = selfTotal.add(selfS);
+            elementStandard.put(elementId, std);
 
             AssessSubjectItem row = new AssessSubjectItem();
             row.setCategoryId(categoryId);
@@ -216,11 +219,13 @@ public class AssessArchiveServiceImpl implements AssessArchiveService {
             for (Map.Entry<Long, Integer> e : requiredLevel.entrySet()) {
                 Long elementId = e.getKey();
                 Long categoryId = elementCategory.get(elementId);
-                // 禁止客户评价的要素：客户分记 0（评级记录保留，便于追溯）；
-                // EXTERNAL 要素豁免——外部导入的客户评级正常计分（与 recalc v5 做法 B 一致）
-                BigDecimal s = (!external.elements.contains(elementId)
-                                && Boolean.FALSE.equals(allowClientAssess.get(elementId)))
-                        ? BigDecimal.ZERO
+                // 不许客户评价的要素：客户不评即达标，按该要素【标准分】计入（2026-11-18 口径，
+                // 取代原「做法 B 记 0」）。EXTERNAL 要素走外部导入评级正常计分，不在此列。
+                // 与 usp_assess_recalc v9 的 @client_bonus 同口径，改一处必须同步改另一处。
+                boolean clientNotRated = !external.elements.contains(elementId)
+                        && Boolean.FALSE.equals(allowClientAssess.get(elementId));
+                BigDecimal s = clientNotRated
+                        ? elementStandard.getOrDefault(elementId, BigDecimal.ZERO)
                         : unitScore(cfg.rateScore, levels.get(elementId),
                                 effectiveWeight(categoryId, positionWeight, cfg.abilityWeight));
                 personTotal = personTotal.add(s);

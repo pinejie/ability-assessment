@@ -429,12 +429,12 @@ const handleSubmit = async () => {
     }
 
     if (formData.id) {
-      // 编辑时询问是否同步到测评汇总页面
+      // 编辑时询问是否同步到测评数据汇总页面
       let syncAssess = true
       try {
         await ElMessageBox.confirm(
-          '是否同步到测评汇总？同步：已有评级的要素保留，结构按新要求更新。不同步：页面数据不动，并标记为与人员能力要求不一致。',
-          '同步测评汇总',
+          '是否同步到测评数据汇总？同步：已有评级的要素保留，结构按新要求更新。不同步：页面数据不动，并标记为与人员能力要求不一致。',
+          '同步测评数据汇总',
           { confirmButtonText: '同步', cancelButtonText: '不同步', distinguishCancelAndClose: true, type: 'warning' },
         )
       } catch (action) {

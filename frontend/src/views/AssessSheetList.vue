@@ -1,6 +1,6 @@
 <template>
   <div class="assess-sheet-page">
-    <h1 class="page-title">测评汇总</h1>
+    <h1 class="page-title">测评数据汇总</h1>
     <p class="page-description">
       测评结果只读展示。页面由人员能力要求生成，评级与得分由泛微流程钩子写入。
     </p>
@@ -294,7 +294,7 @@ const reportSheetId = ref<number | null>(null)
 const detailLoading = ref(false)
 const detail = ref<SheetDetail | null>(null)
 const dialogTitle = computed(() =>
-  detail.value ? `${detail.value.resourceName ?? ''} · ${detail.value.year}年测评汇总` : '测评汇总',
+  detail.value ? `${detail.value.resourceName ?? ''} · ${detail.value.year}年测评数据汇总` : '测评数据汇总',
 )
 
 /** 数值统一保留两位小数；空值显示为 - */
@@ -431,7 +431,7 @@ const loadList = async () => {
     list.value = res.list
     total.value = res.total
   } catch {
-    ElMessage.error('加载测评汇总失败')
+    ElMessage.error('加载测评数据汇总失败')
   } finally {
     loading.value = false
   }

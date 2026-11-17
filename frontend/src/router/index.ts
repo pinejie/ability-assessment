@@ -30,7 +30,7 @@ const routes: RouteRecordRaw[] = [
     path: '/assess-dimensions',
     name: 'AssessDimensions',
     component: () => import('@/views/AssessDimensionList.vue'),
-    meta: { title: '测评维度管理', admin: true },
+    meta: { title: '维度设置', admin: true },
   },
   {
     path: '/assess-admins',
@@ -78,7 +78,7 @@ const routes: RouteRecordRaw[] = [
     path: '/assess-sheets',
     name: 'AssessSheets',
     component: () => import('@/views/AssessSheetList.vue'),
-    meta: { title: '测评汇总' },
+    meta: { title: '测评数据汇总' },
   },
   {
     path: '/external-scores',
@@ -102,7 +102,7 @@ const routes: RouteRecordRaw[] = [
     path: '/assess-config',
     name: 'AssessConfig',
     component: () => import('@/views/AssessConfigList.vue'),
-    meta: { title: '能力测评配置' },
+    meta: { title: '能力测评管理' },
   },
   // 评价填写页：无菜单、无导航的沉浸式页面。点消息链接或「我的评价」列表进入（方案 §6.1）
   {
@@ -132,7 +132,7 @@ const routes: RouteRecordRaw[] = [
     path: '/assess-task-manage',
     name: 'AssessTaskManage',
     component: () => import('@/views/AssessTaskManage.vue'),
-    meta: { title: '测评任务' },
+    meta: { title: '测评任务发起' },
   },
   // 我的评价（S2）：评价人视角的待办入口，只按登录身份过滤
   {

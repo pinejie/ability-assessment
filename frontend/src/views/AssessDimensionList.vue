@@ -3,7 +3,7 @@
     <!-- 页面标题区 -->
     <div class="page-header">
       <div class="page-title-section">
-        <h1 class="page-title">维度管理</h1>
+        <h1 class="page-title">维度设置</h1>
         <p class="page-description">维度即租户：类别、要素、要求、测评数据按维度隔离；顶栏切换维度</p>
       </div>
       <el-button type="primary" @click="handleAdd">新增维度</el-button>

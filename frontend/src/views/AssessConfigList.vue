@@ -1,6 +1,6 @@
 <template>
   <div class="assess-config-page">
-    <h1 class="page-title">能力测评配置</h1>
+    <h1 class="page-title">能力测评管理</h1>
     <p class="page-description">配置能力类型权重、测评人权重和等级标准，保存后只影响之后生成的测评结果</p>
 
     <!-- 1. 能力类型权重 -->

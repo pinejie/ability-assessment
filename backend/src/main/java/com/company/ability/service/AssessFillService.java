@@ -66,6 +66,11 @@ public class AssessFillService {
 
     static final int ERR_COMMENT_REQUIRED = 40409;
     static final int ERR_COMMENT_TOO_LONG = 40410;
+    /** 年度已关闭，不再接受新的评价提交（2026-11-19） */
+    static final int ERR_PERIOD_CLOSED = 40411;
+
+    /** 年度状态（uf_assess_period.status）：0 进行中 1 已关闭 */
+    private static final int PERIOD_CLOSED = 1;
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
@@ -95,6 +100,13 @@ public class AssessFillService {
         }
         if (ctx.raterStatus == RATER_VOIDED) {
             return statusOnly("VOIDED", "该测评已被管理员撤回。如需继续参与，请联系人力资源部重新发起测评。");
+        }
+        // 年度已关闭：不再接受新的评价（2026-11-19）。
+        // 已提交的豁免 —— 关闭年度冻结的是报告，不该连评价人回看自己被评内容的入口一起砍掉；
+        // 而且关闭后报告快照是唯一凭证，挡掉等于让人无从核对。
+        if (ctx.periodStatus == PERIOD_CLOSED && ctx.raterStatus != RATER_SUBMITTED) {
+            return statusOnly("PERIOD_CLOSED",
+                    "该年度已关闭，不能再提交评价。如需补评，请联系人力资源部重新开启年度。");
         }
         // 防代填：token 可被转发，但只有本人能打开
         assertCurrentUser(ctx);
@@ -291,7 +303,8 @@ public class AssessFillService {
                 "SELECT tr.id AS rater_id, tr.task_id, tr.rater_type, tr.rater_resource_id, tr.status AS rater_status," +
                 "       tr.draft_json, tr.draft_version, tr.comment," +
                 "       t.status AS task_status, t.sheet_id, t.resource_id, t.dimension_id," +
-                "       p.year, d.dimension_name, h.lastname AS target_name, dept.departmentname AS dept_name" +
+                "       p.status AS period_status, p.year, d.dimension_name," +
+                "       h.lastname AS target_name, dept.departmentname AS dept_name" +
                 " FROM uf_assess_task_rater tr" +
                 " JOIN uf_assess_task t ON t.id = tr.task_id" +
                 " JOIN uf_assess_period p ON p.id = t.period_id" +
@@ -315,6 +328,7 @@ public class AssessFillService {
         ctx.draftVersion = (int) num(m.get("draft_version"));
         ctx.comment = (String) m.get("comment");
         ctx.taskStatus = (int) num(m.get("task_status"));
+        ctx.periodStatus = (int) num(m.get("period_status"));
         ctx.sheetId = num(m.get("sheet_id"));
         ctx.targetResourceId = num(m.get("resource_id"));
         ctx.dimensionId = num(m.get("dimension_id"));
@@ -373,6 +387,12 @@ public class AssessFillService {
         }
         if (ctx.taskStatus != TASK_RUNNING) {
             throw new BusinessException(ERR_TASK_NOT_RUNNING, "该测评当前不可填写");
+        }
+        // 年度已关闭：暂存与提交一律拒绝（2026-11-19）。
+        // 放在任务状态之后，是为了让「已撤回/已取消/已完成」优先报出更具体的原因。
+        if (ctx.periodStatus == PERIOD_CLOSED) {
+            throw new BusinessException(ERR_PERIOD_CLOSED,
+                    "该年度已关闭，不能再提交评价。如需补评，请联系人力资源部重新开启年度");
         }
         assertCurrentUser(ctx);
     }
@@ -558,6 +578,8 @@ public class AssessFillService {
         /** 已写的评价意见（上级 / 客户才有） */
         String comment;
         int taskStatus;
+        /** 该任务所属年度的状态：0 进行中 1 已关闭（2026-11-19） */
+        int periodStatus;
         long sheetId;
         long targetResourceId;
         long dimensionId;

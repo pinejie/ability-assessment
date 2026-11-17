@@ -92,9 +92,13 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
   /** 评语是否还缺：必填但只有空白字符 */
   const commentMissing = computed(() => commentRequired.value && comment.value.trim().length === 0)
 
-  /** 状态页（已撤回 / 已取消）：不渲染表单，两端共用同一套判定 */
+  /** 状态页（已撤回 / 已取消 / 年度已关闭）：不渲染表单，两端共用同一套判定 */
   const statusOnly = computed(
-    () => !page.value || page.value.status === 'VOIDED' || page.value.status === 'CANCELLED'
+    () =>
+      !page.value ||
+      page.value.status === 'VOIDED' ||
+      page.value.status === 'CANCELLED' ||
+      page.value.status === 'PERIOD_CLOSED'
   )
 
   const currentElement = computed<AssessFillElement | null>(() => elements.value[currentIndex.value] ?? null)
@@ -134,8 +138,8 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     try {
       const data = await getAssessFillPage(token.value)
       page.value = data
-      // 状态页（VOIDED / CANCELLED）不初始化表单
-      if (data.status === 'VOIDED' || data.status === 'CANCELLED') {
+      // 状态页（VOIDED / CANCELLED / PERIOD_CLOSED）不初始化表单
+      if (data.status === 'VOIDED' || data.status === 'CANCELLED' || data.status === 'PERIOD_CLOSED') {
         return
       }
       draftVersion.value = data.draftVersion ?? 0

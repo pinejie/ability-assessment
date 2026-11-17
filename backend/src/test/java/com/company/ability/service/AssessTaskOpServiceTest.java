@@ -441,6 +441,25 @@ class AssessTaskOpServiceTest {
     }
 
     @Test
+    @DisplayName("myTasks：年度关闭后，未提交的不再出现在待办（2026-11-19）")
+    void myTasksExcludesClosedPeriodUnlessSubmitted() {
+        when(jdbc.queryForList(contains("WHERE tr.rater_resource_id = ?"), eq(OPERATOR)))
+                .thenReturn(List.of(row(
+                        "rater_task_id", 1201L, "task_id", TASK_ID, "access_token", "tok",
+                        "rater_type", "LEADER", "rater_status", 0, "task_status", 0,
+                        "year", YEAR, "target_name", "张晓明", "dimension_name", "管理能力",
+                        "dept_name", "生产部")));
+
+        service.myTasks();
+
+        // 关闭年度的过滤必须落在 SQL 里，而不是取回内存再筛：
+        // 未提交的（tr.status=0）只在年度进行中时出现，已提交的（tr.status=1）始终保留
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).queryForList(sql.capture(), eq(OPERATOR));
+        assertThat(sql.getValue()).contains("p.status = 0 OR tr.status = 1");
+    }
+
+    @Test
     @DisplayName("myTasks：状态文案映射（§7.2.1）")
     void myTasksStatusText() {
         when(jdbc.queryForList(contains("WHERE tr.rater_resource_id = ?"), eq(OPERATOR)))

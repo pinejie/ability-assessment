@@ -1,14 +1,18 @@
 <template>
   <div class="assess-fill-page">
-    <!-- 状态页：已撤回 / 已取消 / 链接无效 —— 不渲染表单（§4.3.8） -->
+    <!-- 状态页：已撤回 / 已取消 / 年度已关闭 / 链接无效 —— 不渲染表单（§4.3.8） -->
     <!--
       这里写完整条件而不是用 statusOnly：模板要靠 `!page` 做非空收窄，
       换成布尔 computed 后下方所有 page.xxx 都会变成 possibly null。
     -->
-    <div v-if="!page || page.status === 'VOIDED' || page.status === 'CANCELLED' || failed" class="fill-status">
+    <div
+      v-if="!page || page.status === 'VOIDED' || page.status === 'CANCELLED'
+            || page.status === 'PERIOD_CLOSED' || failed"
+      class="fill-status"
+    >
       <el-result
         :icon="failed ? 'error' : 'info'"
-        :title="failed ? '链接无效' : (page?.status === 'CANCELLED' ? '该测评已被取消' : '该测评已被撤回')"
+        :title="statusTitle"
         :sub-title="failed ? '请从消息通知重新进入。' : page?.message"
       />
     </div>
@@ -285,6 +289,17 @@ const {
 
 const overviewVisible = ref(false)
 const openedCategories = ref<string[]>([])
+
+/**
+ * 状态页标题。三种「不能填」的原因文案不同，集中在这里判断，
+ * 免得模板里三层嵌套三元表达式读不出是啥。
+ */
+const statusTitle = computed(() => {
+  if (failed.value) return '链接无效'
+  if (page.value?.status === 'CANCELLED') return '该测评已被取消'
+  if (page.value?.status === 'PERIOD_CLOSED') return '该年度已关闭'
+  return '该测评已被撤回'
+})
 
 /** 一览抽屉默认按类别展开；只在首次加载后设一次，之后尊重用户手动折叠 */
 const openOverview = () => {

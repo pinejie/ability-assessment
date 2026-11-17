@@ -475,6 +475,12 @@ public class AssessTaskOpService {
                 " WHERE tr.rater_resource_id = ?" +
                 "   AND tr.status IN (0, 1)" +   // 未作废（Q7：已撤回/已取消在 SQL 层就滤掉）
                 "   AND t.status IN (0, 2)" +
+                // 年度关闭后不再出现待办（2026-11-19）：关闭 = 该年度数据定稿，
+                // 未提交的不该再被催着填 —— 填写页也会拒绝提交，留着列表项只会点进去吃闭门羹。
+                // 已提交的（tr.status=1）保留：评价人可能想回头查自己当初怎么评的，
+                // 且关闭后报告快照已冻结，那条记录就是唯一凭证，隐藏等于数据凭空消失。
+                // tr.status IN (0,1) 已在上方限定，这里只需判定「进行中年度 或 本人已提交」。
+                "   AND (p.status = 0 OR tr.status = 1)" +
                 " ORDER BY t.status ASC, p.year DESC, t.id DESC",
                 user.resourceId());
 

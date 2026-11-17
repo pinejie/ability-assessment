@@ -140,6 +140,32 @@ class AssessFillServiceTest {
     }
 
     @Test
+    @DisplayName("page：年度已关闭且本人未提交，返回 PERIOD_CLOSED 且不含要素（2026-11-19）")
+    void pagePeriodClosedHidesEverything() {
+        stubRaterContext(0, 0, "LEADER", 1);   // 任务进行中，但年度已关闭
+
+        AssessTaskVO.FillPage page = service.page(TOKEN);
+
+        assertThat(page.getStatus()).isEqualTo("PERIOD_CLOSED");
+        assertThat(page.getMessage()).contains("年度已关闭");
+        assertThat(page.getElements()).isNull();
+        assertThat(page.getTargetName()).isNull();
+    }
+
+    @Test
+    @DisplayName("page：年度已关闭但本人已提交，仍可回看自己填的内容")
+    void pagePeriodClosedStillReadableForSubmitted() {
+        stubRaterContext(0, 1, "LEADER", 1);   // 年度已关闭，本人已提交
+        stubProgress(1, 1);
+
+        AssessTaskVO.FillPage page = service.page(TOKEN);
+
+        assertThat(page.getStatus()).isEqualTo("SUBMITTED");
+        assertThat(page.getElements()).isNotEmpty();
+        assertThat(page.getTargetName()).isEqualTo("张晓明");
+    }
+
+    @Test
     @DisplayName("page：token 查不到直接拒绝")
     void pageUnknownToken() {
         when(jdbc.queryForList(contains("WHERE tr.access_token = ?"), eq("bad-token")))
@@ -226,6 +252,16 @@ class AssessFillServiceTest {
     }
 
     @Test
+    @DisplayName("saveDraft：年度已关闭时拒绝暂存（2026-11-19）")
+    void saveDraftRejectsClosedPeriod() {
+        stubRaterContext(0, 0, "LEADER", 1);
+
+        assertThatThrownBy(() -> service.saveDraft(TOKEN, draft(2, 60, 4)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("年度已关闭");
+    }
+
+    @Test
     @DisplayName("saveDraft：任务已撤回拒绝暂存")
     void saveDraftRejectsVoidedTask() {
         stubRaterContext(4, 1);
@@ -299,6 +335,19 @@ class AssessFillServiceTest {
                 submitWithComment("长".repeat(1001), 59, 3, 60, 4)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("1000");
+        verify(jdbc, never()).queryForList(contains("{call usp_assess_rate"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("submit：年度已关闭时拒绝提交，且不写评级（2026-11-19）")
+    void submitRejectsClosedPeriod() {
+        stubRaterContext(0, 0, "LEADER", 1);
+        stubPending(2);
+
+        assertThatThrownBy(() -> service.submit(TOKEN,
+                submitWithComment("表现优秀", 59, 3, 60, 4)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("年度已关闭");
         verify(jdbc, never()).queryForList(contains("{call usp_assess_rate"), any(Object[].class));
     }
 
@@ -470,12 +519,17 @@ class AssessFillServiceTest {
     }
 
     private void stubRaterContext(int taskStatus, int raterStatus, String raterType) {
+        stubRaterContext(taskStatus, raterStatus, raterType, 0);
+    }
+
+    private void stubRaterContext(int taskStatus, int raterStatus, String raterType, int periodStatus) {
         Map<String, Object> row = row(
                 "rater_id", RATER_ID, "task_id", TASK_ID, "rater_type", raterType,
                 "rater_resource_id", RATER_RESOURCE,
                 "rater_status", raterStatus, "draft_json", "{\"59\":3}", "draft_version", 2,
                 "comment", "  已写过的评语  ",
-                "task_status", taskStatus, "sheet_id", SHEET_ID, "resource_id", TARGET_RESOURCE,
+                "task_status", taskStatus, "period_status", periodStatus,
+                "sheet_id", SHEET_ID, "resource_id", TARGET_RESOURCE,
                 "dimension_id", DIM, "year", 2026, "dimension_name", "管理能力",
                 "target_name", "张晓明", "dept_name", "生产部");
         when(jdbc.queryForList(contains("WHERE tr.access_token = ?"), eq(TOKEN)))

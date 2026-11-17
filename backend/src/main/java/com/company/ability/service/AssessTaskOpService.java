@@ -35,7 +35,8 @@ public class AssessTaskOpService {
     static final int ERR_TASK_NOT_FOUND = 40201;
     static final int ERR_TASK_ARCHIVED = 40202;
     static final int ERR_PERIOD_CLOSED = 40203;
-    static final int ERR_FOREIGN_RATING = 40204;
+    // 40204（存在流程评级 / 外部导入评级禁止撤回）已于 2026-11-18 停用：
+    // 撤回会连同 FLOW/EXTERNAL 评级一起删除，不再拦截（见 sql/49）。
     // 40205（存在评价意见禁止撤回）已于 2026-11-17 停用：撤回会一并删除该页意见，不再拦截。
     static final int ERR_NEED_FORCE = 40206;
     static final int ERR_FORBIDDEN = 40207;
@@ -91,8 +92,8 @@ public class AssessTaskOpService {
             throw new BusinessException(ERR_TASK_ARCHIVED, "该测评已归档，无法撤回，请走人工流程");
         }
 
-        // 不能删也不能忽视的其他来源评级（§4.3.6）：静默撤回会导致「撤回成功但分数没变」
-        assertNoForeignData(head.sheetId);
+        // 2026-11-18 起不再检测「非本任务评级」：usp_assess_void 会把该页
+        // FLOW / EXTERNAL 评级连同 WEB 评级一起删掉（sql/49），撤回真正回到评价初。
 
         long operatorId = currentOperatorId();
         Map<String, Object> proc = callVoidProc(taskId, operatorId, req.getReason());
@@ -104,6 +105,8 @@ public class AssessTaskOpService {
         result.setVoidedRatingCount(intOf(proc.get("voidedRatingCount")));
         result.setVoidedRaterCount(intOf(proc.get("voidedRaterCount")));
         result.setVoidedCommentCount(intOf(proc.get("voidedCommentCount")));
+        result.setVoidedExternalCount(intOf(proc.get("voidedExternalCount")));
+        result.setVoidedFlowCount(intOf(proc.get("voidedFlowCount")));
         result.setSubmittedRaterCount(intOf(proc.get("submittedRaterCount")));
         result.setSnapshotDeleted(bool(proc.get("snapshotDeleted")));
         result.setAlreadyVoided(bool(proc.get("alreadyVoided")));
@@ -535,28 +538,6 @@ public class AssessTaskOpService {
         Integer n = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM uf_assess_subject WHERE sheet_id = ?", Integer.class, sheetId);
         return n != null && n > 0;
-    }
-
-    /**
-     * 撤回前检测「不属于本任务」的评级（§4.3.6、§4.3.7）。
-     *
-     * recalc 不看 source：删掉 WEB 行后，若还有 FLOW/EXTERNAL 评级，重算会立刻
-     * 用它们重新出一个分 —— 表面撤回成功，实际没回到评价初。所以先检测后执行。
-     *
-     * 评价意见不做此校验（2026-11-17 改）：原实现只要该页有意见就禁止撤回，
-     * 导致客户评价人写错也撤不回来。现在允许撤回，usp_assess_void 会连同
-     * 该页的 uf_assess_comment 一起删除（见 sql/47）。
-     */
-    private void assertNoForeignData(long sheetId) {
-        Integer foreignRatings = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM uf_assess_sheet_rating WHERE sheet_id = ? AND source <> 'WEB'",
-                Integer.class, sheetId);
-        if (foreignRatings != null && foreignRatings > 0) {
-            throw new BusinessException(ERR_FOREIGN_RATING,
-                    "检测到该页面存在流程评级 / 外部导入评级 " + foreignRatings + " 条，"
-                            + "这些评级不属于本次测评任务，撤回后仍会参与算分，无法回到评价初状态。"
-                            + "请先处理这些评级后再撤回。");
-        }
     }
 
     private Map<String, Object> callVoidProc(Long taskId, long operatorId, String reason) {

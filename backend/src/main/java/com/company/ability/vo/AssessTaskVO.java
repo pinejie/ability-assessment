@@ -212,6 +212,10 @@ public class AssessTaskVO {
         private Integer voidedRaterCount;
         /** 一并删除的评价意见条数（2026-11-17：撤回要回到评价初，评语不留） */
         private Integer voidedCommentCount;
+        /** 一并删除的外部导入评级条数（2026-11-18：撤回连外部导入一起清） */
+        private Integer voidedExternalCount;
+        /** 一并删除的流程评级条数（2026-11-18：撤回连流程钩子写入的评级一起清） */
+        private Integer voidedFlowCount;
         /** 已提交人数 —— 撤回通知只发给这些人（§8.6.1） */
         private Integer submittedRaterCount;
         private Boolean snapshotDeleted;

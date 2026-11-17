@@ -127,6 +127,7 @@
               <li>作废 <b>{{ voidDialog.task.raterTotal }}</b> 位评价人中已提交的评价</li>
               <li>被测人 <b>{{ voidDialog.task.targetName }}</b> 的得分退回「未评价」状态</li>
               <li>该测评页上已写的评价意见（上级 / 客户评语）一并删除</li>
+              <li>外部导入的评级、OA 流程写入的评级、以及年度分一并清空</li>
               <li>旧评价链接立即失效，已提交的评价人会收到通知</li>
             </ul>
           </div>
@@ -451,8 +452,13 @@ const submitVoid = async () => {
   try {
     const r = await voidAssessTask(voidDialog.task.taskId, { reason, force: voidDialog.force })
     voidDialog.visible = false
+    // 一并清掉的非网页来源评级（2026-11-18）：让操作人看到「撤回了什么」，不静默
+    const cleared: string[] = []
+    if (r.voidedExternalCount > 0) cleared.push(`外部导入 ${r.voidedExternalCount} 条`)
+    if (r.voidedFlowCount > 0) cleared.push(`OA 流程评级 ${r.voidedFlowCount} 条`)
+    const clearedText = cleared.length > 0 ? `，并清除${cleared.join('、')}` : ''
     if (r.noticeWritten) {
-      ElMessage.success(`已撤回，${r.notifiedRaterCount} 位评价人已收到通知`)
+      ElMessage.success(`已撤回${clearedText}，${r.notifiedRaterCount} 位评价人已收到通知`)
     } else {
       // 通知失败必须让操作人知道，不能静默（§8.6.4）
       ElMessage.warning(r.noticeError || '撤回成功，但通知发送失败，请在详情页补发')

@@ -205,6 +205,10 @@ export interface AssessTaskVoidResult {
   voidedRaterCount: number
   /** 一并删除的评价意见条数（撤回要回到评价初） */
   voidedCommentCount: number
+  /** 一并删除的外部导入评级条数（2026-11-18 起撤回连外部导入一起清） */
+  voidedExternalCount: number
+  /** 一并删除的流程评级条数（泛微流程钩子写入的评级，同样随撤回清除） */
+  voidedFlowCount: number
   submittedRaterCount: number
   snapshotDeleted: boolean
   sheetAfter: {

@@ -39,7 +39,7 @@ import static org.mockito.Mockito.when;
  * 任务运营单测：撤回 / 取消 / 催办 / 重算。
  *
  * 重点覆盖 §4.3、§7.1.2 里那些「静默做错比报错更糟」的判定：
- * ① 有 FLOW/EXTERNAL 评级时撤回必须拒绝（否则撤回后重算又出分）；
+ * ① FLOW/EXTERNAL 评级不再拦截撤回（2026-11-18 起一并清空，见 sql/49）；
  * ② 已完成任务不传 force 必须拒绝；
  * ③ 已撤回/已取消的重算必须拒绝（闸门会放行，状态校验必须在闸门之前）；
  * ④ 通知失败不回滚撤回，但必须回传 noticeWritten=false。
@@ -74,7 +74,7 @@ class AssessTaskOpServiceTest {
         stubTask(0);
         stubTaskHeadRow();
         stubPeriod(0);
-        stubNoForeignData();
+        stubNotArchived();
         stubSheetAfter();
         when(pushService.submittedRaters(TASK_ID)).thenReturn(List.of(
                 row("rater_resource_id", 2144L, "access_token", "tok-leader")));
@@ -116,15 +116,18 @@ class AssessTaskOpServiceTest {
     }
 
     @Test
-    @DisplayName("voidTask：存在 FLOW/EXTERNAL 评级时拒绝，不调撤回过程")
-    void voidRejectsForeignRatings() {
-        when(jdbc.queryForObject(contains("AND source <> 'WEB'"), eq(Integer.class), eq(SHEET_ID)))
-                .thenReturn(21);
+    @DisplayName("voidTask：存在 FLOW/EXTERNAL 评级时不再拒绝，撤回照常执行并回传清除条数")
+    void voidClearsForeignRatings() {
+        stubProc(row("taskId", TASK_ID, "sheetId", SHEET_ID, "fullRollback", 1,
+                "voidedRatingCount", 0, "voidedRaterCount", 4,
+                "voidedExternalCount", 4, "voidedFlowCount", 19,
+                "submittedRaterCount", 2, "snapshotDeleted", 1, "alreadyVoided", 0));
 
-        assertThatThrownBy(() -> service.voidTask(TASK_ID, voidReq("客户评价人漏选财务部王强")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("流程评级 / 外部导入评级");
-        verify(jdbc, never()).queryForList(contains("{call usp_assess_void"), any(Object[].class));
+        AssessTaskVO.VoidResult r = service.voidTask(TASK_ID, voidReq("客户评价人漏选财务部王强"));
+
+        assertThat(r.getVoidedExternalCount()).isEqualTo(4);
+        assertThat(r.getVoidedFlowCount()).isEqualTo(19);
+        verify(jdbc).queryForList(contains("{call usp_assess_void"), any(Object[].class));
     }
 
     @Test
@@ -500,9 +503,7 @@ class AssessTaskOpServiceTest {
                 .thenReturn(status);
     }
 
-    private void stubNoForeignData() {
-        when(jdbc.queryForObject(contains("AND source <> 'WEB'"), eq(Integer.class), eq(SHEET_ID)))
-                .thenReturn(0);
+    private void stubNotArchived() {
         // 归档表在生产中不存在
         when(jdbc.queryForObject(contains("OBJECT_ID('dbo.uf_assess_subject'"), eq(Integer.class)))
                 .thenReturn(0);

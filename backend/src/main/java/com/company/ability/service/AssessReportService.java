@@ -175,11 +175,7 @@ public class AssessReportService {
         Map<String, Object> head = jdbc.queryForMap(
                 "SELECT annual_score FROM uf_assess_sheet WHERE id = ?", sheetId);
         r.setAnnualScore((BigDecimal) head.get("annual_score"));
-        for (Map<String, Object> m : jdbc.queryForList(
-                "SELECT comment_type, content FROM uf_assess_comment WHERE sheet_id = ?", sheetId)) {
-            if ("LEADER".equals(m.get("comment_type"))) r.setLeaderComment((String) m.get("content"));
-            if ("CLIENT".equals(m.get("comment_type"))) r.setClientComment((String) m.get("content"));
-        }
+        fillComments(sheetId, r);
         r.setClosed(periodStatusOfSheet(sheetId) == 1);
         r.setFrozen(false);
         return r;
@@ -196,6 +192,52 @@ public class AssessReportService {
                 .map(AssessSheetVO.CategoryRow::getActualScore).collect(Collectors.toList()));
         if (actSum != null && t.getActualScore() != null && actSum.subtract(t.getActualScore()).abs().compareTo(TOLERANCE) > 0) {
             throw new BusinessException("报告实际得分合计与页面不一致，请联系管理员核对");
+        }
+    }
+
+    /**
+     * 评价意见（2026-11-17）：网页评价人（直接上级 / 客户）在评价页写的评语。
+     * - 上级：直接取 LEADER 那一条。
+     * - 客户：可能多人，每人一行拼成「客户张三：xxx」。
+     * 两条通道并存：这里取不到时再回落到泛微流程写入的 uf_assess_comment。
+     */
+    private void fillComments(long sheetId, AssessSheetVO.Report r) {
+        // 只看该页最新一个未撤回的任务；已撤回（4）任务的评价人记录整条作废，不参与
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT tr.rater_type, tr.comment, h.lastname" +
+                " FROM uf_assess_task_rater tr" +
+                " JOIN uf_assess_task t ON t.id = tr.task_id" +
+                " LEFT JOIN HrmResource h ON h.id = tr.rater_resource_id" +
+                " WHERE t.id = (SELECT TOP 1 id FROM uf_assess_task" +
+                "               WHERE sheet_id = ? AND status <> 4 ORDER BY id DESC)" +
+                "   AND tr.status = 1 AND tr.comment IS NOT NULL" +
+                " ORDER BY tr.rater_type, tr.id", sheetId);
+
+        StringBuilder client = new StringBuilder();
+        for (Map<String, Object> m : rows) {
+            String type = (String) m.get("rater_type");
+            Object raw = m.get("comment");
+            if (raw == null || raw.toString().isBlank()) continue;
+            String content = raw.toString().trim();
+            if ("LEADER".equals(type)) {
+                if (r.getLeaderComment() == null) r.setLeaderComment(content);
+            } else if ("CLIENT".equals(type)) {
+                String name = (String) m.get("lastname");
+                if (client.length() > 0) client.append('\n');
+                client.append("客户").append(name == null ? "" : name).append('：').append(content);
+            }
+        }
+        if (client.length() > 0) r.setClientComment(client.toString());
+
+        // 回落：老通道（泛微流程写入 uf_assess_comment），只补空位，不覆盖网页评语
+        for (Map<String, Object> m : jdbc.queryForList(
+                "SELECT comment_type, content FROM uf_assess_comment WHERE sheet_id = ?", sheetId)) {
+            String type = (String) m.get("comment_type");
+            Object raw = m.get("content");
+            if (raw == null || raw.toString().isBlank()) continue;
+            String content = raw.toString().trim();
+            if ("LEADER".equals(type) && r.getLeaderComment() == null) r.setLeaderComment(content);
+            if ("CLIENT".equals(type) && r.getClientComment() == null) r.setClientComment(content);
         }
     }
 

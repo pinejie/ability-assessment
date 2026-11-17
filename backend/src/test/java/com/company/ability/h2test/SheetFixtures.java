@@ -13,6 +13,7 @@ public final class SheetFixtures {
 
     /** 测评域测试涉及的全部业务表（cleanAll 顺序无关，均为全表删除） */
     private static final String[] ALL_TABLES = {
+            "uf_assess_task_rater", "uf_assess_task",
             "uf_assess_sheet_rating", "uf_assess_comment", "uf_user_ability_req_item", "uf_user_ability_req_new",
             "uf_assess_sheet_log", "uf_assess_sheet_row", "uf_assess_sheet", "uf_assess_period",
             "uf_assess_level_score", "uf_assess_weight_ability", "uf_assess_weight_assessor", "uf_assess_grade_level",

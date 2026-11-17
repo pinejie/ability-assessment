@@ -3,6 +3,7 @@ package com.company.ability.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
@@ -16,9 +17,22 @@ public class AssessFillDTO {
     /** 暂存草稿：每次选择要素触发（不阻塞界面） */
     @Data
     public static class DraftRequest {
-        @NotEmpty(message = "评级不能为空")
+        /**
+         * 评级。草稿允许为空 —— 评价人可能先写评语后评级（2026-11-17 加评语后放开，
+         * 原为 @NotEmpty）；提交接口仍然强制非空。
+         */
         @Valid
         private List<Rating> ratings;
+
+        /**
+         * 评价意见（2026-11-17 新增）。
+         *
+         * <p>只有直接上级 / 客户两种身份有评语，自评传 null 会被忽略。
+         * 暂存阶段不强制非空（评语可以最后再写），但提交时必须非空 —— 校验在服务层做，
+         * 因为「是否必填」取决于评价人身份，无法用注解表达。
+         */
+        @Size(max = 1000, message = "评价意见不能超过 1000 字")
+        private String comment;
 
         /**
          * 客户端看到的草稿版本。服务端要求与库内 draft_version 相等，
@@ -35,6 +49,13 @@ public class AssessFillDTO {
         @NotEmpty(message = "评级不能为空")
         @Valid
         private List<Rating> ratings;
+
+        /**
+         * 评价意见（2026-11-17 新增）：直接上级 / 客户必填，自评忽略。
+         * 非空校验在服务层做（取决于评价人身份，注解表达不了）。
+         */
+        @Size(max = 1000, message = "评价意见不能超过 1000 字")
+        private String comment;
     }
 
     @Data

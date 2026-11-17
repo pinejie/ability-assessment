@@ -36,7 +36,7 @@ public class AssessTaskOpService {
     static final int ERR_TASK_ARCHIVED = 40202;
     static final int ERR_PERIOD_CLOSED = 40203;
     static final int ERR_FOREIGN_RATING = 40204;
-    static final int ERR_FOREIGN_COMMENT = 40205;
+    // 40205（存在评价意见禁止撤回）已于 2026-11-17 停用：撤回会一并删除该页意见，不再拦截。
     static final int ERR_NEED_FORCE = 40206;
     static final int ERR_FORBIDDEN = 40207;
     static final int ERR_STATE_INVALID = 40208;
@@ -103,6 +103,7 @@ public class AssessTaskOpService {
         result.setFullRollback(bool(proc.get("fullRollback")));
         result.setVoidedRatingCount(intOf(proc.get("voidedRatingCount")));
         result.setVoidedRaterCount(intOf(proc.get("voidedRaterCount")));
+        result.setVoidedCommentCount(intOf(proc.get("voidedCommentCount")));
         result.setSubmittedRaterCount(intOf(proc.get("submittedRaterCount")));
         result.setSnapshotDeleted(bool(proc.get("snapshotDeleted")));
         result.setAlreadyVoided(bool(proc.get("alreadyVoided")));
@@ -531,10 +532,14 @@ public class AssessTaskOpService {
     }
 
     /**
-     * 撤回前检测「不属于本任务」的评级与意见（§4.3.6、§4.3.7）。
+     * 撤回前检测「不属于本任务」的评级（§4.3.6、§4.3.7）。
      *
      * recalc 不看 source：删掉 WEB 行后，若还有 FLOW/EXTERNAL 评级，重算会立刻
      * 用它们重新出一个分 —— 表面撤回成功，实际没回到评价初。所以先检测后执行。
+     *
+     * 评价意见不做此校验（2026-11-17 改）：原实现只要该页有意见就禁止撤回，
+     * 导致客户评价人写错也撤不回来。现在允许撤回，usp_assess_void 会连同
+     * 该页的 uf_assess_comment 一起删除（见 sql/47）。
      */
     private void assertNoForeignData(long sheetId) {
         Integer foreignRatings = jdbc.queryForObject(
@@ -545,13 +550,6 @@ public class AssessTaskOpService {
                     "检测到该页面存在流程评级 / 外部导入评级 " + foreignRatings + " 条，"
                             + "这些评级不属于本次测评任务，撤回后仍会参与算分，无法回到评价初状态。"
                             + "请先处理这些评级后再撤回。");
-        }
-        Integer foreignComments = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM uf_assess_comment WHERE sheet_id = ?", Integer.class, sheetId);
-        if (foreignComments != null && foreignComments > 0) {
-            throw new BusinessException(ERR_FOREIGN_COMMENT,
-                    "检测到该页面存在评价意见 " + foreignComments + " 条，撤回后仍会展示在个人报告中。"
-                            + "请先处理后再撤回。");
         }
     }
 

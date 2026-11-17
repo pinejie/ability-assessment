@@ -115,4 +115,65 @@ class AssessReportServiceTest {
         return r.getCategories().stream().filter(c -> name.equals(c.getCategoryName())).findFirst()
                 .orElseThrow(() -> new AssertionError("报告缺少类别：" + name));
     }
+
+    // ==================== 评价意见（2026-11-17） ====================
+
+    @Test
+    @DisplayName("评价意见：取网页评价人写的评语，客户多人每人一行")
+    void commentsFromWebRaters() {
+        long sheet = sheetId(jdbc, RESOURCE_ID, YEAR);
+        long taskId = insertTask(jdbc, sheet, 2);
+
+        insertRater(jdbc, taskId, 2144L, "李经理", "LEADER", 1, "带队稳，能兜住急单");
+        insertRater(jdbc, taskId, 3001L, "王强", "CLIENT", 1, "交付及时");
+        insertRater(jdbc, taskId, 3002L, "赵敏", "CLIENT", 1, "沟通顺畅，问题响应快");
+        insertRater(jdbc, taskId, 3003L, "钱多", "CLIENT", 0, "还没提交，不该出现");
+
+        AssessSheetVO.Report r = reportService.get(sheet);
+
+        assertEquals("带队稳，能兜住急单", r.getLeaderComment());
+        assertEquals("客户王强：交付及时\n客户赵敏：沟通顺畅，问题响应快", r.getClientComment());
+    }
+
+    @Test
+    @DisplayName("评价意见：网页渠道没有时回落到流程写入的 uf_assess_comment")
+    void commentsFallBackToFlowChannel() {
+        long sheet = sheetId(jdbc, RESOURCE_ID, YEAR);
+        insertTask(jdbc, sheet, 2);
+        jdbc.update("INSERT INTO uf_assess_comment (company_id, sheet_id, comment_type, content) " +
+                "VALUES (1, ?, 'LEADER', '流程里的上级评语'), (1, ?, 'CLIENT', '流程里的客户评语')", sheet, sheet);
+
+        AssessSheetVO.Report r = reportService.get(sheet);
+
+        assertEquals("流程里的上级评语", r.getLeaderComment());
+        assertEquals("流程里的客户评语", r.getClientComment());
+    }
+
+    @Test
+    @DisplayName("评价意见：已撤回任务的评人不参与（评语随撤回清空）")
+    void commentsIgnoreVoidedTask() {
+        long sheet = sheetId(jdbc, RESOURCE_ID, YEAR);
+        long voidedTask = insertTask(jdbc, sheet, 4);
+        insertRater(jdbc, voidedTask, 2144L, "李经理", "LEADER", 1, "撤回前的旧评语");
+
+        AssessSheetVO.Report r = reportService.get(sheet);
+
+        assertNull(r.getLeaderComment());
+        assertNull(r.getClientComment());
+    }
+
+    private static long insertTask(JdbcTemplate jdbc, long sheetId, int status) {
+        jdbc.update("INSERT INTO uf_assess_task (company_id, dimension_id, period_id, sheet_id, resource_id, status) " +
+                "VALUES (1, 1, 1, ?, ?, ?)", sheetId, RESOURCE_ID, status);
+        return jdbc.queryForObject("SELECT MAX(id) FROM uf_assess_task", Long.class);
+    }
+
+    /** 评价人行 + 对应 HrmResource（客户评语要拼「客户<姓名>：」，姓名必须取自人员表） */
+    private static void insertRater(JdbcTemplate jdbc, long taskId, long resourceId, String name,
+                                    String raterType, int status, String comment) {
+        jdbc.update("INSERT INTO HrmResource (id, lastname, status, departmentid, jobtitle) " +
+                "VALUES (?, ?, 1, 5, 7)", resourceId, name);
+        jdbc.update("INSERT INTO uf_assess_task_rater (task_id, rater_resource_id, rater_type, status, comment, access_token) " +
+                "VALUES (?, ?, ?, ?, ?, ?)", taskId, resourceId, raterType, status, comment, "tok-" + resourceId);
+    }
 }

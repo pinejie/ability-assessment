@@ -108,6 +108,11 @@ public class AssessTaskVO {
         /** 草稿版本，暂存时原样带回 */
         private Integer draftVersion;
 
+        /** 已写的评价意见（上级 / 客户才有；自评恒为 null） */
+        private String comment;
+        /** 该身份是否需要写评语（前端据此决定显示/必填） */
+        private Boolean commentRequired;
+
         /** 本任务整体进度：已提交人数 / 总人数（让评价人知道为什么还要等） */
         private Integer submittedCount;
         private Integer raterTotal;
@@ -205,6 +210,8 @@ public class AssessTaskVO {
         private Boolean fullRollback;
         private Integer voidedRatingCount;
         private Integer voidedRaterCount;
+        /** 一并删除的评价意见条数（2026-11-17：撤回要回到评价初，评语不留） */
+        private Integer voidedCommentCount;
         /** 已提交人数 —— 撤回通知只发给这些人（§8.6.1） */
         private Integer submittedRaterCount;
         private Boolean snapshotDeleted;

@@ -38,6 +38,12 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
   /** 当前题号（0 起） */
   const currentIndex = ref(0)
 
+  /**
+   * 评价意见（2026-11-17）：直接上级 / 客户必填，自评不显示。
+   * 与评级同属报告内容，提交时一并写入 uf_assess_task_rater.comment。
+   */
+  const comment = ref('')
+
   /** 自动暂存的防抖句柄：每次选择都排一次，200ms 内的连续点击合并成一条请求 */
   let draftTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -51,12 +57,48 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
   /** 已提交：整页只读，不再提供任何写入入口（2026-11-16 由「提交后可改」改为单向提交） */
   const submitted = computed(() => page.value?.status === 'SUBMITTED')
 
+  /** 本页是否需要写评价意见（上级 / 客户才有，自评没有这一栏） */
+  const commentRequired = computed(() => page.value?.commentRequired === true)
+
+  /**
+   * 评价意见是**独立的一步**，排在所有要素之后（2026-11-17 由「每题下挂一条」
+   * 改为「全部题答完再写一条」）。所以当前步 currentIndex 的取值范围是
+   * 0..N-1（要素）再加一格 N（评价意见），N 只在需要评语时存在。
+   */
+  const hasCommentStep = computed(() => commentRequired.value && totalElements.value > 0)
+  const totalSteps = computed(() => totalElements.value + (hasCommentStep.value ? 1 : 0))
+  /** 当前停在「评价意见」这一步，而不是某道要素题 */
+  const onCommentStep = computed(
+    () => hasCommentStep.value && currentIndex.value >= totalElements.value
+  )
+  /** 当前是最后一步（最后一题且无评语步，或已到评语步） */
+  const isLastStep = computed(() => currentIndex.value >= totalSteps.value - 1)
+  /**
+   * 停在最后一题、下面是评价意见那一步。
+   * 不看 missingCount —— 按钮文案不该随「本题评没评」变来变去，评完最后一题
+   * 下一步必然是评语，没评的时候按钮本来就是禁用的。
+   */
+  const nextIsCommentStep = computed(
+    () =>
+      hasCommentStep.value &&
+      !onCommentStep.value &&
+      currentIndex.value === totalElements.value - 1
+  )
+  /** 进度文案用的题号：到评语步时不再往上加，仍显示「第 N / N 项」 */
+  const displayIndex = computed(() =>
+    Math.min(currentIndex.value + 1, Math.max(totalElements.value, 1))
+  )
+
+  /** 评语是否还缺：必填但只有空白字符 */
+  const commentMissing = computed(() => commentRequired.value && comment.value.trim().length === 0)
+
   /** 状态页（已撤回 / 已取消）：不渲染表单，两端共用同一套判定 */
   const statusOnly = computed(
     () => !page.value || page.value.status === 'VOIDED' || page.value.status === 'CANCELLED'
   )
 
   const currentElement = computed<AssessFillElement | null>(() => elements.value[currentIndex.value] ?? null)
+  /** 是否停在最后一道要素题（不含评价意见步） */
   const isLast = computed(() => currentIndex.value >= totalElements.value - 1)
   const currentUnanswered = computed(() => {
     const el = currentElement.value
@@ -97,11 +139,21 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
         return
       }
       draftVersion.value = data.draftVersion ?? 0
+      comment.value = data.comment ?? ''
       for (const [elementId, levelNo] of Object.entries(data.draft ?? {})) {
         answers[Number(elementId)] = Number(levelNo)
       }
       // 断点续填：直接落到第一个未评的要素（不能跳题，所以这就是唯一的续填点，§4.2.2）
-      currentIndex.value = Math.min(firstUnansweredIndex.value, Math.max(totalElements.value - 1, 0))
+      // 全部要素都评过、而评语还空着（或已提交），则落到评语那一步（2026-11-17）——
+      // 已提交的人重新打开链接，看到的是他写的那条评语，而不是最后一题。
+      const firstMissing = firstUnansweredIndex.value
+      const lastElementIndex = Math.max(totalElements.value - 1, 0)
+      const allElementsRated = firstMissing >= totalElements.value
+      if (allElementsRated && hasCommentStep.value && (commentMissing.value || submitted.value)) {
+        currentIndex.value = totalElements.value
+      } else {
+        currentIndex.value = Math.min(firstMissing, lastElementIndex)
+      }
     } catch {
       failed.value = true
     }
@@ -120,6 +172,8 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
   /**
    * 跳题。为了满足「未评不能跳过」，只有「前面全部已评」的题才允许跳；
    * 跳到更靠后的未评题会提示先完成当前第一道未评题（§6.3.2）。
+   *
+   * index 允许等于 totalElements（评价意见那一步），受同一条规则约束。
    *
    * @returns 是否真的跳过去了 —— 界面据此决定要不要关掉一览浮层
    */
@@ -142,8 +196,9 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     }
   }
 
+  /** 下一步：答完最后一题后进入评价意见那一步；已是最后一步则不动 */
   const goNext = () => {
-    if (currentUnanswered.value || isLast.value) {
+    if (currentUnanswered.value || isLastStep.value) {
       return
     }
     currentIndex.value += 1
@@ -167,6 +222,20 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     }
   }
 
+  /** 评语只在需要的身份上发送；自评（或不显示这一栏时）传 null，服务端也会忽略 */
+  const currentComment = (): string | null => {
+    const text = comment.value.trim()
+    return commentRequired.value && text.length > 0 ? text : null
+  }
+
+  /** 评语改动后同样自动暂存，避免用户写了一大段后浏览器崩掉全丢 */
+  const onCommentInput = () => {
+    if (submitted.value) {
+      return
+    }
+    scheduleDraftSave()
+  }
+
   const currentRatings = (): AssessFillRating[] =>
     Object.entries(answers)
       .filter(([, levelNo]) => levelNo != null)
@@ -182,12 +251,14 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
       return
     }
     const ratings = currentRatings()
-    if (ratings.length === 0) {
+    // 评级与评语都没有时不必发请求；只写了评语（还没评级）也要暂存，
+    // 因为 DraftRequest.ratings 已放开为空（2026-11-17）
+    if (ratings.length === 0 && comment.value.trim().length === 0) {
       return
     }
     draftSaving.value = true
     try {
-      const r = await saveAssessDraft(token.value, ratings, draftVersion.value)
+      const r = await saveAssessDraft(token.value, ratings, draftVersion.value, currentComment())
       if (r.conflict) {
         draftVersion.value = r.draftVersion
         const latest = r.latestDraft ?? {}
@@ -217,6 +288,10 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     if (missingCount.value > 0) {
       return
     }
+    if (commentMissing.value) {
+      ui.notify('请先填写评价意见', 'warning')
+      return
+    }
     if (submitted.value) {
       return
     }
@@ -227,7 +302,7 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     }
     submitting.value = true
     try {
-      const r = await submitAssessFill(token.value, currentRatings())
+      const r = await submitAssessFill(token.value, currentRatings(), currentComment())
       if (r.calculated) {
         ui.notify('已提交，全部评价人已完成，系统已计算得分', 'success')
       } else {
@@ -245,6 +320,7 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     page,
     failed,
     answers,
+    comment,
     draftVersion,
     submitting,
     draftSaving,
@@ -256,6 +332,14 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     missingCount,
     progressPercent,
     submitted,
+    commentRequired,
+    commentMissing,
+    hasCommentStep,
+    totalSteps,
+    onCommentStep,
+    isLastStep,
+    nextIsCommentStep,
+    displayIndex,
     statusOnly,
     currentElement,
     isLast,
@@ -266,6 +350,7 @@ export function useAssessFill(token: Ref<string> | ComputedRef<string>, ui: Asse
     levelLabel,
     load,
     onSelect,
+    onCommentInput,
     jumpTo,
     goPrev,
     goNext,

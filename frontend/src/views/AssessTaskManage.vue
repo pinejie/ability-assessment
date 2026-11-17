@@ -2,7 +2,7 @@
   <div class="task-manage-page">
     <div class="page-header">
       <div>
-        <h1 class="page-title">测评任务</h1>
+        <h1 class="page-title">测评任务发起</h1>
         <p class="page-description">
           查看本期测评任务的进度，可催办未提交者；发起有误可撤回后重新发起。
           撤回会删除已提交的评价并通知当事人，不可撤销。
@@ -126,6 +126,7 @@
             <ul>
               <li>作废 <b>{{ voidDialog.task.raterTotal }}</b> 位评价人中已提交的评价</li>
               <li>被测人 <b>{{ voidDialog.task.targetName }}</b> 的得分退回「未评价」状态</li>
+              <li>该测评页上已写的评价意见（上级 / 客户评语）一并删除</li>
               <li>旧评价链接立即失效，已提交的评价人会收到通知</li>
             </ul>
           </div>
@@ -410,7 +411,7 @@ const doDelete = async (row: AssessTaskItem) => {
     await ElMessageBox.confirm(
       `确定删除 ${row.targetName ?? '该人员'} ${row.year} 年度这条「${row.statusName}」任务吗？\n\n` +
       '· 任务记录与评价链接将被删除，无法恢复\n' +
-      '· 该人员的测评页会保留，可在「测评汇总」中查看',
+      '· 该人员的测评页会保留，可在「测评数据汇总」中查看',
       '确认删除任务',
       { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '再想想' }
     )

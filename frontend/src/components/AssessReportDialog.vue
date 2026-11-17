@@ -118,11 +118,11 @@
       <div class="comment-block">
         <div class="comment-item">
           <span class="comment-label">上级评价</span>
-          <span :class="{ pending: !report.leaderComment }">{{ report.leaderComment || '暂无' }}</span>
+          <span class="comment-text" :class="{ pending: !report.leaderComment }">{{ report.leaderComment || '暂无' }}</span>
         </div>
         <div class="comment-item">
           <span class="comment-label">客户评价</span>
-          <span :class="{ pending: !report.clientComment }">{{ report.clientComment || '暂无' }}</span>
+          <span class="comment-text" :class="{ pending: !report.clientComment }">{{ report.clientComment || '暂无' }}</span>
         </div>
       </div>
     </template>
@@ -525,5 +525,10 @@ onBeforeUnmount(() => {
 .assess-report-dialog .comment-label {
   flex: 0 0 72px;
   color: #909399;
+}
+/* 客户评语可能多人，每人一行（换行符由服务端拼入），不能折叠成一段 */
+.assess-report-dialog .comment-text {
+  white-space: pre-line;
+  word-break: break-word;
 }
 </style>

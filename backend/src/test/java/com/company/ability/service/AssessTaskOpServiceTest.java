@@ -128,14 +128,17 @@ class AssessTaskOpServiceTest {
     }
 
     @Test
-    @DisplayName("voidTask：存在评价意见时也拒绝（撤回后仍会展示在报告里）")
-    void voidRejectsForeignComments() {
-        when(jdbc.queryForObject(contains("FROM uf_assess_comment"), eq(Integer.class), eq(SHEET_ID)))
-                .thenReturn(2);
+    @DisplayName("voidTask：存在评价意见时也放行，并回传被删条数（2026-11-17 起撤回不再被评语拦住）")
+    void voidAllowsComments() {
+        stubTask(0);
+        stubProc(row("taskId", TASK_ID, "sheetId", SHEET_ID, "fullRollback", 1,
+                "voidedRatingCount", 180, "voidedRaterCount", 3, "voidedCommentCount", 2,
+                "submittedRaterCount", 2, "snapshotDeleted", 1, "alreadyVoided", 0));
 
-        assertThatThrownBy(() -> service.voidTask(TASK_ID, voidReq("客户评价人漏选财务部王强")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("评价意见");
+        AssessTaskVO.VoidResult r = service.voidTask(TASK_ID, voidReq("客户评价人漏选财务部王强"));
+
+        assertThat(r.getVoidedCommentCount()).isEqualTo(2);
+        verify(jdbc).queryForList(contains("{call usp_assess_void"), any(Object[].class));
     }
 
     @Test
@@ -480,8 +483,6 @@ class AssessTaskOpServiceTest {
 
     private void stubNoForeignData() {
         when(jdbc.queryForObject(contains("AND source <> 'WEB'"), eq(Integer.class), eq(SHEET_ID)))
-                .thenReturn(0);
-        when(jdbc.queryForObject(contains("FROM uf_assess_comment"), eq(Integer.class), eq(SHEET_ID)))
                 .thenReturn(0);
         // 归档表在生产中不存在
         when(jdbc.queryForObject(contains("OBJECT_ID('dbo.uf_assess_subject'"), eq(Integer.class)))

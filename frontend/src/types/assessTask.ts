@@ -108,6 +108,10 @@ export interface AssessFillPage {
   submittedCount?: number
   raterTotal?: number
   masked?: boolean
+  /** 已写的评价意见（上级 / 客户才有；自评恒为空） */
+  comment?: string | null
+  /** 该身份是否需要写评语 —— 前端据此决定显示与必填 */
+  commentRequired?: boolean
 }
 
 /** 提交 / 暂存行 */
@@ -199,6 +203,8 @@ export interface AssessTaskVoidResult {
   fullRollback: boolean
   voidedRatingCount: number
   voidedRaterCount: number
+  /** 一并删除的评价意见条数（撤回要回到评价初） */
+  voidedCommentCount: number
   submittedRaterCount: number
   snapshotDeleted: boolean
   sheetAfter: {

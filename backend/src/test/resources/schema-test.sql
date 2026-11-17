@@ -263,6 +263,30 @@ CREATE TABLE IF NOT EXISTS uf_assess_comment (
     CONSTRAINT uk_assess_comment UNIQUE (sheet_id, comment_type)
 );
 
+-- 测评任务与评价人（sql/37、sql/38）。报告页从这里取网页渠道的评价意见，
+-- 只保留测试用到的列，其余生产列（催办、撤回链等）不在此复刻。
+CREATE TABLE IF NOT EXISTS uf_assess_task (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id BIGINT NOT NULL DEFAULT 1,
+    dimension_id BIGINT NOT NULL DEFAULT 1,
+    period_id BIGINT NOT NULL DEFAULT 1,
+    sheet_id BIGINT,
+    resource_id BIGINT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS uf_assess_task_rater (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id BIGINT NOT NULL,
+    rater_resource_id BIGINT NOT NULL,
+    rater_type VARCHAR(10) NOT NULL,
+    status TINYINT NOT NULL DEFAULT 0,
+    comment NVARCHAR(1000),
+    draft_json NVARCHAR(MAX),
+    draft_version INT NOT NULL DEFAULT 0,
+    access_token VARCHAR(64) NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS uf_assess_sheet_row (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     sheet_id BIGINT NOT NULL,

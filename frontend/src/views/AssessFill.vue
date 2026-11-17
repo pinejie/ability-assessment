@@ -9,7 +9,7 @@
       <el-result
         :icon="failed ? 'error' : 'info'"
         :title="failed ? '链接无效' : (page?.status === 'CANCELLED' ? '该测评已被取消' : '该测评已被撤回')"
-        :sub-title="failed ? '请从消息通知或「我的评价」重新进入。' : page?.message"
+        :sub-title="failed ? '请从消息通知重新进入。' : page?.message"
       />
     </div>
 
@@ -30,10 +30,8 @@
             <div class="fill-progress-inner" :style="{ width: progressPercent + '%' }" />
           </div>
           <span class="fill-progress-text">
-            第 {{ currentIndex + 1 }} / {{ totalElements }} 项 · 已评 {{ ratedCount }}
-            <template v-if="page.submittedCount !== undefined && page.raterTotal">
-              · 本任务 {{ page.submittedCount }}/{{ page.raterTotal }} 人已提交
-            </template>
+            <template v-if="onCommentStep">评价意见 · 共 {{ totalElements }} 项已评完</template>
+            <template v-else>第 {{ displayIndex }} / {{ totalElements }} 项 · 已评 {{ ratedCount }}</template>
           </span>
           <el-button text type="primary" @click="openOverview">全部要素一览</el-button>
         </div>
@@ -46,73 +44,103 @@
         />
       </header>
 
-      <!-- 一屏一题：每次只呈现一个要素（§6.3） -->
+      <!-- 一屏一题：每次只呈现一个要素（§6.3）；评语单独一步，做完所有题才出现 -->
       <main class="fill-body">
-        <div v-if="!currentElement" class="fill-empty">该测评没有需要您评价的要素。</div>
-
-        <div v-else class="question-card">
-          <!-- 类别面包屑 -->
+        <!-- 评价意见：全部要素答完后的独立一步（2026-11-17） -->
+        <div v-if="onCommentStep" class="question-card comment-step">
           <div class="q-breadcrumb">
-            <span class="q-category">{{ currentElement.categoryName || '未分类' }}</span>
-            <span class="q-index">第 {{ currentIndex + 1 }} 项 / 共 {{ totalElements }} 项</span>
+            <span class="q-category">评价意见</span>
+            <span class="q-index">{{ totalElements }} 项已评完</span>
           </div>
-
-          <!-- 要素名 + 要求等级 -->
           <div class="q-head">
-            <h2 class="q-name">{{ currentElement.elementName }}</h2>
-            <span v-if="!page.masked && currentElement.requiredLevelNo" class="q-required">
-              要求等级：{{ currentElement.requiredLevelNo }} 级
-            </span>
+            <h2 class="q-name">评价意见</h2>
+            <span v-if="!submitted" class="q-required">必填</span>
           </div>
-
-          <!-- 要素说明 -->
-          <p v-if="currentElement.description" class="q-desc">{{ currentElement.description }}</p>
-
-          <!-- 档位：数量按要素配置，每档带行为要求全文 -->
-          <el-alert
-            v-if="currentElement.levels.length === 0"
-            type="warning"
-            :closable="false"
-            show-icon
-            title="该要素尚未配置等级，暂时无法评价，请联系人力资源部"
+          <p class="q-desc">
+            请针对 {{ page.targetName || '被测人' }} 的整体表现给出文字评价，提交后不可修改。
+          </p>
+          <el-input
+            v-model="comment"
+            type="textarea"
+            :rows="6"
+            maxlength="1000"
+            show-word-limit
+            :disabled="submitted"
+            placeholder="例如：执行力强，能主动推动跨部门事项落地；建议在团队培养上再投入一些精力。"
+            @input="onCommentInput"
           />
-          <div v-else class="level-list" role="radiogroup" :aria-label="currentElement.elementName">
-            <div
-              v-for="lv in currentElement.levels"
-              :key="lv.levelNo"
-              class="level-item"
-              :class="{
-                'is-active': answers[currentElement.elementId] === lv.rateValue,
-                'is-locked': submitted,
-              }"
-              role="radio"
-              :aria-checked="answers[currentElement.elementId] === lv.rateValue"
-              :aria-disabled="submitted"
-              :tabindex="submitted ? -1 : 0"
-              @click="onSelect(currentElement.elementId, lv.rateValue)"
-              @keydown.enter.prevent="onSelect(currentElement.elementId, lv.rateValue)"
-              @keydown.space.prevent="onSelect(currentElement.elementId, lv.rateValue)"
-            >
-              <span class="level-radio" aria-hidden="true" />
-              <div class="level-content">
-                <div class="level-title">{{ lv.levelDesc || lv.levelNo + ' 级' }}</div>
-                <div v-if="lv.requirement" class="level-req">{{ lv.requirement }}</div>
-                <div v-else class="level-req is-empty">该等级暂无行为说明</div>
+        </div>
+
+        <template v-else>
+          <div v-if="!currentElement" class="fill-empty">该测评没有需要您评价的要素。</div>
+
+          <div v-else class="question-card">
+            <!-- 类别面包屑 -->
+            <div class="q-breadcrumb">
+              <span class="q-category">{{ currentElement.categoryName || '未分类' }}</span>
+              <span class="q-index">第 {{ displayIndex }} 项 / 共 {{ totalElements }} 项</span>
+            </div>
+
+            <!-- 要素名 + 要求等级 -->
+            <div class="q-head">
+              <h2 class="q-name">{{ currentElement.elementName }}</h2>
+              <span v-if="!page.masked && currentElement.requiredLevelNo" class="q-required">
+                要求等级：{{ currentElement.requiredLevelNo }} 级
+              </span>
+            </div>
+
+            <!-- 要素说明 -->
+            <p v-if="currentElement.description" class="q-desc">{{ currentElement.description }}</p>
+
+            <!-- 档位：数量按要素配置，每档带行为要求全文 -->
+            <el-alert
+              v-if="currentElement.levels.length === 0"
+              type="warning"
+              :closable="false"
+              show-icon
+              title="该要素尚未配置等级，暂时无法评价，请联系人力资源部"
+            />
+            <div v-else class="level-list" role="radiogroup" :aria-label="currentElement.elementName">
+              <div
+                v-for="lv in currentElement.levels"
+                :key="lv.levelNo"
+                class="level-item"
+                :class="{
+                  'is-active': answers[currentElement.elementId] === lv.rateValue,
+                  'is-locked': submitted,
+                }"
+                role="radio"
+                :aria-checked="answers[currentElement.elementId] === lv.rateValue"
+                :aria-disabled="submitted"
+                :tabindex="submitted ? -1 : 0"
+                @click="onSelect(currentElement.elementId, lv.rateValue)"
+                @keydown.enter.prevent="onSelect(currentElement.elementId, lv.rateValue)"
+                @keydown.space.prevent="onSelect(currentElement.elementId, lv.rateValue)"
+              >
+                <span class="level-radio" aria-hidden="true" />
+                <div class="level-content">
+                  <div class="level-title">{{ lv.levelDesc || lv.levelNo + ' 级' }}</div>
+                  <div v-if="lv.requirement" class="level-req">{{ lv.requirement }}</div>
+                  <div v-else class="level-req is-empty">该等级暂无行为说明</div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </template>
       </main>
 
       <!-- 底部操作栏：已提交后整页只读，不再提供任何写入入口 -->
       <footer class="fill-footer">
         <div class="fill-footer-hint">
           <span v-if="submitted" class="fill-locked">评价已提交并锁定，不可再修改</span>
+          <span v-else-if="onCommentStep && commentMissing" class="fill-missing">请填写评价意见后再提交</span>
           <span v-else-if="currentUnanswered" class="fill-missing">请先选择本项的等级</span>
           <span v-else-if="missingCount > 0" class="fill-missing">
             还有 {{ missingCount }} 个要素未评价，评完后才能提交
           </span>
-          <span v-else class="fill-ready">已评完，可以提交</span>
+          <span v-else class="fill-ready">
+            {{ onCommentStep ? '已评完，可以提交' : (nextIsCommentStep ? '评完本题后还有一步评价意见' : '已评完，可以提交') }}
+          </span>
           <span v-if="draftSaving" class="fill-saving">草稿保存中…</span>
         </div>
         <div class="fill-footer-actions">
@@ -120,18 +148,14 @@
             暂存草稿
           </el-button>
           <el-button :disabled="currentIndex === 0" @click="goPrev">上一项</el-button>
-          <el-button v-if="!isLast" type="primary" :disabled="currentUnanswered" @click="goNext">
-            下一项
+          <el-button v-if="!isLastStep" type="primary" :disabled="currentUnanswered" @click="goNext">
+            {{ nextIsCommentStep ? '下一步：评价意见' : '下一项' }}
           </el-button>
-          <el-button
-            v-else-if="submitted"
-            type="success"
-            disabled
-          >已提交</el-button>
+          <el-button v-else-if="submitted" type="success" disabled>已提交</el-button>
           <el-button
             v-else
             type="primary"
-            :disabled="missingCount > 0"
+            :disabled="missingCount > 0 || commentMissing"
             :loading="submitting"
             @click="submit"
           >提交评价</el-button>
@@ -171,6 +195,23 @@
             </div>
           </el-collapse-item>
         </el-collapse>
+
+        <!-- 评价意见：独立的一步，挂在所有要素之后 -->
+        <div v-if="hasCommentStep" class="overview-comment">
+          <div
+            class="overview-item"
+            :class="{
+              'is-current': onCommentStep,
+              'is-locked': totalElements > firstUnansweredIndex,
+            }"
+            @click="onOverviewClick(totalElements)"
+          >
+            <span class="overview-index">{{ totalElements + 1 }}</span>
+            <span class="overview-name">评价意见</span>
+            <span v-if="!commentMissing" class="overview-state is-done">已填写</span>
+            <span v-else class="overview-state">未填写</span>
+          </div>
+        </div>
       </el-drawer>
     </template>
   </div>
@@ -193,6 +234,7 @@ const {
   page,
   failed,
   answers,
+  comment,
   submitting,
   draftSaving,
   currentIndex,
@@ -201,14 +243,20 @@ const {
   missingCount,
   progressPercent,
   submitted,
+  commentMissing,
+  hasCommentStep,
+  onCommentStep,
+  isLastStep,
+  nextIsCommentStep,
+  displayIndex,
   currentElement,
-  isLast,
   currentUnanswered,
   firstUnansweredIndex,
   groupedElements,
   levelLabel,
   load,
   onSelect,
+  onCommentInput,
   jumpTo,
   goPrev,
   goNext,
@@ -404,6 +452,27 @@ onUnmounted(dispose)
   flex-direction: column;
   gap: 10px;
   margin-bottom: 16px;
+}
+
+/* 评价意见那一步：沿用题卡外观，只是内容是一段文本域（2026-11-17） */
+.comment-step .q-desc {
+  margin-bottom: 12px;
+}
+
+/* 「必填」标红：这一步唯一能交的东西就是这段文字，不能让它看着像选填 */
+.comment-step .q-required {
+  color: #d4380d;
+}
+
+.comment-step :deep(.el-textarea__inner) {
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.overview-comment {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #e5e6eb;
 }
 
 .level-item {

@@ -184,9 +184,33 @@ class AssessFillServiceTest {
         assertThat(r.getDraftVersion()).isEqualTo(3);
         assertThat(r.getRatedCount()).isEqualTo(2);   // 原有 59:3 保留 + 新增 60:4
         ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+        // 不带评语的暂存走另一条 SQL（不碰 comment 列），见 saveDraftKeepsCommentWhenAbsent
         verify(jdbc).update(contains("UPDATE uf_assess_task_rater SET draft_json"), json.capture(),
                 eq(3), eq(RATER_ID));
         assertThat(json.getValue()).contains("\"59\":3").contains("\"60\":4");
+    }
+
+    @Test
+    @DisplayName("saveDraft：带评语时一并写入（2026-11-17）")
+    void saveDraftWritesComment() {
+        AssessTaskVO.DraftResult r = service.saveDraft(TOKEN,
+                draftWithComment(2, "  踏实肯干  ", 60, 4));
+
+        assertThat(r.getConflict()).isFalse();
+        ArgumentCaptor<Object> comment = ArgumentCaptor.forClass(Object.class);
+        verify(jdbc).update(contains("comment = ? WHERE id = ?"), anyString(), eq(3),
+                comment.capture(), eq(RATER_ID));
+        assertThat(comment.getValue()).isEqualTo("踏实肯干");   // 前后空白要 trim 掉
+    }
+
+    @Test
+    @DisplayName("saveDraft：不带评语时不清空已存评语")
+    void saveDraftKeepsCommentWhenAbsent() {
+        service.saveDraft(TOKEN, draft(2, 60, 4));
+
+        verify(jdbc).update(contains("UPDATE uf_assess_task_rater SET draft_json"), anyString(),
+                eq(3), eq(RATER_ID));
+        verify(jdbc, never()).update(contains("comment = ?"), anyString(), any(), any(), any());
     }
 
     @Test
@@ -224,6 +248,72 @@ class AssessFillServiceTest {
     }
 
     // ==================== submit ====================
+
+    @Test
+    @DisplayName("submit：自评不写评语，即使前端传了也忽略（2026-11-17）")
+    void submitSelfIgnoresComment() {
+        stubRaterContext(0, 0, "SELF");
+        stubPending(2);
+        stubProgress(4, 2);
+
+        service.submit(TOKEN, submitWithComment("自评也写了", 59, 3, 60, 4));
+
+        ArgumentCaptor<Object> comment = ArgumentCaptor.forClass(Object.class);
+        verify(jdbc).update(contains("comment = ? WHERE id = ?"), any(), anyString(),
+                comment.capture(), eq(RATER_ID));
+        assertThat(comment.getValue()).isNull();
+    }
+
+    @Test
+    @DisplayName("submit：上级未写评语即拒绝，且不写评级（2026-11-17）")
+    void submitRejectsBlankComment() {
+        stubPending(2);
+        stubProgress(4, 2);
+
+        assertThatThrownBy(() -> service.submit(TOKEN, submitWithComment("   ", 59, 3, 60, 4)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("评价意见");
+        verify(jdbc, never()).queryForList(contains("{call usp_assess_rate"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("submit：客户未写评语同样拒绝（2026-11-17）")
+    void submitClientRejectsBlankComment() {
+        stubRaterContext(0, 0, "CLIENT");
+        stubPending(2);
+        stubProgress(4, 2);
+
+        assertThatThrownBy(() -> service.submit(TOKEN, submitWithComment(null, 59, 3, 60, 4)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("评价意见");
+        verify(jdbc, never()).queryForList(contains("{call usp_assess_rate"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("submit：评语超过 1000 字拒绝")
+    void submitRejectsTooLongComment() {
+        stubPending(2);
+        stubProgress(4, 2);
+
+        assertThatThrownBy(() -> service.submit(TOKEN,
+                submitWithComment("长".repeat(1001), 59, 3, 60, 4)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("1000");
+        verify(jdbc, never()).queryForList(contains("{call usp_assess_rate"), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("page：上级返回已存评语且要求必填，自评不要求")
+    void pageCarriesCommentFlag() {
+        stubRaterContext(0, 0, "LEADER");
+        AssessTaskVO.FillPage leader = service.page(TOKEN);
+        assertThat(leader.getCommentRequired()).isTrue();
+        assertThat(leader.getComment()).isEqualTo("  已写过的评语  ");   // 原样回显，不在读时裁
+
+        stubRaterContext(0, 0, "SELF");
+        AssessTaskVO.FillPage self = service.page(TOKEN);
+        assertThat(self.getCommentRequired()).isFalse();
+    }
 
     @Test
     @DisplayName("submit：单人提交只写评级不调 finish，@skip_recalc=1 且 @source=WEB")
@@ -384,6 +474,7 @@ class AssessFillServiceTest {
                 "rater_id", RATER_ID, "task_id", TASK_ID, "rater_type", raterType,
                 "rater_resource_id", RATER_RESOURCE,
                 "rater_status", raterStatus, "draft_json", "{\"59\":3}", "draft_version", 2,
+                "comment", "  已写过的评语  ",
                 "task_status", taskStatus, "sheet_id", SHEET_ID, "resource_id", TARGET_RESOURCE,
                 "dimension_id", DIM, "year", 2026, "dimension_name", "管理能力",
                 "target_name", "张晓明", "dept_name", "生产部");
@@ -477,8 +568,15 @@ class AssessFillServiceTest {
         return rs;
     }
 
-    /** 按 elementId, levelNo 成对传入 */
+    /**
+     * 按 elementId, levelNo 成对传入。
+     * 带默认评语 —— 上级/客户提交时评语必填（2026-11-17），不带会被服务层拦下。
+     */
     private static AssessFillDTO.SubmitRequest submit(Object... pairs) {
+        return submitWithComment("工作扎实，沟通到位", pairs);
+    }
+
+    private static AssessFillDTO.SubmitRequest submitWithComment(String comment, Object... pairs) {
         List<AssessFillDTO.Rating> list = new ArrayList<>();
         for (int i = 0; i < pairs.length; i += 2) {
             AssessFillDTO.Rating r = new AssessFillDTO.Rating();
@@ -488,13 +586,19 @@ class AssessFillServiceTest {
         }
         AssessFillDTO.SubmitRequest req = new AssessFillDTO.SubmitRequest();
         req.setRatings(list);
+        req.setComment(comment);
         return req;
     }
 
     private static AssessFillDTO.DraftRequest draft(int version, long elementId, int levelNo) {
+        return draftWithComment(version, null, elementId, levelNo);
+    }
+
+    private static AssessFillDTO.DraftRequest draftWithComment(int version, String comment, long elementId, int levelNo) {
         AssessFillDTO.DraftRequest req = new AssessFillDTO.DraftRequest();
         req.setVersion(version);
         req.setRatings(submit(elementId, levelNo).getRatings());
+        req.setComment(comment);
         return req;
     }
 

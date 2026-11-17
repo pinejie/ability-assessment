@@ -58,6 +58,15 @@ public class AssessFillService {
     private static final Map<String, String> RATER_TYPE_NAMES = Map.of(
             "SELF", "自评", "LEADER", "直接上级", "CLIENT", "客户");
 
+    /** 需要写评价意见的身份（2026-11-17）：自评不写，上级/客户必填 */
+    private static final Set<String> COMMENT_RATER_TYPES = Set.of("LEADER", "CLIENT");
+
+    /** 评价意见最大长度，与 uf_assess_task_rater.comment NVARCHAR(1000) 一致 */
+    private static final int COMMENT_MAX_LEN = 1000;
+
+    static final int ERR_COMMENT_REQUIRED = 40409;
+    static final int ERR_COMMENT_TOO_LONG = 40410;
+
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final long companyId;
@@ -101,6 +110,8 @@ public class AssessFillService {
         page.setTargetName(ctx.targetName);
         page.setDeptName(ctx.deptName);
         page.setDraftVersion(ctx.draftVersion);
+        page.setComment(ctx.comment);
+        page.setCommentRequired(COMMENT_RATER_TYPES.contains(ctx.raterType));
 
         boolean masked = "CLIENT".equals(ctx.raterType);
         page.setMasked(masked);
@@ -137,12 +148,23 @@ public class AssessFillService {
         }
 
         Map<Long, Integer> merged = new LinkedHashMap<>(parseDraft(ctx.draftJson));
-        for (AssessFillDTO.Rating r : req.getRatings()) {
-            merged.put(r.getElementId(), r.getLevelNo());
+        if (req.getRatings() != null) {
+            for (AssessFillDTO.Rating r : req.getRatings()) {
+                merged.put(r.getElementId(), r.getLevelNo());
+            }
         }
         int nextVersion = ctx.draftVersion + 1;
-        jdbc.update("UPDATE uf_assess_task_rater SET draft_json = ?, draft_time = SYSDATETIME(), draft_version = ? " +
-                "WHERE id = ?", toJson(merged), nextVersion, ctx.raterId);
+        // 评语：只有上级/客户写。req 没带 comment 字段（null）时不覆盖已存评语，
+        // 否则「只改了评级」的自动暂存会把刚写的评语清空。
+        String comment = COMMENT_RATER_TYPES.contains(ctx.raterType)
+                ? normalizeComment(req.getComment()) : null;
+        if (comment != null) {
+            jdbc.update("UPDATE uf_assess_task_rater SET draft_json = ?, draft_time = SYSDATETIME(), " +
+                    "draft_version = ?, comment = ? WHERE id = ?", toJson(merged), nextVersion, comment, ctx.raterId);
+        } else {
+            jdbc.update("UPDATE uf_assess_task_rater SET draft_json = ?, draft_time = SYSDATETIME(), " +
+                    "draft_version = ? WHERE id = ?", toJson(merged), nextVersion, ctx.raterId);
+        }
 
         AssessTaskVO.DraftResult result = new AssessTaskVO.DraftResult();
         result.setConflict(false);
@@ -159,10 +181,11 @@ public class AssessFillService {
      * 2. 登录人 == rater_resource_id（防代填）
      * 3. 任务进行中
      * 3b. 本人尚未提交 —— 提交是单向的，提交后不可再改（2026-11-16 变更）
-     * 4. 提交的要素集合 == 该角色应有集合（不多不少）
-     * 5. 每个 levelNo 命中当前维度等级分值配置
-     * 6. 写评级（@skip_recalc=1，@source='WEB'），评价人置已提交
-     * 7. 全员齐备 → usp_assess_task_finish 算分
+     * 4. 评价意见非空（上级 / 客户必填，自评不写，2026-11-17 新增）
+     * 5. 提交的要素集合 == 该角色应有集合（不多不少）
+     * 6. 每个 levelNo 命中该要素已配置的档位
+     * 7. 写评级（@skip_recalc=1，@source='WEB'），评价人置已提交
+     * 8. 全员齐备 → usp_assess_task_finish 算分
      */
     @Transactional(rollbackFor = Exception.class)
     public AssessTaskVO.SubmitResult submit(String token, AssessFillDTO.SubmitRequest req) {
@@ -172,7 +195,18 @@ public class AssessFillService {
         // 评价值一旦成为算分依据就必须稳定，改分统一走「HR 撤回 → 重新发起」。
         assertNotSubmitted(ctx);
 
-        // 4. 要素集合必须与应有集合完全一致。
+        // 4. 评价意见（2026-11-17）：上级 / 客户必填，自评不写。
+        //    评语和评级一样是报告的组成部分，缺了报告「评价意见」栏就是空的，
+        //    所以要挡在写入前，而不是提交成功后再让 HR 去催。
+        String comment = null;
+        if (COMMENT_RATER_TYPES.contains(ctx.raterType)) {
+            comment = normalizeComment(req.getComment());
+            if (comment == null) {
+                throw new BusinessException(ERR_COMMENT_REQUIRED, "请填写评价意见后再提交");
+            }
+        }
+
+        // 5. 要素集合必须与应有集合完全一致。
         //    少一个 → recalc 的 COUNT(*) = @n 不成立 → 该角色得分为 NULL → 分数永不出且难定位，
         //    所以把残缺挡在写入前（§4.2.3）。多一个 → 会写进不属于该角色的要素，同样拒绝。
         Set<Long> expected = elements(ctx.sheetId, ctx.raterType, false, ctx.dimensionId).stream()
@@ -193,7 +227,7 @@ public class AssessFillService {
                     "评价不完整：还差 " + missing.size() + " 个要素" + (extra.isEmpty() ? "" : "，多出 " + extra.size() + " 个"));
         }
 
-        // 5. 评级值必须是**该要素自己**配置过的档位对应的评价号。
+        // 6. 评级值必须是**该要素自己**配置过的档位对应的评价号。
         //    不能只校验「命中维度的 rate_value 集合」—— 维度有 5 档而某要素只配 3 档时，
         //    那样会放行 4/5 档，等于允许按业务上不存在的档位打分（§6.3、§6.5.1）。
         Map<Long, Set<Integer>> allowed = allowedRateValues(ctx.sheetId, ctx.raterType, ctx.dimensionId);
@@ -205,7 +239,7 @@ public class AssessFillService {
             }
         }
 
-        // 6. 写评级：@skip_recalc=1 只写不算分；@source='WEB' 让撤回能精确删除本通道数据。
+        // 7. 写评级：@skip_recalc=1 只写不算分；@source='WEB' 让撤回能精确删除本通道数据。
         //    @workflow_request_id 传 task_id —— 语义已泛化为「来源单据 ID」（§9.1）。
         //    @client_ids_json 对 CLIENT 传全量客户名单：usp_assess_rate 第 6 步会删除不在名单中的
         //    历史客户评级；网页侧名单发起即冻结，等效幂等。
@@ -218,10 +252,10 @@ public class AssessFillService {
                 1, "WEB");
 
         jdbc.update("UPDATE uf_assess_task_rater SET status = ?, submit_time = SYSDATETIME(), " +
-                "draft_json = ?, draft_time = SYSDATETIME(), draft_version = draft_version + 1 WHERE id = ?",
-                RATER_SUBMITTED, toJson(submitted), ctx.raterId);
+                "draft_json = ?, draft_time = SYSDATETIME(), draft_version = draft_version + 1, comment = ? " +
+                "WHERE id = ?", RATER_SUBMITTED, toJson(submitted), comment, ctx.raterId);
 
-        // 7. 全员齐备 → 算分。pending 只数 status=0（作废者不算未提交）。
+        // 8. 全员齐备 → 算分。pending 只数 status=0（作废者不算未提交）。
         int pending = pendingCount(ctx.taskId);
         AssessTaskVO.SubmitResult result = new AssessTaskVO.SubmitResult();
         result.setSubmitted(true);
@@ -255,7 +289,7 @@ public class AssessFillService {
         }
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT tr.id AS rater_id, tr.task_id, tr.rater_type, tr.rater_resource_id, tr.status AS rater_status," +
-                "       tr.draft_json, tr.draft_version," +
+                "       tr.draft_json, tr.draft_version, tr.comment," +
                 "       t.status AS task_status, t.sheet_id, t.resource_id, t.dimension_id," +
                 "       p.year, d.dimension_name, h.lastname AS target_name, dept.departmentname AS dept_name" +
                 " FROM uf_assess_task_rater tr" +
@@ -279,6 +313,7 @@ public class AssessFillService {
         ctx.raterStatus = (int) num(m.get("rater_status"));
         ctx.draftJson = (String) m.get("draft_json");
         ctx.draftVersion = (int) num(m.get("draft_version"));
+        ctx.comment = (String) m.get("comment");
         ctx.taskStatus = (int) num(m.get("task_status"));
         ctx.sheetId = num(m.get("sheet_id"));
         ctx.targetResourceId = num(m.get("resource_id"));
@@ -296,6 +331,25 @@ public class AssessFillService {
         page.setStatus(status);
         page.setMessage(message);
         return page;
+    }
+
+    /**
+     * 评语归一化（2026-11-17）。
+     *
+     * <p>只在「上级 / 客户」身份调用；自评的评语一律丢弃（业务要求自评不写评语）。
+     * 空白视为未填 —— 返回 null 让调用方决定是「不覆盖」还是「拒绝提交」。
+     * 超长直接拒绝而不是截断：截断会静默丢内容，用户以为写全了。
+     */
+    private String normalizeComment(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.length() > COMMENT_MAX_LEN) {
+            throw new BusinessException(ERR_COMMENT_TOO_LONG,
+                    "评价意见不能超过 " + COMMENT_MAX_LEN + " 字");
+        }
+        return trimmed;
     }
 
     private void assertCurrentUser(RaterContext ctx) {
@@ -501,6 +555,8 @@ public class AssessFillService {
         int raterStatus;
         String draftJson;
         int draftVersion;
+        /** 已写的评价意见（上级 / 客户才有） */
+        String comment;
         int taskStatus;
         long sheetId;
         long targetResourceId;

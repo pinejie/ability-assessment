@@ -43,16 +43,18 @@ export const getAssessFillPage = (token: string): Promise<AssessFillPage> =>
 export const saveAssessDraft = (
   token: string,
   ratings: AssessFillRating[],
-  version: number
+  version: number,
+  comment?: string | null
 ): Promise<AssessFillDraftResult> =>
-  request.post(`/assess-fill/${encodeURIComponent(token)}/draft`, { ratings, version })
+  request.post(`/assess-fill/${encodeURIComponent(token)}/draft`, { ratings, version, comment })
 
 /** 提交评价（单人提交不触发算分，全员齐备才算） */
 export const submitAssessFill = (
   token: string,
-  ratings: AssessFillRating[]
+  ratings: AssessFillRating[],
+  comment?: string | null
 ): Promise<AssessFillSubmitResult> =>
-  request.post(`/assess-fill/${encodeURIComponent(token)}/submit`, { ratings })
+  request.post(`/assess-fill/${encodeURIComponent(token)}/submit`, { ratings, comment })
 
 // ==================== S2 / S3 ====================
 

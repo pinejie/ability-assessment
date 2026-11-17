@@ -15,7 +15,7 @@
         {{ failed ? '链接无效' : (page?.status === 'CANCELLED' ? '该测评已被取消' : '该测评已被撤回') }}
       </h1>
       <p class="m-status-desc">
-        {{ failed ? '请从消息通知或「我的评价」重新进入。' : page?.message }}
+        {{ failed ? '请从消息通知重新进入。' : page?.message }}
       </p>
     </div>
 
@@ -36,9 +36,15 @@
             <div class="m-progress-fill" :style="{ width: progressPercent + '%' }" />
           </div>
           <div class="m-progress-meta">
-            <span>{{ currentIndex + 1 }} / {{ totalElements }} 项</span>
+            <span v-if="onCommentStep">评价意见</span>
+            <span v-else>{{ displayIndex }} / {{ totalElements }} 项</span>
             <span>已评 {{ ratedCount }}</span>
-            <button type="button" class="m-link-btn" @click="overviewVisible = true">一览</button>
+            <button
+              v-if="!onCommentStep"
+              type="button"
+              class="m-link-btn"
+              @click="overviewVisible = true"
+            >一览</button>
           </div>
         </div>
       </header>
@@ -49,52 +55,76 @@
       </div>
 
       <main class="m-body">
-        <div v-if="!currentElement" class="m-empty">该测评没有需要您评价的要素。</div>
+        <!-- 评价意见：全部要素答完后的独立一步（2026-11-17） -->
+        <section v-if="onCommentStep" class="m-comment">
+          <div class="m-q-index">
+            <span class="m-cat">评价意见</span>
+            <span>{{ totalElements }} 项已评完</span>
+          </div>
+          <h2 class="m-q-name">评价意见<span v-if="!submitted" class="m-required">*</span></h2>
+          <p class="m-comment-tip">
+            请针对 {{ page?.targetName || '被测人' }} 的整体表现给出文字评价，提交后不可修改。
+          </p>
+          <textarea
+            v-model="comment"
+            class="m-comment-input"
+            rows="8"
+            maxlength="1000"
+            :disabled="submitted"
+            placeholder="例如：执行力强，能主动推动跨部门事项落地；建议在团队培养上再投入一些精力。"
+            @input="onCommentInput"
+          />
+          <div class="m-comment-count">{{ comment.length }} / 1000</div>
+        </section>
 
         <template v-else>
-          <div class="m-q-index">
-            <span class="m-cat">{{ currentElement.categoryName || '未分类' }}</span>
-            <span>第 {{ currentIndex + 1 }} 项 / 共 {{ totalElements }} 项</span>
-          </div>
+          <div v-if="!currentElement" class="m-empty">该测评没有需要您评价的要素。</div>
 
-          <h2 class="m-q-name">{{ currentElement.elementName }}</h2>
-          <p v-if="!page?.masked && currentElement.requiredLevelNo" class="m-q-required">
-            要求等级：{{ currentElement.requiredLevelNo }} 级
-          </p>
-          <p v-if="currentElement.description" class="m-q-desc">{{ currentElement.description }}</p>
+          <template v-else>
+            <div class="m-q-index">
+              <span class="m-cat">{{ currentElement.categoryName || '未分类' }}</span>
+              <span>第 {{ displayIndex }} 项 / 共 {{ totalElements }} 项</span>
+            </div>
 
-          <div v-if="currentElement.levels.length === 0" class="m-banner is-warning">
-            该要素尚未配置等级，暂时无法评价，请联系人力资源部
-          </div>
-          <div
-            v-else
-            class="m-levels"
-            role="radiogroup"
-            :aria-label="currentElement.elementName"
-          >
-            <button
-              v-for="lv in currentElement.levels"
-              :key="lv.levelNo"
-              type="button"
-              class="m-level"
-              :class="{
-                'is-active': answers[currentElement.elementId] === lv.rateValue,
-                'is-locked': submitted,
-              }"
-              role="radio"
-              :aria-checked="answers[currentElement.elementId] === lv.rateValue"
-              :aria-disabled="submitted"
-              :disabled="submitted"
-              @click="onSelect(currentElement.elementId, lv.rateValue)"
+            <h2 class="m-q-name">{{ currentElement.elementName }}</h2>
+            <p v-if="!page?.masked && currentElement.requiredLevelNo" class="m-q-required">
+              要求等级：{{ currentElement.requiredLevelNo }} 级
+            </p>
+            <p v-if="currentElement.description" class="m-q-desc">{{ currentElement.description }}</p>
+
+            <div v-if="currentElement.levels.length === 0" class="m-banner is-warning">
+              该要素尚未配置等级，暂时无法评价，请联系人力资源部
+            </div>
+            <div
+              v-else
+              class="m-levels"
+              role="radiogroup"
+              :aria-label="currentElement.elementName"
             >
-              <span class="m-level-mark" aria-hidden="true" />
-              <span class="m-level-body">
-                <span class="m-level-title">{{ lv.levelDesc || lv.levelNo + ' 级' }}</span>
-                <span v-if="lv.requirement" class="m-level-req">{{ lv.requirement }}</span>
-                <span v-else class="m-level-req is-empty">该等级暂无行为说明</span>
-              </span>
-            </button>
-          </div>
+              <button
+                v-for="lv in currentElement.levels"
+                :key="lv.levelNo"
+                type="button"
+                class="m-level"
+                :class="{
+                  'is-active': answers[currentElement.elementId] === lv.rateValue,
+                  'is-locked': submitted,
+                }"
+                role="radio"
+                :aria-checked="answers[currentElement.elementId] === lv.rateValue"
+                :aria-disabled="submitted"
+                :disabled="submitted"
+                @click="onSelect(currentElement.elementId, lv.rateValue)"
+              >
+                <span class="m-level-mark" aria-hidden="true" />
+                <span class="m-level-body">
+                  <span class="m-level-title">{{ lv.levelDesc || lv.levelNo + ' 级' }}</span>
+                  <span v-if="lv.requirement" class="m-level-req">{{ lv.requirement }}</span>
+                  <span v-else class="m-level-req is-empty">该等级暂无行为说明</span>
+                </span>
+              </button>
+            </div>
+          </template>
         </template>
       </main>
 
@@ -107,8 +137,14 @@
           <template v-else-if="currentUnanswered">
             <span class="is-warn">请先选择本项的等级</span>
           </template>
+          <template v-else-if="onCommentStep && commentMissing">
+            <span class="is-warn">请填写评价意见后再提交</span>
+          </template>
           <template v-else-if="missingCount > 0">
             <span class="is-warn">还有 {{ missingCount }} 个要素未评价</span>
+          </template>
+          <template v-else-if="nextIsCommentStep">
+            <span class="is-ok">评完本题后还有一步评价意见</span>
           </template>
           <template v-else>
             <span class="is-ok">已评完，可以提交</span>
@@ -121,13 +157,13 @@
             上一项
           </button>
           <button
-            v-if="!isLast"
+            v-if="!isLastStep"
             type="button"
             class="m-btn is-primary"
             :disabled="currentUnanswered"
             @click="goNext"
           >
-            下一项
+            {{ nextIsCommentStep ? '下一步：评价意见' : '下一项' }}
           </button>
           <button
             v-else-if="submitted"
@@ -141,7 +177,7 @@
             v-else
             type="button"
             class="m-btn is-primary"
-            :disabled="missingCount > 0 || submitting"
+            :disabled="missingCount > 0 || commentMissing || submitting"
             @click="onSubmit"
           >
             {{ submitting ? '提交中…' : '提交评价' }}
@@ -192,6 +228,25 @@
                 <span v-else class="m-sheet-state">未评</span>
               </button>
             </div>
+
+            <!-- 评价意见：独立的一步，挂在所有要素之后 -->
+            <div v-if="hasCommentStep" class="m-sheet-group">
+              <div class="m-sheet-cat">评价意见</div>
+              <button
+                type="button"
+                class="m-sheet-item"
+                :class="{
+                  'is-current': onCommentStep,
+                  'is-locked': totalElements > firstUnansweredIndex,
+                }"
+                @click="onOverviewClick(totalElements)"
+              >
+                <span class="m-sheet-no">{{ totalElements + 1 }}</span>
+                <span class="m-sheet-name">整体评价意见</span>
+                <span v-if="!commentMissing" class="m-sheet-state is-done">已填写</span>
+                <span v-else class="m-sheet-state">未填写</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -224,6 +279,7 @@ const {
   page,
   failed,
   answers,
+  comment,
   submitting,
   draftSaving,
   currentIndex,
@@ -232,15 +288,21 @@ const {
   missingCount,
   progressPercent,
   submitted,
+  commentMissing,
+  hasCommentStep,
+  onCommentStep,
+  isLastStep,
+  nextIsCommentStep,
+  displayIndex,
   statusOnly,
   currentElement,
-  isLast,
   currentUnanswered,
   firstUnansweredIndex,
   groupedElements,
   levelLabel,
   load,
   onSelect,
+  onCommentInput,
   jumpTo,
   goPrev,
   goNext,
@@ -466,6 +528,61 @@ onUnmounted(dispose)
   padding: 40px 0;
   text-align: center;
   color: #86909c;
+}
+
+/* ============ 评价意见（2026-11-17，独立一步） ============ */
+/*
+ * 这一步不再是「挂在题卡下面的一张卡片」，而是整屏只有它 —— 所以在手机上
+ * 也不再套白底卡片，跟题目区一样直接排在灰底上，省掉一层多余的边框。
+ */
+.m-comment {
+  padding-top: 2px;
+}
+
+.m-required {
+  margin-left: 4px;
+  color: #d4380d;
+  font-weight: 400;
+}
+
+.m-comment-tip {
+  margin: 10px 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #86909c;
+}
+
+.m-comment-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  min-height: 180px;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.7;
+  color: #1d2129;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  resize: vertical;
+}
+
+.m-comment-input:focus {
+  outline: none;
+  border-color: #165dff;
+}
+
+.m-comment-input:disabled {
+  color: #86909c;
+  background: #f2f3f5;
+}
+
+.m-comment-count {
+  margin-top: 6px;
+  text-align: right;
+  font-size: 12px;
+  color: #c9cdd4;
 }
 
 .m-q-index {

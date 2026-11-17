@@ -9,7 +9,7 @@
           评价人名单发起后不可追加或替换；名单选错只能撤回后重新发起。
         </p>
       </div>
-      <!-- 本页不占菜单，靠「测评任务」页的按钮进来，回程也得给一个，否则只能浏览器后退 -->
+      <!-- 本页不占菜单，靠「测评任务发起」页的按钮进来，回程也得给一个，否则只能浏览器后退 -->
       <el-button @click="router.push('/assess-task-manage')">返回任务列表</el-button>
     </div>
 
@@ -67,19 +67,33 @@
         </el-form-item>
 
         <el-form-item label="客户评价人">
+          <!--
+            必须显式写 :reserve-keyword="false"（2026-11-17）：Element Plus 的 reserveKeyword
+            默认就是 true，多选远程搜索时选完一个人保留搜索词 —— 结果就是选完「王国栋」输入框里
+            还留着「王国栋」，选第二个人得先删干净。只把属性从模板里删掉不管用，得显式传 false。
+            置 false 后，modelValue 一变它就自己把搜索词清空并回调一次 remoteMethod("")
+            （useSelect.mjs 的 modelValue watcher），所以 searchClients 必须允许空关键词
+            （拉一页默认名单），否则框里会立刻变成「无数据」。
+          -->
           <el-select
             v-model="form.clientResourceIds"
             multiple
             filterable
             remote
-            reserve-keyword
+            :reserve-keyword="false"
+            collapse-tags
+            collapse-tags-tooltip
+            :max-collapse-tags="2"
             :remote-method="searchClients"
             :loading="clientLoading"
             placeholder="该人员有客户评价要素时必须选择"
-            style="width: 480px"
+            no-data-text="没有匹配的人员，换个姓名或拼音试试"
+            style="width: 520px"
+            @visible-change="onClientsVisible"
           >
-            <el-option v-for="r in clientOptions" :key="r.id" :label="r.lastname" :value="r.id" />
+            <el-option v-for="r in clientOptions" :key="r.id" :label="formatPerson(r)" :value="r.id" />
           </el-select>
+          <span class="form-hint">支持姓名 / 拼音；同名人员请看括号里的公司与部门</span>
         </el-form-item>
 
         <el-form-item label="备注">
@@ -166,6 +180,7 @@ interface ResourceOption {
   id: number
   lastname: string
   departmentName?: string
+  companyName?: string
 }
 
 const RATER_TYPE_NAMES: Record<string, string> = { SELF: '自评', LEADER: '直接上级', CLIENT: '客户' }
@@ -239,24 +254,31 @@ const onTargetChange = async (resourceId: number | null) => {
 }
 
 /**
- * 人员搜索：复用 /search/resources（支持姓名与拼音，已带部门名）。
+ * 人员搜索：复用 /search/resources（支持姓名与拼音，已带部门名与公司名）。
  * 被测人必须限定「所选年度 + 当前维度已配置人员能力要求」的人 —— 没有要求的人发不起来，
  * 让他出现在下拉里只会让 HR 白选一次再吃报错。客户评价人不受此限，仍可搜全量在岗人员。
+ *
+ * allowEmpty（2026-11-17）：客户评价人下拉选完一个会自动清空搜索词并回调空关键词，
+ * 这时不能像以前那样直接清空列表（那样框里立刻变成「无数据」，还得重新打字）。
+ * 传 true 时空关键词也发请求，后端 LIKE '%%' 返回按姓名排序的前 pageSize 人，
+ * 相当于「默认名单」，用户可以接着点下一个。
  */
 const searchPeople = async (
   keyword: string,
   target: typeof resourceOptions,
   loading: typeof resourceLoading,
-  requireYear?: number | null
+  requireYear?: number | null,
+  allowEmpty = false
 ) => {
-  if (!keyword || !keyword.trim()) {
+  const kw = keyword?.trim() ?? ''
+  if (!kw && !allowEmpty) {
     target.value = []
     return
   }
   loading.value = true
   try {
     const params: Record<string, string | number> = {
-      keyword: keyword.trim(),
+      keyword: kw,
       pageNum: 1,
       pageSize: 30,
     }
@@ -264,12 +286,13 @@ const searchPeople = async (
       params.requireYear = requireYear
     }
     const page = await request.get<{
-      list: { id: number; lastname: string; departmentName?: string }[]
+      list: { id: number; lastname: string; departmentName?: string; companyName?: string }[]
     }>('/search/resources', { params })
     target.value = page.list.map(r => ({
       id: r.id,
       lastname: r.lastname,
       departmentName: r.departmentName || undefined,
+      companyName: r.companyName || undefined,
     }))
   } catch {
     target.value = []
@@ -278,8 +301,28 @@ const searchPeople = async (
   }
 }
 
+/** 下拉里的人员展示：姓名（公司·部门）。同名的人靠括号部分区分，公司必须有 —— 光看部门不够，
+ *  「财务部」「销售部」这类名字在多家子公司都存在。两者都缺时退回纯姓名。 */
+const formatPerson = (r: ResourceOption) => {
+  const org = [r.companyName, r.departmentName].filter(Boolean).join('·')
+  return org ? `${r.lastname}（${org}）` : r.lastname
+}
+
 const searchResources = (kw: string) => searchPeople(kw, resourceOptions, resourceLoading, form.year)
-const searchClients = (kw: string) => searchPeople(kw, clientOptions, clientLoading)
+const searchClients = (kw: string) => searchPeople(kw, clientOptions, clientLoading, null, true)
+
+/**
+ * 第一次展开下拉时没人搜过，列表是空的；补一页默认名单，避免点开一片空白。
+ *
+ * 选完人之后的刷新不用在这里管：去掉 reserve-keyword 后，Element Plus 在 modelValue
+ * 变化时会自己把 inputValue 清空并回调一次 remoteMethod("")（useSelect.mjs 的
+ * modelValue watcher），搜索词和列表同时回到默认名单 —— 用户可以接着打下一个名字。
+ */
+const onClientsVisible = (visible: boolean) => {
+  if (visible && clientOptions.value.length === 0) {
+    searchClients('')
+  }
+}
 
 const fillUrl = (token: string) => `${window.location.origin}/assess/fill/${token}`
 

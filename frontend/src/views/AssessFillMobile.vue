@@ -6,14 +6,12 @@
       <p>正在加载测评…</p>
     </div>
 
-    <!-- 状态页：链接无效 / 已撤回 / 已取消 —— 与 PC 同一套判定与文案 -->
+    <!-- 状态页：链接无效 / 已撤回 / 已取消 / 年度已关闭 —— 与 PC 同一套判定与文案 -->
     <div v-else-if="statusOnly || failed" class="m-status">
       <div class="m-status-icon" :class="failed ? 'is-error' : 'is-info'">
         {{ failed ? '!' : 'i' }}
       </div>
-      <h1 class="m-status-title">
-        {{ failed ? '链接无效' : (page?.status === 'CANCELLED' ? '该测评已被取消' : '该测评已被撤回') }}
-      </h1>
+      <h1 class="m-status-title">{{ statusTitle }}</h1>
       <p class="m-status-desc">
         {{ failed ? '请从消息通知重新进入。' : page?.message }}
       </p>
@@ -166,6 +164,14 @@
             {{ nextIsCommentStep ? '下一步：评价意见' : '下一项' }}
           </button>
           <button
+            v-else-if="submitted && fromMine"
+            type="button"
+            class="m-btn is-primary"
+            @click="backToMine"
+          >
+            返回我的评价
+          </button>
+          <button
             v-else-if="submitted"
             type="button"
             class="m-btn is-primary"
@@ -256,7 +262,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAssessFill } from '@/composables/useAssessFill'
 
@@ -273,6 +279,7 @@ import { useAssessFill } from '@/composables/useAssessFill'
  * 4) 字号基准 15px，正文行高 1.7 —— 手机屏幕小，PC 的 13px 会吃力。
  */
 const route = useRoute()
+const router = useRouter()
 const token = computed(() => String(route.params.token || ''))
 
 const {
@@ -330,6 +337,29 @@ const {
 })
 
 const overviewVisible = ref(false)
+
+/**
+ * 状态页标题。三种「不能填」的原因文案不同，集中在这里判断，
+ * 免得模板里三层嵌套三元表达式读不出是啥。
+ */
+const statusTitle = computed(() => {
+  if (failed.value) return '链接无效'
+  if (page.value?.status === 'CANCELLED') return '该测评已被取消'
+  if (page.value?.status === 'PERIOD_CLOSED') return '该年度已关闭'
+  return '该测评已被撤回'
+})
+
+/**
+ * 是否从「我的评价」列表点进来的。
+ *
+ * 从列表进来才有回头路可走；从消息链接直接进的是「一次性入口」，
+ * 那种场景下填完给个「返回我的评价」反而把用户带到一个他没用过的页面。
+ */
+const fromMine = computed(() => route.query.from === 'mine')
+
+const backToMine = () => {
+  router.replace('/m/my-assess-tasks')
+}
 
 /** 一览里点题：跳成功才关浮层，没跳成功要留着让用户看见提示 */
 const onOverviewClick = (index: number) => {

@@ -46,4 +46,15 @@ const isEmbedBare = computed(() => !isRouteBare.value && route.query.bare === '1
   background: #f5f7fa;
   box-sizing: border-box;
 }
+
+/*
+ * 窄屏收窄留白：24px 四边在 375px 的手机上吃掉 48px（13%），内容区只剩 327px。
+ * 手机 UA 本来会被路由守卫换到 /m/ 版，走到这里的是「UA 没认出来」或
+ * 「桌面浏览器窗口被拖窄」两种情况，留白少给一点总比挤着好。
+ */
+@media (max-width: 640px) {
+  .bare-embed {
+    padding: 12px;
+  }
+}
 </style>

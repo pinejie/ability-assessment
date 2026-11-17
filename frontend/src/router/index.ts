@@ -120,6 +120,15 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AssessFillMobile.vue'),
     meta: { title: '能力测评填写', bare: true },
   },
+  // 「我的评价」移动端（H5）：评价人在手机上的固定入口。
+  // 单独一页而不是给 PC 版加断点 —— PC 版是 6 列定宽 el-table（合计 940px），
+  // 列宽写在 el-table-column 的 width 属性里，@media 改不动，窄屏只能横向滚动。
+  {
+    path: '/m/my-assess-tasks',
+    name: 'MyAssessTasksMobile',
+    component: () => import('@/views/MyAssessTasksMobile.vue'),
+    meta: { title: '我的评价', bare: true },
+  },
   // 发起测评（S1）：管理员选年度+被测人+客户，生成三条专属链接
   {
     path: '/assess-tasks',
@@ -158,6 +167,12 @@ router.beforeEach((to) => {
   // 两个字段都指向自己的正确版本之后，这条兜底只在「泛微只认 pc_url」时起作用。
   if (to.name === 'AssessFill' && isMobileUa()) {
     return { name: 'AssessFillMobile', params: to.params, query: to.query, replace: true }
+  }
+  // 「我的评价」同理：OA 门户里挂的固定入口是 /my-assess-tasks?bare=1，
+  // 手机上换到 /m/ 版本。query 原样带过去，?bare=1 在 H5 路由上只是无害的多余参数
+  // （H5 版本身就是 bare），但保留了它，PC 与手机就可以共用同一个门户地址。
+  if (to.name === 'MyAssessTasks' && isMobileUa()) {
+    return { name: 'MyAssessTasksMobile', query: to.query, replace: true }
   }
   if (to.meta.public || (getToken() && !isAuthExpired())) {
     const userStore = useUserStore()

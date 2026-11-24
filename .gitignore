@@ -60,3 +60,6 @@ backend/config/secret.yml
 .e2e-*.png
 .tmp-verify/
 *.tmp-verify/
+
+# 文档配图只留 docs/pa-import-shots/ 一份，根目录副本不入库
+docs/*.png

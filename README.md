@@ -1,13 +1,25 @@
 # 能力测评系统
 
-> 能力测评配置管理与报表系统，与泛微 e-cology 平台集成
+> 岗位能力模型 + 测评任务 + 个人测评报告，与泛微 e-cology 平台集成
 
 ## 功能概览
 
-- **能力体系维护**：能力类别、能力要素、要素等级的增删改查
-- **能力要求配置**：岗位能力要求、人员能力要求（记录岗位来源，被引用时禁止删除）
-- **能力测评配置**：能力类型权重、测评人权重、等级标准、等级分值
+> 2026-11-21 方案 17（岗位能力模型重构）P3 已下线旧模型：能力类别 / 能力要素 / 能力要素等级 / 组织能力要求 /
+> 岗位能力要求 / 人员能力要求 / 能力测评配置 / 外部评分导入 / 智能导入，全部前后端代码、页面路由、
+> 旧 `uf_*` 表（`sql/51`）与 8 个 `usp_assess_*` 存储过程均已删除。以下为现役模块。
+
+- **岗位管理**：部门（泛微部门树）+ 岗位名/编码/状态/排序，列出能力项数与权重合计
+- **岗位能力模型**：按 部门+岗位 各自一套能力类别与能力项（名称/定义/权重/评级主体/排序），
+  能力项等级动态配置（名称/分值/排序/描述），分值区间按岗位定义
+- **测评任务**：发起（自评 / 直接上级 / 360 测评人）、任务管理（进度、催办、撤回）、
+  token 链接填写页（PC + 移动端）
+- **个人测评报告**：只读展示算分结果 —— 能力项得分、总得分（加权平均）、逐人分段评语（实时读，不等全员提交）；**分数统一成「分数 · 描述」**（头部总得分、明细表合计行、明细行三处同一套写法，描述全部取岗位分值区间如「专家 / 能手」那一套，`PaBandScale` 与算分侧共用同一份判档逻辑；原明细行的项刻度「开创/专家」已不再显示，接口仍返回；PC 抽屉与 H5 页口径一致）；**HR 确认封存后本人 / 直接上级才看得到**，封存会冻结内容（解除封存立刻又看不到）；**全部评价人（含自评）提交完才允许封存**，未评完时按钮置灰并写明还差几人；
+  测评人按「测评人1（直接上级）/测评人2..N（360）」编号，姓名仅维度/系统管理员可见
+- **我的测评**：员工本人入口（OA 门户/消息链接，PC + 手机）——两个 tab：「我参与的测评」= 自己的待办，「我的测评报告」= 自己的测评结果；**有直接下属的人多一个「下属的测评报告」tab**（只读、不含测评人姓名、只认 `managerid` 的直接下属）；手机版报告按能力项成卡，评级小块横排
 - **泛微组织数据**：分公司、部门、岗位、人员的只读选择器（直接查询泛微 `Hr*` 表）
+
+**算分口径**（唯一实现：`PaScoreServiceImpl`）：能力项得分 = 直接上级 + 360 测评人的算术平均（未评者不进分母）；
+自评可见但不参与计算；总得分 = `Σ(能力项得分 × 权重) / Σ(权重)`；档位按 `[lower, upper)` 命中得出等级文案。
 
 ## 技术栈
 
@@ -16,7 +28,7 @@
 - Spring Boot 3.2
 - MyBatis-Plus 3.5
 - SQL Server（与泛微共用数据库）
-- JWT（jjwt 0.12，认证功能规划中）
+- JWT（jjwt 0.12）+ 泛微 OAuth2 单点登录（已实现）
 
 **前端**
 - Vue 3 + TypeScript
@@ -30,7 +42,7 @@
 ability-assessment/
 ├── backend/     # 后端（Spring Boot）
 ├── frontend/    # 前端（Vue 3）
-├── sql/         # 建表/运维脚本（按 01 → 32 顺序执行）
+├── sql/         # 建表/运维脚本（按序号执行；50 新模型建表、51 旧模型清理、52 停用旧流程钩子）
 ├── docs/        # 补充文档
 ├── CLAUDE.md    # 项目指令（面向 Claude Code）
 └── README.md
@@ -39,32 +51,47 @@ ability-assessment/
 ## 环境要求
 
 - JDK 21
-- Maven 3.6+
-- Node.js 18+ 与 pnpm
+- Maven 3.6+（本机位于 `/home/wgd/apache-maven-3.9.16/bin/mvn`，不在 PATH）
+- Node.js 18+ 与 pnpm（本机 pnpm 位于 `~/.nvm/versions/node/v20.20.2/bin/pnpm`，不在 PATH）
 - SQL Server（可访问泛微 `ecology` 库）
 
 ## 快速开始
 
 ### 1. 初始化数据库
 
-按顺序执行 `sql/` 下的脚本：
+**全新部署只跑这 8 支**（其余 01–49 服务于已下线的旧模型，新库不必执行）：
 
 ```
-sql/01-create-ability-category.sql
-sql/02-create-ability-element.sql
-sql/03-create-org-ability-req.sql
-sql/04-create-position-ability-req.sql
-sql/05-create-user-ability-req.sql
-sql/07-create-assess-config.sql
-sql/08-create-assess-level-score.sql
-# ……09 ~ 30 为后续迭代脚本，按编号顺序执行
-sql/31-position-element-weight.sql   # 岗位权重列 + 测评页面权重快照列（recalc v7）
-sql/32-category-weight.sql           # 岗位能力类别权重修正：重置明细权重为全局类别权重（recalc v8）
+sql/09-create-assess-result.sql      # uf_assess_period 年度表
+sql/14-create-assess-dimension.sql   # 维度（类租户）与授权表
+sql/21-create-assess-admin.sql       # 管理员名单
+sql/24-unique-active-period.sql      # 年度「进行中」筛选唯一索引
+sql/37-create-assess-task.sql        # uf_assess_task 测评任务
+sql/38-create-assess-task-rater.sql  # uf_assess_task_rater 评价人
+sql/40-create-push-msg.sql           # 泛微站内消息队列
+sql/50-pa-schema.sql                 # 岗位能力模型 8 张 uf_pa_* 表（含 rater_type 放宽）
 ```
 
-> `sql/06-create-score-weight.sql` 为已废弃的旧评分权重表，新部署可不执行。
-> 代码中还使用了 `uf_position_ability_req_new`、`uf_position_ability_req_item`、`uf_ability_element_level`，旧脚本未完整覆盖，以实际库结构与后续迁移脚本为准。
-> `sql/30`（等级分值动态化）、`sql/31`（岗位权重列）、`sql/32`（岗位类别权重口径修正）含列变更/存储过程重建，执行前请先备份并确认没有年度关闭操作在跑。
+已有旧数据的库升级按 `50 → 51 → 52 → 53` 顺序：
+
+| 脚本 | 作用 |
+|---|---|
+| `50-pa-schema.sql` | 建 `uf_pa_post/category/item/item_level/band/sheet/sheet_item/rating` 8 张表 |
+| `51-pa-cleanup.sql` | 旧模型 25 张表先备份（`*_bak_20261121`）再 DROP；DROP 8 个 `usp_assess_*`；清空 `uf_assess_task*` 历史数据 |
+| `52-retire-assess-wf-hook.sql` | 停用泛微流程 1840 节点 7143 的 `AssessHookAction`（`workflowactionset.isused = 0`），避免旧表删除后钩子报错 |
+| `53-drop-pa-person-post.sql` | 备份 `uf_pa_person_post` 为 `*_bak_20261121` 后 DROP —— 岗位已在发起页当场选，这张映射表没有读方了 |
+| `64-pa-sheet-seal.sql` | `uf_pa_sheet` 加报告封存列（`seal_status` / `seal_time` / `seal_by_loginid` / `seal_by_name` / `sealed_json`）+ 索引。**加完存量全部是未封存，自助视角（本人 / 直接上级）立刻看不到任何报告**，需 HR 在「测评报告」页逐份「确认封存」后才对外可见 |
+
+执行方式（脚本自带 `GO` 分段）：
+
+```bash
+cd /home/wgd/ws/ability-assessment
+DB_SECRET_FILE=config/secret.yml node sql/run-ddl.js sql/50-pa-schema.sql
+```
+
+> `sql/51` 会 DROP 表并清空任务数据，**不可逆**（备份表可手工回灌）。执行前确认没有年度关闭/归档在跑。
+> `uf_assess_migration_log`（迁移台账）只有在跑过旧脚本的库里才存在，代码侧无任何引用；
+> 全新部署不需要它 —— 上面 8 支脚本不会创建该表。
 
 ### 2. 配置后端
 
@@ -77,7 +104,6 @@ sql/32-category-weight.sql           # 岗位能力类别权重修正：重置�
 | `spring.datasource.username` | `${OA_DB_USER}` ← `secret.yml` | 启动失败 |
 | `spring.datasource.password` | `${OA_DB_PASSWORD}` ← `secret.yml` | 启动失败 |
 | `oa.sso.client-secret` | `secret.yml` | SSO 换取 ticket 失败 |
-| `agent.internal-token` | `secret.yml` | `/agent/draft` 一律 401 |
 | `JWT_SECRET` | 环境变量（`application.yml` 有开发用默认值） | 生产务必显式指定，至少 32 字符 |
 
 `secret.yml` 已在 `.gitignore` 中，**没有也不会进入 Git 历史**。仓库里没有提供示例文件，
@@ -91,14 +117,12 @@ spring:
 oa:
   sso:
     client-secret: <泛微 weaver_sso_app 对应应用的 app_secret_>
-agent:
-  internal-token: <内部接口令牌>
 jwt:
   secret: <至少 32 字符的随机串>
 ```
 
 > 也可完全不建此文件，改用环境变量 `OA_DB_USER` / `OA_DB_PASSWORD` / `JWT_SECRET` 注入；
-> 但 `oa.sso.client-secret` 与 `agent.internal-token` 目前只能从该文件读取。
+> 但 `oa.sso.client-secret` 目前只能从该文件读取。
 > 生产环境建议只用环境变量，不落盘明文配置文件。
 
 ### 3. 启动后端
@@ -138,13 +162,15 @@ cd frontend && pnpm build
 
 | 模块 | 路径前缀 |
 |------|----------|
-| 能力类别 | `/api/v1/ability-categories` |
-| 能力要素 | `/api/v1/ability-elements` |
-| 能力要素等级 | `/api/v1/ability-element-levels` |
-| 组织能力要求 | `/api/v1/org-ability-reqs` |
-| 岗位能力要求 | `/api/v1/position-ability-reqs` |
-| 人员能力要求 | `/api/v1/user-ability-reqs-new` |
-| 能力测评配置 | `/api/v1/assess-config/{ability-weights, assessor-weights, grade-levels, level-scores}` |
+| 岗位管理 | `/api/v1/pa/posts` |
+| 岗位能力模型（类别/能力项/等级/分值区间） | `/api/v1/pa/posts/{postId}`、`/api/v1/pa/models/*` |
+| 测评任务（发起/列表/详情/催办/撤回） | `/api/v1/pa/assess-tasks` |
+| 评价填写（URL token 定位评价人；接口本身仍需登录态，`/api/v1/pa/*` 不在 permitAll 名单） | `/api/v1/pa/assess-fill/*` |
+| 个人测评报告 | `/api/v1/pa/reports`、`/api/v1/pa/reports/{sheetId}`、`/api/v1/pa/reports/{sheetId}/seal`、`/api/v1/pa/reports/{sheetId}/unseal` |
+| 年度设置（读开放，写仅维度管理员/系统管理员） | `/api/v1/assess/periods`、`/api/v1/assess/periods/can-write` |
+| 维度管理 | `/api/v1/assess-dimensions` |
+| 管理员配置 | `/api/v1/assess-admins` |
+| 认证（SSO） | `/api/v1/auth/sso/login`、`/auth/sso/callback`、`/auth/me`、`/auth/logout` |
 | 泛微组织数据 | `/api/v1/sub-companies`、`/departments`、`/job-titles`、`/resources`、`/search/*` 等 |
 
 ## 已知问题

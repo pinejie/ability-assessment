@@ -29,13 +29,13 @@ public class AssessTaskRater {
     /** 评价人 HrmResource.id（客户评价人也是人员表记录） */
     private Long raterResourceId;
 
-    /** LEADER / CLIENT / SELF */
+    /** LEADER / RATER360 / SELF（CLIENT 是旧「客户评价人」，方案 17 起已改为 RATER360） */
     private String raterType;
 
     /** 0-待评 1-已提交 3-已作废 */
     private Integer status;
 
-    /** 草稿，格式 {"elementId": levelNo} */
+    /** 草稿，格式 {"itemId": levelId} */
     private String draftJson;
 
     private LocalDateTime draftTime;

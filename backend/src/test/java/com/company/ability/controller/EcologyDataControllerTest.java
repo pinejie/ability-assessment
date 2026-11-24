@@ -28,11 +28,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 人员搜索的年度过滤。
+ * 人员搜索的 SQL 形状。
  *
- * 这个接口有两个调用方：发起页的「被测人」必须只看已配置能力要求的人（否则选谁都是白选一次再报错），
- * 「客户评价人」必须能看到全量在岗人员。所以 requireYear 只能是**可选**参数，
- * 一旦改成必填或默认值，客户评价人那边就搜不到人了。
+ * <p>这个接口服务于发起页的「被测人」与「360 测评人」两处。被测人默认仍搜全量在岗人员，
+ * 但可以传 {@code departmentIds} 收窄到「已配置岗位的部门」；360 测评人不传，保持全量
+ * （跨部门评价本就是 360 的语义）。用例守的是「别把年度过滤偷偷加回来」、
+ * 「部门白名单只在传了才生效」以及「base 与 count 条件必须一致」。</p>
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -61,68 +62,83 @@ class EcologyDataControllerTest {
     }
 
     @Test
-    @DisplayName("不传 requireYear 时 SQL 不含能力要求过滤（客户评价人仍能搜全量）")
-    void searchWithoutRequireYearKeepsFullPool() {
+    @DisplayName("不按年度/人员映射过滤（被测人与 360 测评人都能搜全量在岗人员）")
+    void searchKeepsFullPool() {
         controller.pageSearchResources("王", 1, 30, null);
 
         String baseSql = captureBaseSql();
-        assertThat(baseSql).doesNotContain("uf_user_ability_req_new");
+        assertThat(baseSql).doesNotContain("uf_pa_person_post");
+        assertThat(baseSql).doesNotContain("uf_assess_period");
     }
 
     @Test
-    @DisplayName("传 requireYear 时按 年度 + 当前维度 过滤，且 base/count 两处条件一致")
-    void searchWithRequireYearFiltersByYearAndDimension() {
-        controller.pageSearchResources("王", 1, 30, 2026);
-
-        ArgumentCaptor<String> sqls = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate, atLeastOnce()).queryForList(sqls.capture(), any(Object[].class));
-        verify(jdbcTemplate, atLeastOnce()).queryForObject(sqls.capture(), eq(Long.class), any(Object[].class));
-
-        List<String> withRequirement = sqls.getAllValues().stream()
-                .filter(s -> s.contains("uf_user_ability_req_new"))
-                .toList();
-        // base 与 count 各一条，且两条都必须带同样的 EXISTS 片段
-        assertThat(withRequirement).hasSize(2);
-        assertThat(withRequirement).allSatisfy(sql -> {
-            assertThat(sql).contains("q.assess_year = ?");
-            assertThat(sql).contains("q.dimension_id = ?");
-            assertThat(sql).contains("q.resource_id = r.id");
-        });
-    }
-
-    @Test
-    @DisplayName("requireYear 的参数顺序必须是 keyword, keyword, year, dimension（其后才是分页的 offset/size）")
-    void requireYearBindsYearThenDimension() {
-        controller.pageSearchResources("王", 1, 30, 2026);
+    @DisplayName("只绑定 keyword 两个参数，其后是分页的 offset/size")
+    void bindsOnlyKeywordParams() {
+        controller.pageSearchResources("王", 1, 30, null);
 
         ArgumentCaptor<Object[]> params = ArgumentCaptor.forClass(Object[].class);
         verify(jdbcTemplate, atLeastOnce()).queryForList(anyString(), params.capture());
 
-        Object[] captured = params.getValue();
         // JdbcPageHelper 在业务参数之后追加 offset 与 pageSize
-        assertThat(captured).hasSize(6);
-        assertThat(captured[0]).isEqualTo("%王%");
-        assertThat(captured[1]).isEqualTo("%王%");
-        assertThat(captured[2]).isEqualTo(2026);
-        assertThat(captured[3]).isEqualTo(DIM);
+        assertThat(params.getValue()).hasSize(4);
+        assertThat(params.getValue()[0]).isEqualTo("%王%");
+        assertThat(params.getValue()[1]).isEqualTo("%王%");
+    }
+
+    // ================================================================ 部门白名单
+
+    @Test
+    @DisplayName("传了 departmentIds 才加部门条件；不传则完全不过滤（360 仍搜全量）")
+    void departmentFilterOnlyWhenGiven() {
+        controller.pageSearchResources("王", 1, 30, null);
+        assertThat(captureBaseSql()).doesNotContain("r.departmentid IN");
+
+        controller.pageSearchResources("王", 1, 30, List.of());
+        assertThat(captureBaseSql()).doesNotContain("r.departmentid IN");
     }
 
     @Test
-    @DisplayName("未指定维度头时回落到默认维度 1，保证与数据库列默认值一致")
-    void requireYearFallsBackToDefaultDimension() {
-        DimensionContext.clear();
+    @DisplayName("部门白名单同时进 base 与 count，且参数排在 LIKE 之前")
+    void departmentFilterInBothSqlAndParamsFirst() {
+        controller.pageSearchResources("王", 1, 30, List.of(57L));
 
-        controller.pageSearchResources("王", 1, 30, 2026);
+        String baseSql = captureBaseSql();
+        assertThat(baseSql).contains("r.departmentid IN (?)");
+        assertThat(captureCountSql()).contains("r.departmentid IN (?)");
 
         ArgumentCaptor<Object[]> params = ArgumentCaptor.forClass(Object[].class);
         verify(jdbcTemplate, atLeastOnce()).queryForList(anyString(), params.capture());
-        assertThat(params.getValue()[3]).isEqualTo(DimensionContext.DEFAULT_DIMENSION_ID);
+        // 57 在前，两个 %王% 在后，最后是 offset/size
+        assertThat(params.getValue()).hasSize(5);
+        assertThat(params.getValue()[0]).isEqualTo(57L);
+        assertThat(params.getValue()[1]).isEqualTo("%王%");
+        assertThat(params.getValue()[2]).isEqualTo("%王%");
     }
 
     @Test
-    @DisplayName("count 语句必须带 HrmResource 别名 r，否则过滤后总数与列表对不上")
+    @DisplayName("多个部门展开成多个占位符，不拼字符串（否则 57 会匹配到 157）")
+    void multipleDepartmentsUsePlaceholders() {
+        controller.pageSearchResources("王", 1, 30, List.of(57L, 88L));
+
+        assertThat(captureBaseSql()).contains("r.departmentid IN (?, ?)");
+    }
+
+    @Test
+    @DisplayName("全是不合法部门 ID 时返回空页，不能退化成「不过滤」")
+    void illegalDepartmentIdsYieldEmptyPage() {
+        Result<PageResult<Map<String, Object>>> r = controller.pageSearchResources("王", 1, 30, List.of(0L, -1L));
+
+        assertThat(r.getData().getList()).isEmpty();
+        assertThat(r.getData().getTotal()).isZero();
+        // 闸门被拆掉的表现是「照样查了库」，这里必须一条 SQL 都没发
+        verify(jdbcTemplate, org.mockito.Mockito.never())
+                .queryForList(anyString(), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("count 语句必须带 HrmResource 别名 r，否则总数与列表对不上")
     void countSqlUsesAlias() {
-        controller.pageSearchResources("王", 1, 30, 2026);
+        controller.pageSearchResources("王", 1, 30, null);
 
         ArgumentCaptor<String> sqls = ArgumentCaptor.forClass(String.class);
         verify(jdbcTemplate, atLeastOnce()).queryForObject(sqls.capture(), eq(Long.class), any(Object[].class));
@@ -139,7 +155,7 @@ class EcologyDataControllerTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class)))
                 .thenThrow(new RuntimeException("boom"));
 
-        Result<PageResult<Map<String, Object>>> r = controller.pageSearchResources("王", 2, 10, 2026);
+        Result<PageResult<Map<String, Object>>> r = controller.pageSearchResources("王", 2, 10, null);
 
         assertThat(r.getData().getList()).isEmpty();
         assertThat(r.getData().getTotal()).isZero();
@@ -154,5 +170,15 @@ class EcologyDataControllerTest {
                 .filter(s -> s.contains("ORDER BY r.lastname"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("没有抓到 base SQL"));
+    }
+
+    /** count SQL 不带 ORDER BY，靠前缀区分 */
+    private String captureCountSql() {
+        ArgumentCaptor<String> sqls = ArgumentCaptor.forClass(String.class);
+        verify(jdbcTemplate, atLeastOnce()).queryForObject(sqls.capture(), eq(Long.class), any(Object[].class));
+        return sqls.getAllValues().stream()
+                .filter(s -> s.startsWith("SELECT COUNT(*) FROM HrmResource r "))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("没有抓到 count SQL"));
     }
 }

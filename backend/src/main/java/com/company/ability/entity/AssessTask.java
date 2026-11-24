@@ -11,8 +11,9 @@ import java.time.LocalDateTime;
  * 测评任务：年度 × 维度 × 被测人的一次评价征集（表 uf_assess_task）。
  * 方案：project/能力测评/15-评价网页化改造方案.md §5.1
  *
- * 与 uf_assess_sheet 多对一：一张页面（一人一年度）可被多次发起（撤回后重发），
- * 故任务独立成表，带自己的进度与撤回痕迹。
+ * <p>与 {@code uf_pa_sheet} 多对一：一张页面（一人一年度）可被多次发起（撤回后重发），
+ * 故任务独立成表，带自己的进度与撤回痕迹。旧 {@code uf_assess_sheet} 已于 P3（sql/51）DROP，
+ * 表名与实体名沿用旧词只是为了避免一次没有收益的全库改名。</p>
  *
  * status：0-进行中 2-已完成 3-已取消 4-已撤回。无「已截止」（不设截止时间）、
  * 无「待审核」（提交即生效，Q3）。
@@ -31,7 +32,7 @@ public class AssessTask {
     /** uf_assess_period.id */
     private Long periodId;
 
-    /** uf_assess_sheet.id，发起时同步生成 */
+    /** uf_pa_sheet.id，发起时同步生成 */
     private Long sheetId;
 
     /** 被测人 HrmResource.id */
@@ -49,10 +50,10 @@ public class AssessTask {
     /** 0-进行中 2-已完成 3-已取消 4-已撤回 */
     private Integer status;
 
-    /** 有效要素数快照（领导/自评视角） */
+    /** 有效能力项数快照 */
     private Integer ratingCount;
 
-    /** 客户评价人数量快照 */
+    /** 360 测评人数量快照（列名沿用旧词 client_count，方案 17 起语义是 360 测评人） */
     private Integer clientCount;
 
     private String remark;

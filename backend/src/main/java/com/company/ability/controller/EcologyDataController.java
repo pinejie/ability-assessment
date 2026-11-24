@@ -1,6 +1,5 @@
 package com.company.ability.controller;
 
-import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.PageRequest;
 import com.company.ability.dto.PageResult;
 import com.company.ability.dto.Result;
@@ -65,6 +64,48 @@ public class EcologyDataController {
             return Result.success(jdbcTemplate.queryForList(sql));
         } catch (Exception e) {
             log.error("查询一级分公司列表失败", e);
+            return Result.success(List.of());
+        }
+    }
+
+    @Operation(summary = "全部分公司的树形列表（授权选择器：可勾父分部、也可单独勾某一级下级）")
+    @GetMapping("/sub-companies/tree")
+    public Result<List<Map<String, Object>>> listSubCompanyTree() {
+        try {
+            // 分部表全量只有几十行（实测 30 行），一次拉回内存拼树，不做递归 SQL。
+            // 不截断：授权选择器少一个分部，等于那个分部的人永远配不上权限，且没有任何提示。
+            String sql = "SELECT id, subcompanyname, supsubcomid FROM HrmSubCompany "
+                    + "WHERE ISNULL(canceled, 0)=0 ORDER BY id";
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+
+            Map<Long, Map<String, Object>> byId = new java.util.LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                Map<String, Object> node = new java.util.LinkedHashMap<>();
+                node.put("id", ((Number) row.get("id")).longValue());
+                node.put("name", row.get("subcompanyname"));
+                node.put("children", new ArrayList<Map<String, Object>>());
+                byId.put(((Number) row.get("id")).longValue(), node);
+            }
+            List<Map<String, Object>> roots = new ArrayList<>();
+            for (Map<String, Object> row : rows) {
+                Map<String, Object> node = byId.get(((Number) row.get("id")).longValue());
+                Object sup = row.get("supsubcomid");
+                Long parentId = sup == null ? null : ((Number) sup).longValue();
+                Map<String, Object> parent = parentId == null || parentId == 0L ? null : byId.get(parentId);
+                if (parent == null) {
+                    // 上级是 0 / NULL，或指向一个已注销的分部 —— 都当根节点，
+                    // 否则这些分部会从选择器里凭空消失
+                    roots.add(node);
+                } else {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> siblings =
+                            (List<Map<String, Object>>) parent.get("children");
+                    siblings.add(node);
+                }
+            }
+            return Result.success(roots);
+        } catch (Exception e) {
+            log.error("查询分公司树失败", e);
             return Result.success(List.of());
         }
     }
@@ -391,33 +432,48 @@ public class EcologyDataController {
     /**
      * 分页搜索人员（支持姓名和拼音）。
      *
-     * @param requireYear 可选。传了则只返回「该年度 + 当前维度已配置人员能力要求」的人。
-     *                    发起页用它把「必然发起失败」的人挡在下拉之外；不传时行为与旧版一致，
-     *                    客户评价人等场景仍需要能搜到全量在岗人员。
+     * <p>默认返回全量在岗人员。发起测评时岗位由发起人当场选择（方案 17 增补，2026-11-21），
+     * 被测人不再受「必须已配置岗位」的限制。</p>
+     *
+     * <p>{@code departmentIds}（2026-11-22 增补）：只搜这些部门的人。发起页的「被测人」用它
+     * 把候选收敛到「有启用岗位的部门」——既然只配了 A 部门两个岗位，就不该能选 B 部门的人。
+     * 不传或传空表示不限部门，360 测评人仍走全量（跨部门评价本就是 360 的语义）。</p>
      */
-    @Operation(summary = "分页搜索人员（支持姓名和拼音；可选按年度过滤已配置能力要求的人）")
+    @Operation(summary = "分页搜索人员（支持姓名和拼音）")
     @GetMapping("/search/resources")
     public Result<PageResult<Map<String, Object>>> pageSearchResources(
             @RequestParam String keyword,
             @RequestParam(defaultValue = "1") Integer pageNum,
             @RequestParam(defaultValue = "10") Integer pageSize,
-            @RequestParam(required = false) Integer requireYear) {
+            @RequestParam(required = false) List<Long> departmentIds) {
         try {
             PageRequest pageRequest = new PageRequest();
             pageRequest.setPageNum(pageNum);
             pageRequest.setPageSize(pageSize);
 
             String searchPattern = "%" + keyword + "%";
-            List<Object> params = new ArrayList<>(List.of(searchPattern, searchPattern));
 
-            // 条件片段在 base / count 两处必须完全一致，否则分页总数与实际列表对不上。
-            String requirementFilter = "";
-            if (requireYear != null) {
-                requirementFilter = " AND EXISTS (SELECT 1 FROM uf_user_ability_req_new q " +
-                        "WHERE q.resource_id = r.id AND q.assess_year = ? AND q.dimension_id = ?)";
-                params.add(requireYear);
-                params.add(DimensionContext.getOrDefault());
+            // 部门白名单：base 与 count 必须共用同一段条件，否则总数和列表对不上。
+            // 参数顺序跟随 SQL —— deptFilter 在 LIKE 之前，所以部门 ID 也要排在前面。
+            List<Object> params = new ArrayList<>();
+            String deptFilter = "";
+            if (departmentIds != null && !departmentIds.isEmpty()) {
+                StringBuilder in = new StringBuilder();
+                for (Long deptId : departmentIds) {
+                    if (deptId == null || deptId <= 0) {
+                        continue;
+                    }
+                    in.append(in.length() == 0 ? "" : ", ").append("?");
+                    params.add(deptId);
+                }
+                // 全是非法 ID 时不能退化成「不过滤」——那等于把闸门悄悄拆了
+                if (in.length() == 0) {
+                    return Result.success(new PageResult<>(List.of(), 0L, pageNum, pageSize));
+                }
+                deptFilter = "AND r.departmentid IN (" + in + ") ";
             }
+            params.add(searchPattern);
+            params.add(searchPattern);
 
             String baseSql = "SELECT r.id, r.lastname, " +
                          "r.departmentid as departmentid, " +
@@ -429,12 +485,12 @@ public class EcologyDataController {
                          "LEFT JOIN HrmDepartment d ON r.departmentid = d.id " +
                          "LEFT JOIN HrmSubCompany s ON d.subcompanyid1 = s.id " +
                          "WHERE ISNULL(r.status, -1) IN (0, 1, 2, 3) " +
+                         deptFilter +
                          "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?)" +
-                         requirementFilter +
                          " ORDER BY r.lastname";
             String countSql = "SELECT COUNT(*) FROM HrmResource r WHERE ISNULL(r.status, -1) IN (0, 1, 2, 3) " +
-                         "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?)" +
-                         requirementFilter;
+                         deptFilter +
+                         "AND (r.lastname LIKE ? OR r.ecology_pinyin_search LIKE ?)";
 
             return Result.success(JdbcPageHelper.page(
                 jdbcTemplate, baseSql, countSql, params, pageRequest));

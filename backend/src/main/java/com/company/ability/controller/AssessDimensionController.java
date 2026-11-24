@@ -1,5 +1,7 @@
 package com.company.ability.controller;
 
+import com.company.ability.config.DimensionContextFilter;
+import com.company.ability.context.DimensionContext;
 import com.company.ability.dto.AssessDimensionCreateDTO;
 import com.company.ability.dto.AssessDimensionUpdateDTO;
 import com.company.ability.dto.DimensionAuthItemDTO;
@@ -10,6 +12,7 @@ import com.company.ability.service.AdminService;
 import com.company.ability.service.AssessDimensionService;
 import com.company.ability.vo.AssessDimensionAuthVO;
 import com.company.ability.vo.AssessDimensionVO;
+import com.company.ability.vo.DimensionScopeVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -81,9 +85,27 @@ public class AssessDimensionController {
         return Result.success("删除成功", null);
     }
 
+    /**
+     * 当前维度的组织范围（部门/人员候选收窄用）。
+     *
+     * <p>不加管理员门：本接口只为「收窄自己看得到的候选」服务，返回的是维度授权的组织范围，
+     * 不涉及任何业务数据；能进这个维度的人本来就已通过 {@code DimensionContextFilter} 校验。</p>
+     *
+     * <p>维度 ID 直接读请求头，不走 {@code DimensionContext}：本控制器整个路径前缀
+     * {@code /api/v1/assess-dimensions} 在过滤器的豁免名单里（顶栏切换器/目录自身不能被 403），
+     * 豁免分支不写上下文，读 {@code getOrDefault()} 会静默落回默认维度 1 —— 那是「不限」，
+     * 等于这条收窄从来没生效过。头缺失时才回落到默认维度。</p>
+     */
+    @Operation(summary = "查询当前维度的组织范围（授权分部下的部门）")
+    @GetMapping("/current-scope")
+    public Result<DimensionScopeVO> currentScope(
+            @RequestHeader(name = DimensionContextFilter.HEADER_DIMENSION_ID, required = false) Long dimensionId) {
+        return Result.success(assessDimensionService.currentScope(
+                dimensionId != null && dimensionId > 0 ? dimensionId : DimensionContext.DEFAULT_DIMENSION_ID));
+    }
+
     @Operation(summary = "查询维度授权列表（仅管理员）")
-    @GetMapping("/{id}/auths")
-    public Result<List<AssessDimensionAuthVO>> listAuths(@PathVariable Long id) {
+    @GetMapping("/{id}/auths")    public Result<List<AssessDimensionAuthVO>> listAuths(@PathVariable Long id) {
         adminService.requireAdmin();
         return Result.success(assessDimensionService.listAuths(id));
     }

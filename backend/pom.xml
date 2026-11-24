@@ -51,6 +51,13 @@
             <version>12.4.2.jre11</version>
         </dependency>
 
+        <!-- Excel 读取（能力结构导入）：只读 xlsx，不写。本地 .m2 已有 6.0.0 全套传递依赖，离线可编译 -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>6.0.0</version>
+        </dependency>
+
         <!-- JWT -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>

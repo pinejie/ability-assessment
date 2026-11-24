@@ -45,8 +45,20 @@ public class DimensionContextFilter extends OncePerRequestFilter {
             // 评价填写页：评价人是普通员工，通常没有维度授权，靠 token + 登录人==rater 校验，
             // 若按维度头拦截，普通评价人一进页面就 403（2026-11-13 新增 S1/S2）。
             "/api/v1/assess-fill/",
+            // 新填写页（方案 17）同理：360 测评人可能连维度目录都看不到。
+            // 越权防护由「token + 登录人 == 评价人」在服务层完成，且页面只返回本人那条任务。
+            "/api/v1/pa/assess-fill/",
             // 「我的评价」：只按登录身份查自己的待办，不接受任何维度/人员参数，
             // 维度头对它无意义；拦截会让无授权的被评价人看不到自己的待办。
+            "/api/v1/pa/assess-tasks/mine",
+            // 「我的测评」：本人看自己的报告，判定口径是「登录人 == 被测评人」，
+            // 与维度授权无关（被测评人是普通员工，通常没有任何维度授权）。
+            // 归属校验在 PaReportServiceImpl.myDetail 里，换个 sheetId 读不到别人的。
+            "/api/v1/pa/reports/my-reports",
+            // 下属的报告（2026-11-24）：可见范围是「登录人的直接下属」，
+            // 有下属的基层管理者通常没有维度授权，按维度头拦会让 tab 一打开就 403。
+            // 越权防护在 PaReportServiceImpl.subordinateDetail 的 managerid 校验里。
+            "/api/v1/pa/reports/sub-reports",
             "/api/v1/my-assess-tasks");
 
     private final AssessDimensionService assessDimensionService;

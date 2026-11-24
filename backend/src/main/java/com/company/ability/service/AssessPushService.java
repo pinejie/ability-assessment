@@ -1,6 +1,6 @@
 package com.company.ability.service;
 
-import com.company.ability.vo.AssessTaskVO;
+import com.company.ability.vo.PaTaskVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,11 +56,37 @@ public class AssessPushService {
     /** 正文上限，避免被泛微 truncateMessage 截断（§8.4） */
     private static final int CONTENT_MAX = 500;
 
-    /** PC 填写页路径（前端路由 /assess/fill/:token） */
-    private static final String PC_FILL_PATH = "/assess/fill/";
+    /**
+     * 入口说明：附在发起与催办消息正文末尾。
+     *
+     * <p>为什么要写这句：消息里的链接是<b>一人一 token</b> 的，会过期、会因撤回失效，
+     * 用户也常在系统消息里翻不到历史那条。没有入口说明时，唯一的自救路径是问 HR「去哪里评」——
+     * 这正是 2026-11-24 之前每天被问的问题。</p>
+     *
+     * <p>PC 与移动端的入口位置<b>不一样</b>（泛微 e9 的门户菜单和 APP 工作台是两个配置体系），
+     * 所以两端都要写清楚，不能只说「从系统进入」。</p>
+     *
+     * <p>撤回通知不带这句：那条消息的落点是「你的评价已作废」，人不需要去任何地方补做什么。</p>
+     */
+    private static final String ENTRY_HINT =
+            "也可从系统入口进入：PC 端「我的门户 → 能力测评」，移动端「工作台 → 其它应用 → 能力测评」。";
 
-    /** 移动端填写页路径（前端路由 /m/assess/fill/:token） */
-    private static final String MOBILE_FILL_PATH = "/m/assess/fill/";
+    /**
+     * 消息里填写的落地地址前缀。
+     *
+     * <p>为什么不是一个常量：P2 期间新旧两条链路并存，两边都把评价人写进
+     * {@code uf_assess_task_rater}，光看 token 分不出它属于哪条链路。
+     * 前缀必须由调用方（知道自己发的是哪条链路的任务）显式给出 ——
+     * 前缀给错，评价人点开就是 404 或者「链接不属于你」，而这在测试里很难兜住。</p>
+     *
+     * <p>P3 起旧链路 {@code /assess/fill} 已随旧表一起删除，只剩 {@link #PA}；
+     * 保留 record 结构是为了让「前缀由调用方显式给出」这条约束继续成立，
+     * 将来再加落地页就多一个常量，不要再退回成写死在 {@link #link} 里的字符串。</p>
+     */
+    public record FillPaths(String pc, String mobile) {
+        /** 新链条（方案 17 §7.2） */
+        public static final FillPaths PA = new FillPaths("/pa/assess-fill/", "/m/pa/assess-fill/");
+    }
 
     private final JdbcTemplate jdbc;
 
@@ -68,15 +94,21 @@ public class AssessPushService {
     private String fillBaseUrl;
 
     /**
-     * 发起邀请：给每个评价人各插一条（§8.4）。
+     * 发起邀请（方案 17 §7.2）：给每个评价人各插一条。
+     *
+     * <p>正文里的项数<b>按人取</b>（2026-11-23 起 360 是按能力项指派的）：
+     * {@code link.itemCount} 有值就用它，没有才回退到整页项数。
+     * 说整页项数会让只被指派 2 项的人以为自己的链接少了半份，
+     * 进而去问 HR——这类「消息与实际不符」的问询最耗人力。</p>
      */
-    public int writeInvites(long taskId, int year, int elementCount,
-                            String targetName, List<AssessTaskVO.RaterLink> links) {
+    public int writeInvites(long taskId, int year, int itemCount, String targetName,
+                             List<PaTaskVO.RaterLink> links) {
         int written = 0;
-        for (AssessTaskVO.RaterLink link : links) {
+        for (PaTaskVO.RaterLink link : links) {
             String title = inviteTitle(link.getRaterType(), targetName);
-            String content = inviteContent(link.getRaterType(), year, elementCount, targetName);
-            written += insert(link.getRaterResourceId(), title, content, link.getAccessToken());
+            int count = link.getItemCount() == null ? itemCount : link.getItemCount();
+            String content = inviteContent(link.getRaterType(), year, count, targetName);
+            written += insert(link.getRaterResourceId(), title, content, link.getAccessToken(), FillPaths.PA);
         }
         log.info("发起邀请消息 taskId={}, 目标 {} 条, 实际写入 {} 条", taskId, links.size(), written);
         return written;
@@ -97,22 +129,29 @@ public class AssessPushService {
             long raterId = num(r.get("rater_resource_id"));
             String token = (String) r.get("access_token");
             String content = voidContent(targetName, year, reason);
-            written += insert(raterId, "能力测评 · 您的评价已作废", content, token);
+            written += insert(raterId, "能力测评 · 您的评价已作废", content, token, FillPaths.PA);
         }
         log.info("撤回通知 taskId={}, 已提交 {} 人, 实际写入 {} 条", taskId, submitted.size(), written);
         return written;
     }
 
-    /** 催办：只推未提交的人。轮次由调用方维护在 uf_assess_task_rater.remind_count。 */
-    public int writeReminds(long taskId, int round, String targetName,
+    /**
+     * 催办：只推未提交的人。轮次由调用方维护在 uf_assess_task_rater.remind_count。
+     *
+     * <p>年度由调用方给出，<b>不再写死 2026</b>：催办可能发生在跨年之后
+     * （2026 年度的任务在 2027 年 1 月还在催），写死年份会让评价人以为催的是新一年的事，
+     * 反而不敢点。</p>
+     */
+    public int writeReminds(long taskId, int round, int year, String targetName,
                             List<Map<String, Object>> pending) {
         int written = 0;
         for (Map<String, Object> r : pending) {
             long raterId = num(r.get("rater_resource_id"));
             String token = (String) r.get("access_token");
             String type = (String) r.get("rater_type");
-            String content = "2026 年度能力测评仍在进行中，请您尽快完成对 " + safe(targetName) + " 的评价。";
-            written += insert(raterId, inviteTitle(type, targetName), content, token);
+            String content = year + " 年度能力测评仍在进行中，请您尽快完成对 "
+                    + safe(targetName) + " 的评价。" + ENTRY_HINT;
+            written += insert(raterId, inviteTitle(type, targetName), content, token, FillPaths.PA);
         }
         log.info("催办消息 taskId={}, 轮次 {}, 待评 {} 人, 实际写入 {} 条",
                 taskId, round, pending.size(), written);
@@ -126,9 +165,9 @@ public class AssessPushService {
      * 跨系统的锁持有时间被压缩到最小（§8.6.4 方案 A）。
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
-    public int insert(long receiverId, String title, String content, String token) {
-        String pcLink = link(token, PC_FILL_PATH);
-        String mobileLink = link(token, MOBILE_FILL_PATH);
+    public int insert(long receiverId, String title, String content, String token, FillPaths paths) {
+        String pcLink = link(token, paths.pc());
+        String mobileLink = link(token, paths.mobile());
         return jdbc.update(
                 "INSERT INTO uf_push_msg (receiver_id, msg_type, title, content, " +
                 "pc_url, mobile_url, status) VALUES (?, ?, ?, ?, ?, ?, 0)",
@@ -141,19 +180,21 @@ public class AssessPushService {
         return switch (raterType == null ? "" : raterType) {
             case "SELF" -> "能力测评 · 请完成您的自评";
             case "LEADER" -> "能力测评 · 请对 " + safe(targetName) + " 进行上级评价";
-            case "CLIENT" -> "能力测评 · 请对 " + safe(targetName) + " 进行客户评价";
+            case "RATER360" -> "能力测评 · 请对 " + safe(targetName) + " 进行 360 评价";
             default -> "能力测评 · 待办评价";
         };
     }
 
-    private static String inviteContent(String raterType, int year, int elementCount, String targetName) {
+    private static String inviteContent(String raterType, int year, int itemCount, String targetName) {
         String action = switch (raterType == null ? "" : raterType) {
             case "SELF" -> "请完成您本人的能力测评自评";
             case "LEADER" -> "请对 " + safe(targetName) + " 进行上级评价";
-            case "CLIENT" -> "请对 " + safe(targetName) + " 进行客户评价";
+            case "RATER360" -> "请对 " + safe(targetName) + " 进行 360 评价";
             default -> "请完成能力测评评价";
         };
-        return year + " 年度能力测评已发起，共 " + elementCount + " 个要素，" + action + "。请点击下方链接进入。";
+        // 旧模型说「要素」，新模型叫「能力项」（方案 17）
+        return year + " 年度能力测评已发起，共 " + itemCount + " 个能力项，" + action + "。"
+                + "请点击下方链接进入。" + ENTRY_HINT;
     }
 
     /**

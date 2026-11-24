@@ -61,12 +61,14 @@ class AssessPushServiceTest {
         Object[] args = capturedInsert();
         String content = (String) args[3];
         String pcUrl = (String) args[4];
-        assertThat(pcUrl).isEqualTo(BASE + "/assess/fill/tok-self");
+        assertThat(pcUrl).isEqualTo(BASE + "/pa/assess-fill/tok-self");
         // 移动端单独一条路径：泛微 e9 按终端分别取 pc_url / mobile_url，
         // 同一个地址在手机上排版不可用（2026-11-14）。
-        assertThat((String) args[5]).isEqualTo(BASE + "/m/assess/fill/tok-self");
+        assertThat((String) args[5]).isEqualTo(BASE + "/m/pa/assess-fill/tok-self");
         assertThat(content).doesNotContain("tok-self");
-        assertThat(content).contains("2026").contains("20 个要素");
+        assertThat(content).contains("2026").contains("20 个能力项");
+        // 入口说明：链接会过期、也可能在消息列表里翻不到，用户得知道自己能去哪儿进
+        assertThat(content).contains("我的门户").contains("工作台");
     }
 
     @Test
@@ -75,7 +77,7 @@ class AssessPushServiceTest {
         service.writeInvites(TASK_ID, 2026, 20, "张晓明", List.of(
                 link("SELF", 2505L, "t1"),
                 link("LEADER", 2144L, "t2"),
-                link("CLIENT", 3785L, "t3")));
+                link("RATER360", 3785L, "t3")));
 
         ArgumentCaptor<Object[]> caps = ArgumentCaptor.forClass(Object[].class);
         verify(jdbc, times(3)).update(anyString(), caps.capture());
@@ -83,7 +85,7 @@ class AssessPushServiceTest {
 
         assertThat((String) all.get(0)[2]).contains("自评");
         assertThat((String) all.get(1)[2]).contains("上级评价");
-        assertThat((String) all.get(2)[2]).contains("客户评价");
+        assertThat((String) all.get(2)[2]).contains("360 评价");
 
         // receiver_id 是第一列：每人独立一行，不拼逗号串
         assertThat(all.get(0)[0]).isEqualTo(2505L);
@@ -96,7 +98,7 @@ class AssessPushServiceTest {
     void sameRaterWithTwoRolesGetsTwoRows() {
         service.writeInvites(TASK_ID, 2026, 20, "张晓明", List.of(
                 link("LEADER", 2505L, "tok-leader"),
-                link("CLIENT", 2505L, "tok-client")));
+                link("RATER360", 2505L, "tok-rater360")));
 
         ArgumentCaptor<Object[]> caps = ArgumentCaptor.forClass(Object[].class);
         verify(jdbc, times(2)).update(anyString(), caps.capture());
@@ -106,7 +108,7 @@ class AssessPushServiceTest {
         assertThat(all.get(0)[0]).isEqualTo(2505L);
         assertThat(all.get(1)[0]).isEqualTo(2505L);
         assertThat((String) all.get(0)[4]).endsWith("/tok-leader");
-        assertThat((String) all.get(1)[4]).endsWith("/tok-client");
+        assertThat((String) all.get(1)[4]).endsWith("/tok-rater360");
     }
 
     @Test
@@ -139,26 +141,45 @@ class AssessPushServiceTest {
         assertThat(content).contains("已被管理员撤回")
                 .contains("客户评价人漏选财务部王强")
                 .contains("作废清除");
-        assertThat((String) args[4]).isEqualTo(BASE + "/assess/fill/tok-old");
+        assertThat((String) args[4]).isEqualTo(BASE + "/pa/assess-fill/tok-old");
         assertThat(args[0]).isEqualTo(2144L);
     }
 
     @Test
     @DisplayName("writeReminds：催办只推未提交的人，链接用自己的 token")
     void remindGoesToPendingOnly() {
-        service.writeReminds(TASK_ID, 2, "张晓明",
-                List.of(row("rater_resource_id", 3785L, "access_token", "tok-r", "rater_type", "CLIENT")));
+        service.writeReminds(TASK_ID, 2, 2026, "张晓明",
+                List.of(row("rater_resource_id", 3785L, "access_token", "tok-r", "rater_type", "RATER360")));
 
         Object[] args = capturedInsert();
         assertThat(args[0]).isEqualTo(3785L);
-        assertThat((String) args[3]).contains("尽快完成");
+        assertThat((String) args[3]).contains("尽快完成").contains("我的门户").contains("工作台");
         assertThat((String) args[4]).endsWith("/tok-r");
+    }
+
+    @Test
+    @DisplayName("催办文案的年度取任务年度，不写死 2026（跨年还在催时不会写错年）")
+    void remindUsesTaskYear() {
+        service.writeReminds(TASK_ID, 1, 2027, "张晓明",
+                List.of(row("rater_resource_id", 3785L, "access_token", "tok-r", "rater_type", "RATER360")));
+
+        String content = (String) capturedInsert()[3];
+        assertThat(content).contains("2027 年度").doesNotContain("2026");
+    }
+
+    @Test
+    @DisplayName("撤回文案不带入口说明：那条消息是「已作废」，不该指路让人去补做什么")
+    void voidHasNoEntryHint() {
+        service.writeVoids(TASK_ID, "张晓明", 2026, "客户评价人漏选财务部王强",
+                List.of(row("rater_resource_id", 2144L, "access_token", "tok-old")));
+
+        assertThat((String) capturedInsert()[3]).doesNotContain("我的门户").doesNotContain("工作台");
     }
 
     @Test
     @DisplayName("insert：正文超过 500 字时截断（防御性，正常路径 reason≤200 到不了）")
     void longContentTruncated() {
-        service.insert(1L, "标题", "原".repeat(800), "tok");
+        service.insert(1L, "标题", "原".repeat(800), "tok", AssessPushService.FillPaths.PA);
 
         assertThat((String) capturedInsert()[3]).hasSize(500);
     }
@@ -213,8 +234,8 @@ class AssessPushServiceTest {
         return cap.getValue();
     }
 
-    private static com.company.ability.vo.AssessTaskVO.RaterLink link(String type, long resourceId, String token) {
-        com.company.ability.vo.AssessTaskVO.RaterLink l = new com.company.ability.vo.AssessTaskVO.RaterLink();
+    private static com.company.ability.vo.PaTaskVO.RaterLink link(String type, long resourceId, String token) {
+        com.company.ability.vo.PaTaskVO.RaterLink l = new com.company.ability.vo.PaTaskVO.RaterLink();
         l.setRaterType(type);
         l.setRaterResourceId(resourceId);
         l.setAccessToken(token);

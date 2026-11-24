@@ -28,6 +28,13 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  # 能力结构导入上传：客户那份能力模型 Excel 实测 25 个工作表、130KB 左右。
+  # 默认 1MB/10MB 对 25 张表的文件够用，但留余量到 20MB —— 加几张带图片的模板就会超。
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   configuration:
@@ -67,15 +74,22 @@ jwt:
   secret: ${JWT_SECRET:your-secret-key-must-be-at-least-32-characters-long}
   expiration: 7200  # 2小时（秒）
 
-# 智能导入二期（内置 claude CLI 会话 + 交付稿，不复用 ai-chat-app）。
-# 敏感项 agent.internal-token 由 backend/config/secret.yml 提供（缺省时 /agent/draft 一律 401）。
-agent:
-  enabled: true
-  workspace-path: /home/wgd/ws/cp
-  claude-bin: /home/wgd/bin/claude
-  max-active-sessions: 6
-  draft-idle-minutes: 30
-  draft-max-hours: 2
+# 能力结构导入（sql/55 会话表 + POI 读表 + 模型认结构）
+pa:
+  import:
+    ai:
+      # 网关凭证走环境变量，仓库零明文；与 hr-report 共用同一份凭证（同一台机器同一个网关）
+      # 缺配置时服务照常启动，只在真要调模型时报错并由前端降级到手工映射
+      base-url: ${ANTHROPIC_BASE_URL:}
+      api-key: ${ANTHROPIC_AUTH_TOKEN:}
+      model: ${ANTHROPIC_MODEL:}
+      # 实测单次调用 18~25 秒，留足余量
+      timeout-seconds: ${PA_IMPORT_AI_TIMEOUT:120}
+      # 推理模型的思考过程也计入输出额度：给 2000 会输出空串（实测 2026-11-21）
+      max-tokens: ${PA_IMPORT_AI_MAX_TOKENS:16384}
+      max-rounds: 10
+      session-ttl-minutes: 30
+      enabled: true
 
 knife4j:
   enable: true

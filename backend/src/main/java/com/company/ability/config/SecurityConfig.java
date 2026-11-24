@@ -54,10 +54,6 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     // SSO 引导接口（发起跳转 / 回调换 token）
                     .requestMatchers("/api/v1/auth/sso/**").permitAll()
-                    // Agent 交付稿/三出口（内网 cp_server 调用，无 JWT；服务内强校验 X-Agent-Token）
-                    .requestMatchers(HttpMethod.POST, "/api/v1/agent/draft", "/api/v1/agent/outcome",
-                            "/api/v1/agent/parse-stats", "/api/v1/agent/parse-structure-stats")
-                    .permitAll()   // cp_server 内部令牌通道，鉴权在服务内
                     ;
                 // 接口文档：生产 profile 关闭后不进白名单（authEnforced 时落到 anyRequest().authenticated()，
                 // 未登录即 401；同时 springdoc.api-docs.enabled=false 让端点本身不存在）

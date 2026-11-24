@@ -1,121 +1,5 @@
 -- 测试数据库 Schema
 
--- 能力类别表
-CREATE TABLE IF NOT EXISTS uf_ability_category (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    category_name VARCHAR(100) NOT NULL,
-    description VARCHAR(500),
-    status INT DEFAULT 1,
-    sort INT DEFAULT 0,
-    dimension_id BIGINT DEFAULT 1,
-    create_by BIGINT,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_by BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted INT DEFAULT 0
-);
-
--- 能力要素表
-CREATE TABLE IF NOT EXISTS uf_ability_element (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    element_name VARCHAR(100) NOT NULL,
-    element_code VARCHAR(50),
-    category_id BIGINT NOT NULL,
-    description VARCHAR(500),
-    allow_client_assess INT DEFAULT 0,
-    assess_in_flow INT DEFAULT 1,
-    status INT DEFAULT 1,
-    sort INT DEFAULT 0,
-    dimension_id BIGINT DEFAULT 1,
-    create_by BIGINT,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_by BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted INT DEFAULT 0
-);
-
--- 能力要素等级配置表
-CREATE TABLE IF NOT EXISTS uf_ability_element_level (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    element_id BIGINT NOT NULL,
-    level INT NOT NULL,
-    level_name VARCHAR(100) NOT NULL,
-    level_requirement VARCHAR(500),
-    score DECIMAL(10,2) NOT NULL,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    dimension_id BIGINT DEFAULT 1
-);
-
--- 部门能力要求表
-CREATE TABLE IF NOT EXISTS uf_org_ability_req (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    department_id BIGINT NOT NULL,
-    element_id BIGINT NOT NULL,
-    description VARCHAR(500),
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 岗位能力要求表（旧版，保留兼容）
-CREATE TABLE IF NOT EXISTS uf_position_ability_req (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    job_title_id BIGINT NOT NULL,
-    element_id BIGINT NOT NULL,
-    description VARCHAR(500),
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 岗位能力要求主表（新版，实体 PositionAbilityReq）
-CREATE TABLE IF NOT EXISTS uf_position_ability_req_new (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    department_id BIGINT,
-    job_title_id BIGINT NOT NULL,
-    description VARCHAR(500),
-    dimension_id BIGINT DEFAULT 1,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 岗位能力要求明细（新版，实体 PositionAbilityReqItem）
-CREATE TABLE IF NOT EXISTS uf_position_ability_req_item (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    req_id BIGINT NOT NULL,
-    category_id BIGINT,
-    element_id BIGINT NOT NULL,
-    weight DECIMAL(10,4),
-    dimension_id BIGINT DEFAULT 1,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 人员能力要求表
-CREATE TABLE IF NOT EXISTS uf_user_ability_req (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    resource_id BIGINT NOT NULL,
-    element_id BIGINT NOT NULL,
-    level_id BIGINT NOT NULL,
-    score DECIMAL(10,2),
-    description VARCHAR(500),
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 评分权重配置表
-CREATE TABLE IF NOT EXISTS uf_score_weight (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    weight_name VARCHAR(100) NOT NULL,
-    category_weight DECIMAL(5,2) NOT NULL,
-    element_weight DECIMAL(5,2) NOT NULL,
-    description VARCHAR(500),
-    create_by BIGINT,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_by BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted INT DEFAULT 0
-);
-
 -- 泛微分部表（测试用，分部子树匹配走上级链）
 CREATE TABLE IF NOT EXISTS HrmSubCompany (
     id BIGINT PRIMARY KEY,
@@ -125,10 +9,13 @@ CREATE TABLE IF NOT EXISTS HrmSubCompany (
 );
 
 -- 泛微部门表（测试用）
+-- supdepid / subcompanyid1 与生产同名：部门树按上下级拼、维度授权按所属分部筛部门
 CREATE TABLE IF NOT EXISTS HrmDepartment (
     id BIGINT PRIMARY KEY,
     departmentname VARCHAR(100) NOT NULL,
     departmentmark VARCHAR(100),
+    supdepid BIGINT,
+    subcompanyid1 BIGINT,
     canceled CHAR(1) DEFAULT '0'
 );
 
@@ -150,10 +37,12 @@ CREATE TABLE IF NOT EXISTS HrmResource (
     jobtitle BIGINT,
     managerid BIGINT,
     subcompanyid1 BIGINT,
+    workcode VARCHAR(50),
+    ecology_pinyin_search VARCHAR(200),
     birthday DATE
 );
 
--- 维度（类租户）主数据（测试用，与 sql/14 对齐）
+-- 维度（类租户）主数据（测试用，与 sql/14 + sql/57 对齐）
 CREATE TABLE IF NOT EXISTS uf_assess_dimension (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dimension_name VARCHAR(100) NOT NULL,
@@ -168,7 +57,8 @@ CREATE TABLE IF NOT EXISTS uf_assess_dimension (
     deleted INT DEFAULT 0
 );
 
--- 维度授权表（测试用；无授权行 = 所有人可用）
+-- 维度授权表（测试用，与 sql/58 对齐）：分部 + 人员都在这张表；
+-- 无授权行 = 仅系统管理员可用。auth_type=2 的人员同时是维度管理员（360 姓名可见）
 CREATE TABLE IF NOT EXISTS uf_assess_dimension_auth (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dimension_id BIGINT NOT NULL,
@@ -188,7 +78,7 @@ CREATE TABLE IF NOT EXISTS uf_assess_admin (
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========== 测评页面同步（AssessSheetSyncService 集成测试用，字段对齐 sql/09~17） ==========
+-- ========== 年度（生产 sql/09、sql/14；P3 起旧测评页表已删除，仅年度表保留） ==========
 
 CREATE TABLE IF NOT EXISTS uf_assess_period (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -201,70 +91,9 @@ CREATE TABLE IF NOT EXISTS uf_assess_period (
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS uf_assess_sheet (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    period_id BIGINT NOT NULL,
-    resource_id BIGINT NOT NULL,
-    department_id BIGINT,
-    job_title_id BIGINT,
-    leader_resource_id BIGINT,
-    status INT DEFAULT 0,
-    need_recalc INT DEFAULT 0,
-    req_changed INT DEFAULT 0,
-    client_count INT DEFAULT 0,
-    dimension_id BIGINT DEFAULT 1,
-    standard_score DECIMAL(10,4),
-    leader_score DECIMAL(10,4),
-    client_score DECIMAL(10,4),
-    self_score DECIMAL(10,4),
-    actual_score DECIMAL(10,4),
-    score_rate DECIMAL(10,4),
-    grade_name VARCHAR(20),
-    annual_score DECIMAL(10,4),
-    sync_time TIMESTAMP,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uk_sheet_period_resource UNIQUE (period_id, resource_id)
-);
-
--- 测评配置：评价人权重 / 等级标准（sql/07 + sql/15 维度列）
-CREATE TABLE IF NOT EXISTS uf_assess_weight_assessor (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    dimension_id BIGINT DEFAULT 1,
-    assessor_code VARCHAR(20) NOT NULL,
-    weight DECIMAL(5,2) NOT NULL,
-    update_by BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS uf_assess_grade_level (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    dimension_id BIGINT DEFAULT 1,
-    level_name VARCHAR(20) NOT NULL,
-    lower_bound DECIMAL(5,2),
-    upper_bound DECIMAL(5,2),
-    sort_order INT NOT NULL,
-    update_by BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 测评意见（sql/12；写入方为泛微钩子存储过程）
-CREATE TABLE IF NOT EXISTS uf_assess_comment (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    sheet_id BIGINT NOT NULL,
-    comment_type VARCHAR(10) NOT NULL,
-    content VARCHAR(2000) NOT NULL,
-    workflow_request_id BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uk_assess_comment UNIQUE (sheet_id, comment_type)
-);
-
--- 测评任务与评价人（sql/37、sql/38）。报告页从这里取网页渠道的评价意见，
--- 只保留测试用到的列，其余生产列（催办、撤回链等）不在此复刻。
+-- 测评任务与评价人（sql/37、sql/38）。
+-- 2026-11-21 起 P2 的新链路（PaTask* / PaFill*）也读写这两张表，故补齐它用到的生产列
+-- （快照计数、撤回链、催办轮次、提交时间）。列长度与 sql/37、sql/38、sql/47 保持一致。
 CREATE TABLE IF NOT EXISTS uf_assess_task (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     company_id BIGINT NOT NULL DEFAULT 1,
@@ -272,7 +101,20 @@ CREATE TABLE IF NOT EXISTS uf_assess_task (
     period_id BIGINT NOT NULL DEFAULT 1,
     sheet_id BIGINT,
     resource_id BIGINT NOT NULL DEFAULT 0,
-    status TINYINT NOT NULL DEFAULT 0
+    department_id BIGINT,
+    leader_resource_id BIGINT,
+    status TINYINT NOT NULL DEFAULT 0,
+    rating_count INT NOT NULL DEFAULT 0,
+    client_count INT NOT NULL DEFAULT 0,
+    remark NVARCHAR(1000),
+    create_by BIGINT NOT NULL DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    void_by BIGINT,
+    void_time TIMESTAMP,
+    void_reason NVARCHAR(400),
+    void_notice_json NVARCHAR(MAX),
+    replaced_by_task_id BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS uf_assess_task_rater (
@@ -283,147 +125,224 @@ CREATE TABLE IF NOT EXISTS uf_assess_task_rater (
     status TINYINT NOT NULL DEFAULT 0,
     comment NVARCHAR(1000),
     draft_json NVARCHAR(MAX),
+    draft_time TIMESTAMP,
     draft_version INT NOT NULL DEFAULT 0,
+    submit_time TIMESTAMP,
+    remind_count INT NOT NULL DEFAULT 0,
+    last_remind_time TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     access_token VARCHAR(64) NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS uf_assess_sheet_row (
+-- 360 测评人按能力项指派（sql/60 的 H2 版）。
+-- 生产上的唯一索引 UX_rater_item (rater_id, item_id) 这里有 H2 语法限制，
+-- 用例不靠数据库挡重复：写入侧本来就先去重，重复唯一性不是被测逻辑。
+CREATE TABLE IF NOT EXISTS uf_assess_task_rater_item (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    sheet_id BIGINT NOT NULL,
-    category_id BIGINT,
-    category_name VARCHAR(100),
-    element_id BIGINT NOT NULL,
-    element_name VARCHAR(100),
-    required_level_no INT,
-    sort_no INT,
-    active INT DEFAULT 1,
-    dimension_id BIGINT DEFAULT 1,
-    category_weight DECIMAL(10,4),
-    element_weight DECIMAL(10,4),
-    standard_score DECIMAL(10,4),
-    leader_level_no INT,
-    leader_score DECIMAL(10,4),
-    self_level_no INT,
-    self_score DECIMAL(10,4),
-    client_avg_score DECIMAL(10,4)
+    task_id BIGINT NOT NULL,
+    rater_id BIGINT NOT NULL,
+    item_id BIGINT NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS uf_assess_sheet_log (
+-- 通用消息队列表（与业务解耦；测评只往里插行，泛微 PushMsgJob 轮询发出）
+-- 发起 / 催办 / 撤回通知都写这张表，所以发起链路测试必须有它。
+CREATE TABLE IF NOT EXISTS uf_push_msg (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    sheet_id BIGINT NOT NULL,
-    action VARCHAR(20),
-    operator_resource_id BIGINT,
-    detail_json VARCHAR(1000),
+    receiver_id BIGINT NOT NULL,
+    msg_type INT NOT NULL,
+    title NVARCHAR(200) NOT NULL,
+    content NVARCHAR(1000),
+    pc_url VARCHAR(500),
+    mobile_url VARCHAR(500),
+    status TINYINT NOT NULL DEFAULT 0,
+    last_error NVARCHAR(500),
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    dimension_id BIGINT DEFAULT 1
+    sent_time TIMESTAMP
 );
 
--- 页面评级（sql/10 基础列 + sql/25 外部导入列）
-CREATE TABLE IF NOT EXISTS uf_assess_sheet_rating (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    sheet_id BIGINT NOT NULL,
-    element_id BIGINT NOT NULL,
-    rater_type VARCHAR(20) NOT NULL,
-    rater_resource_id BIGINT,
-    client_seq INT,
-    level_no INT,
-    score DECIMAL(10,4),
-    source VARCHAR(10) NOT NULL DEFAULT 'FLOW',
-    original_score DECIMAL(10,2),
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    dimension_id BIGINT DEFAULT 1
-);
 
--- 人员能力要求（新版主表 + 明细）
-CREATE TABLE IF NOT EXISTS uf_user_ability_req_new (
+-- ============================================================
+-- 岗位能力模型（sql/50-pa-schema.sql 的 H2 版）
+-- ------------------------------------------------------------
+-- 与生产结构的差异只有两处，都是 H2 方言所限，不影响被测逻辑：
+--   1) 筛选索引（WHERE deleted = 0）H2 不支持 → 这里建普通表，唯一性由服务层保证
+--   2) NVARCHAR(MAX) → VARCHAR（H2 无 MAX 长度）
+-- P3 起旧模型表（uf_ability_* / uf_position_* / uf_user_* / uf_assess_sheet* 等
+-- 23 张）已从本文件删除 —— 生产侧同批 DROP 见 sql/51。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS uf_pa_post (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT,
-    resource_id BIGINT NOT NULL,
-    assess_year INT NOT NULL,
-    dimension_id BIGINT DEFAULT 1,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS uf_user_ability_req_item (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    req_id BIGINT NOT NULL,
-    element_id BIGINT NOT NULL,
-    category_id BIGINT,
-    level_id BIGINT,
-    score DECIMAL(10,2),
-    dimension_id BIGINT DEFAULT 1,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 测评配置：类别权重 / 等级分值（Java 侧按 BigDecimal 读取，列必须是 DECIMAL）
-CREATE TABLE IF NOT EXISTS uf_assess_weight_ability (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    dimension_id BIGINT DEFAULT 1,
-    category_id BIGINT NOT NULL,
-    weight DECIMAL(10,4) NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS uf_assess_level_score (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    dimension_id BIGINT DEFAULT 1,
-    level_no INT NOT NULL,
-    level_desc VARCHAR(100),
-    rate_value INT,
-    score DECIMAL(10,4) NOT NULL,
+    dimension_id BIGINT NOT NULL,
+    -- NULL = 全公司通用岗位（sql/63）
+    department_id BIGINT,
+    department_name VARCHAR(100),
+    post_code VARCHAR(50),
+    post_name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    status INT DEFAULT 1 NOT NULL,
+    sort INT DEFAULT 0 NOT NULL,
+    create_by BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     update_by BIGINT,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uk_level_score UNIQUE (company_id, dimension_id, level_no),
-    CONSTRAINT uk_level_rate UNIQUE (company_id, dimension_id, rate_value)
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted INT DEFAULT 0 NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS uf_pa_category (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_id BIGINT NOT NULL,
+    post_id BIGINT NOT NULL,
+    category_name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    sort INT DEFAULT 0 NOT NULL,
+    status INT DEFAULT 1 NOT NULL,
+    create_by BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_by BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted INT DEFAULT 0 NOT NULL
+);
 
--- 能力结构导入写入台账与别名记忆（sql/33）
-CREATE TABLE IF NOT EXISTS uf_assess_import_alias (
+CREATE TABLE IF NOT EXISTS uf_pa_item (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_id BIGINT NOT NULL,
+    post_id BIGINT NOT NULL,
+    category_id BIGINT NOT NULL,
+    item_code VARCHAR(50),
+    item_name VARCHAR(100) NOT NULL,
+    definition VARCHAR(4000),
+    weight DECIMAL(9,4) DEFAULT 0 NOT NULL,
+    rater_leader INT DEFAULT 1 NOT NULL,
+    rater_360 INT DEFAULT 0 NOT NULL,
+    rater_text VARCHAR(100),
+    sort INT DEFAULT 0 NOT NULL,
+    status INT DEFAULT 1 NOT NULL,
+    create_by BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_by BIGINT,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted INT DEFAULT 0 NOT NULL,
+    CONSTRAINT CK_pa_item_rater CHECK (rater_leader = 1 OR rater_360 = 1)
+);
+
+CREATE TABLE IF NOT EXISTS uf_pa_item_level (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_id BIGINT NOT NULL,
+    item_id BIGINT NOT NULL,
+    level_name VARCHAR(50) NOT NULL,
+    score DECIMAL(6,2) NOT NULL,
+    level_desc VARCHAR(4000),
+    sort INT DEFAULT 0 NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS uf_pa_band (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dimension_id BIGINT NOT NULL,
+    post_id BIGINT NOT NULL,
+    band_name VARCHAR(50) NOT NULL,
+    lower_bound DECIMAL(6,2),
+    upper_bound DECIMAL(6,2),
+    sort INT DEFAULT 0 NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS uf_pa_sheet (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     company_id BIGINT NOT NULL,
     dimension_id BIGINT NOT NULL,
-    kind VARCHAR(20) NOT NULL,
-    source_name VARCHAR(200) NOT NULL,
-    target_id BIGINT NOT NULL,
-    target_name VARCHAR(200) NOT NULL,
-    hit_count INT DEFAULT 0,
-    confirmed_by BIGINT NOT NULL,
-    confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    period_id BIGINT NOT NULL,
+    resource_id BIGINT NOT NULL,
+    post_id BIGINT NOT NULL,
+    department_id BIGINT,
+    department_name VARCHAR(100),
+    post_name VARCHAR(100),
+    leader_resource_id BIGINT,
+    status INT DEFAULT 0 NOT NULL,
+    item_count INT DEFAULT 0 NOT NULL,
+    self_score DECIMAL(10,4),
+    leader_score DECIMAL(10,4),
+    rater360_score DECIMAL(10,4),
+    total_score DECIMAL(10,4),
+    band_name VARCHAR(50),
+    comment_text VARCHAR(4000),
+    snapshot_json VARCHAR(4000),
+    -- 封存（sql/64）：seal_status 0 未封存 / 1 已封存；sealed_json 是封存那一刻的整份报告
+    seal_status INT DEFAULT 0 NOT NULL,
+    seal_time TIMESTAMP,
+    seal_by_loginid VARCHAR(50),
+    seal_by_name VARCHAR(50),
+    sealed_json CLOB,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS uf_assess_import_batch_item (
+CREATE TABLE IF NOT EXISTS uf_pa_sheet_item (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    batch_id BIGINT NOT NULL,
-    entity_type VARCHAR(20) NOT NULL,
-    entity_id BIGINT NOT NULL,
-    natural_key VARCHAR(300),
-    action VARCHAR(10) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    dimension_id BIGINT NOT NULL,
+    sheet_id BIGINT NOT NULL,
+    item_id BIGINT NOT NULL,
+    category_id BIGINT,
+    category_name VARCHAR(100),
+    item_code VARCHAR(50),
+    item_name VARCHAR(100),
+    definition VARCHAR(4000),
+    sort_no INT DEFAULT 0 NOT NULL,
+    weight DECIMAL(9,4),
+    rater_leader INT DEFAULT 0 NOT NULL,
+    rater_360 INT DEFAULT 0 NOT NULL,
+    rater_text VARCHAR(100),
+    leader_score DECIMAL(10,4),
+    rater360_score DECIMAL(10,4),
+    self_score DECIMAL(10,4),
+    item_score DECIMAL(10,4),
+    item_level_name VARCHAR(50),
+    rater360_count INT DEFAULT 0 NOT NULL
 );
 
--- 批次表（sql/28）：撤销要靠它反查批次所属维度，跨维度误删由此挡住
-CREATE TABLE IF NOT EXISTS uf_assess_import_run (
+CREATE TABLE IF NOT EXISTS uf_pa_rating (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    company_id BIGINT NOT NULL,
-    dimension_id BIGINT NULL,
-    year INT NULL,
-    session_id VARCHAR(64) NOT NULL,
-    file_path VARCHAR(400) NOT NULL,
-    file_name VARCHAR(200) NOT NULL,
-    user_rules VARCHAR(4000) NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
-    round_count INT NOT NULL DEFAULT 0,
-    transcript_json VARCHAR(4000) NULL,
-    outcome_json VARCHAR(4000) NULL,
-    draft_id BIGINT NULL,
-    result_json VARCHAR(4000) NULL,
-    fail_reason VARCHAR(500) NULL,
-    prompt_version VARCHAR(20) NOT NULL DEFAULT 'imp-v1',
-    created_by BIGINT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    dimension_id BIGINT NOT NULL,
+    sheet_id BIGINT NOT NULL,
+    item_id BIGINT NOT NULL,
+    rater_type VARCHAR(10) NOT NULL,
+    rater_resource_id BIGINT NOT NULL,
+    level_id BIGINT NOT NULL,
+    level_name VARCHAR(50),
+    score DECIMAL(6,2) NOT NULL,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT CK_pa_rating_type CHECK (rater_type IN ('SELF', 'LEADER', 'RATER360'))
+);
+
+-- 能力结构导入会话（sql/55）。生产是 NVARCHAR(MAX)，H2 用 VARCHAR 不限长
+CREATE TABLE IF NOT EXISTS uf_pa_import_session (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    session_key VARCHAR(64) NOT NULL,
+    dimension_id BIGINT NOT NULL,
+    resource_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    stage VARCHAR(100),
+    file_name VARCHAR(255),
+    file_size BIGINT,
+    payload VARCHAR,
+    mapping VARCHAR,
+    overview VARCHAR,
+    user_plan VARCHAR,
+    pending VARCHAR,
+    dialog VARCHAR,
+    preview VARCHAR,
+    result VARCHAR,
+    snapshot VARCHAR,
+    error VARCHAR(1000),
+    round_no INT DEFAULT 0 NOT NULL,
+    progress INT DEFAULT 0 NOT NULL,
+    create_by BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    expire_time TIMESTAMP NOT NULL
 );
 
 -- SQL Server 函数替身：生产 SQL 使用 SYSDATETIME()/ISNULL()，H2 无此函数（见 H2SqlServerFunctions）

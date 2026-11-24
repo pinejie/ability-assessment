@@ -20,27 +20,27 @@ import java.util.Set;
 public class MyBatisPlusConfig {
 
     /**
-     * 参与维度隔离的表（均已有 dimension_id 列，见 sql/15）。
+     * 参与维度隔离的表（均已有 dimension_id 列，见 sql/15、sql/50）。
      * 泛微钩子直接写入的子表（sheet_row/rating/log/comment）、维度表本身、
      * 平台表（Hrm*）与已废弃旧表不在清单内，不受租户拦截影响。
+     *
+     * <p>P3 起旧模型 12 张表已 DROP（sql/51），本清单只剩新模型 {@code uf_pa_*} +
+     * 年度表 {@code uf_assess_period}。写表名时别只改这里就以为完事：漏登记的表
+     * 不报错，只是查询不再按维度过滤 —— 跨维度能读到别人的数据。</p>
      */
     private static final Set<String> TENANT_TABLES = Set.of(
-            "uf_ability_category",
-            "uf_ability_element",
-            "uf_ability_element_level",
-            "uf_org_ability_req",
-            "uf_position_ability_req_new",
-            "uf_position_ability_req_item",
-            "uf_user_ability_req_new",
-            "uf_user_ability_req_item",
-            "uf_assess_weight_ability",
-            "uf_assess_weight_assessor",
-            "uf_assess_grade_level",
-            "uf_assess_level_score",
             "uf_assess_period",
-            "uf_assess_subject",
-            "uf_assess_subject_item",
-            "uf_assess_subject_client"
+            // 岗位能力模型（sql/50）
+            "uf_pa_post",
+            "uf_pa_category",
+            "uf_pa_item",
+            "uf_pa_item_level",
+            "uf_pa_band",
+            "uf_pa_sheet",
+            "uf_pa_sheet_item",
+            "uf_pa_rating",
+            // 能力结构导入会话（sql/55）
+            "uf_pa_import_session"
     );
 
     /**

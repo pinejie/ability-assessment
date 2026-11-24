@@ -130,6 +130,31 @@ class DimensionContextFilterTest {
     }
 
     @Test
+    @DisplayName("评价填写路径豁免：普通评价人没有维度授权也能打开自己的填写页")
+    void raterPathsSkipCheck() throws Exception {
+        login();
+        when(adminService.isAdmin("tester")).thenReturn(false);
+        // 评价人没有任何维度授权：若这里被拦，360 测评人一进页面就是 403
+        when(dimensionService.isAuthorizedForUser(anyLong(), anyLong())).thenReturn(false);
+
+        for (String uri : List.of(
+                "/api/v1/assess-fill/tok-old",
+                "/api/v1/pa/assess-fill/tok-new",
+                "/api/v1/pa/assess-tasks/mine",
+                "/api/v1/my-assess-tasks")) {
+            MockHttpServletRequest request = new MockHttpServletRequest("GET", uri);
+            request.addHeader(DimensionContextFilter.HEADER_DIMENSION_ID, "3");
+
+            filter.doFilterInternal(request, response, recordingChain());
+
+            assertTrue(chainCalled.get(), uri + " 应放行");
+            assertNull(contextDuringChain.get(), uri + " 不应写维度上下文");
+            assertEquals(200, response.getStatus(), uri);
+            chainCalled.set(false);
+        }
+    }
+
+    @Test
     @DisplayName("业务路径不豁免：零授权用户对兜底维度 1 的业务请求仍 403")
     void businessPathStillChecked() throws Exception {
         login();

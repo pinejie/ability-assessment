@@ -28,10 +28,23 @@ export const useUserStore = defineStore('user', () => {
     user.value = info
   }
 
+  /**
+   * 服务端确认不了身份时（/auth/me 失败）收掉管理员标记，只留姓名/部门用于展示。
+   * 为什么必须收：缓存里的 admin 是上一次登录的快照，撤销权限后若这次校验刚好失败，
+   * 缓存会一直放行管理员菜单（2026-11-23 维度管理员看到「维度设置」即此路径）。
+   * 降级只影响菜单，真实拦截始终在后端 requireAdmin。
+   */
+  const downgrade = () => {
+    if (!user.value) return
+    const stripped: CurrentUser = { ...user.value, admin: false, superAdmin: false }
+    setStoredUser(stripped)
+    user.value = stripped
+  }
+
   const clear = () => {
     clearAuth()
     user.value = null
   }
 
-  return { user, isAdmin, isSuperAdmin, login, refresh, clear }
+  return { user, isAdmin, isSuperAdmin, login, refresh, downgrade, clear }
 })

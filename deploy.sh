@@ -61,6 +61,18 @@ EOF
 
   log "构建后端 jar（跳过测试，测试请单独跑 ./deploy.sh --test）"
   (cd "$ROOT/backend" && "$MVN" -q package -DskipTests)
+
+  # 把产物复制成「服务实际运行的那一份」，并原子替换。
+  #
+  # 为什么服务跑的是 backend/app.jar 而不是 target/ 里那个：mvn package 是**原地截断重写**
+  # 同一个 inode，而 systemd 里正在跑的 JVM 还开着 target/ability-assessment-1.0.0.jar。
+  # 业务跑到某个尚未加载的内嵌类时（实测：导入链路里的 PaImportStructure$BandModel），
+  # JVM 回 jar 里读到的已是被改写过的字节，直接抛 NoClassDefFoundError —— 表现为
+  # 「明明没改那块代码，功能突然报类型不存在」，且只在那几十秒窗口里偶发。
+  # 服务改跑 app.jar 后，mvn 怎么写 target/ 都碰不到运行中的文件；
+  # 部署靠 cp + mv 原子替换，旧 JVM 继续持有旧 inode，重启后新进程打开新文件。
+  cp -f "$ROOT/backend/target/ability-assessment-1.0.0.jar" "$ROOT/backend/app.jar.new"
+  mv -f "$ROOT/backend/app.jar.new" "$ROOT/backend/app.jar"
 fi
 
 if [[ $BUILD_ONLY -eq 1 ]]; then
@@ -70,14 +82,16 @@ fi
 
 # 产物存在性检查：缺失就明确报错，不要含糊
 [[ -f "$ROOT/frontend/dist/index.html" ]] || { echo "❌ 缺少 frontend/dist/index.html，先跑 ./deploy.sh --build"; exit 1; }
-[[ -f "$ROOT/backend/target/ability-assessment-1.0.0.jar" ]] || { echo "❌ 缺少后端 jar，先跑 ./deploy.sh --build"; exit 1; }
+[[ -f "$ROOT/backend/app.jar" ]] || { echo "❌ 缺少 backend/app.jar，先跑 ./deploy.sh --build"; exit 1; }
 
 log "重启后端 ability-backend"
 systemctl --user restart ability-backend
 
 # 等后端真正起来（最多 90 秒），失败就打印日志并退出，别假装成功
 for i in $(seq 1 45); do
-  if curl -s -o /dev/null --max-time 2 http://127.0.0.1:8080/api/v1/ability/category/list; then
+  # 探活用真实存在的业务路径（/api/v1/ability/category/list 随 P3 退役）：
+  # curl 不带 --fail，401 也算「端口已通、应用已起」。
+  if curl -s -o /dev/null --max-time 2 http://127.0.0.1:8080/api/v1/pa/posts; then
     echo "   后端已就绪（${i}00ms 内）"
     break
   fi
@@ -107,7 +121,7 @@ check() { # $1=描述 $2=期望码 $3=url
 }
 check "首页"            200 "http://127.0.0.1:3000/"
 check "SSO 回调页深链"   200 "http://127.0.0.1:3000/sso/callback"
-check "接口鉴权生效"     401 "http://127.0.0.1:3000/api/v1/ability/category/list"
+check "接口鉴权生效"     401 "http://127.0.0.1:3000/api/v1/pa/posts"
 check "源码不可读"       404 "http://127.0.0.1:3000/src/main.ts"
 check "在线文档已关闭"   401 "http://127.0.0.1:8080/v3/api-docs"
 

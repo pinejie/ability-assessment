@@ -5,6 +5,7 @@ import type {
   AssessDimensionUpdateDTO,
   AssessDimensionAuthVO,
   DimensionAuthItemDTO,
+  DimensionScopeVO,
 } from '@/types/assessDimension'
 
 /**
@@ -54,4 +55,12 @@ export const listDimensionAuths = (id: number): Promise<AssessDimensionAuthVO[]>
  */
 export const saveDimensionAuths = (id: number, data: DimensionAuthItemDTO[]): Promise<void> => {
   return request.put(`/assess-dimensions/${id}/auths`, data)
+}
+
+/**
+ * 当前维度的组织范围（授权分部下的部门）。
+ * 维度取自请求头 X-Dimension-Id，由全局拦截器自动带上，这里不传参。
+ */
+export const getCurrentDimensionScope = (): Promise<DimensionScopeVO> => {
+  return request.get('/assess-dimensions/current-scope')
 }

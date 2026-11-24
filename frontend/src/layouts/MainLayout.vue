@@ -61,8 +61,11 @@
           <span class="breadcrumb-current">{{ currentPageTitle }}</span>
         </div>
         <div class="user-info">
-          <!-- 维度（类租户）切换：全站数据按所选维度隔离 -->
+          <!-- 维度（类租户）切换：全站数据按所选维度隔离。
+               免维度页（如「我的测评」）不显示：那页按登录人取数、跨维度合并，
+               顶上留一个改了也不影响内容的开关只会让人以为切换没生效。 -->
           <el-select
+            v-if="!noDimension"
             :model-value="dimensionStore.currentId"
             class="dimension-select"
             :placeholder="dimensionPlaceholder"
@@ -131,7 +134,8 @@ onMounted(() => {
     fetchCurrentUser()
       .then(info => userStore.refresh(info))
       .catch(() => {
-        /* 失败已由拦截器统一处理 */
+        /* 失败已由拦截器统一处理；这里再收掉缓存里的管理员标记，宁可不显示也不要错放行 */
+        userStore.downgrade()
       })
   }
 })
@@ -164,13 +168,18 @@ const handleDimensionChange = (id: number) => {
  * 内容门控（2026-10-22 语义）：未配置授权的租户仅管理员可见，
  * 普通用户可能「零租户」——此时用引导页替代业务页，不发任何带兜底维度的请求。
  * 公开页（SSO 回调/错误）与未登录调试态不受门控。
+ *
+ * 免维度页（meta.noDimension）同样免门控：它们只按登录身份取数，
+ * 本来就不需要维度，拿「无可访问租户」挡在前面等于把功能锁死
+ * （普通评价人往往一条维度授权都没有）。
  */
 const isLoggedIn = computed(() => !!getToken())
+const noDimension = computed(() => route.meta.noDimension === true)
 const contentReady = computed(
-  () => route.meta.public === true || !isLoggedIn.value || (dimensionStore.loaded && dimensionStore.dimensions.length > 0),
+  () => route.meta.public === true || noDimension.value || !isLoggedIn.value || (dimensionStore.loaded && dimensionStore.dimensions.length > 0),
 )
 const showNoDimensionGuidance = computed(
-  () => route.meta.public !== true && isLoggedIn.value && dimensionStore.loaded && dimensionStore.dimensions.length === 0,
+  () => route.meta.public !== true && !noDimension.value && isLoggedIn.value && dimensionStore.loaded && dimensionStore.dimensions.length === 0,
 )
 const dimensionPlaceholder = computed(() =>
   dimensionStore.loaded && dimensionStore.dimensions.length === 0 ? '无可访问租户' : '选择维度',
@@ -194,7 +203,8 @@ interface MenuGroup {
 }
 
 /**
- * 一级菜单分组（2026-11-16 改版）：原来的 14 项扁平列表按业务阶段归入 5 组，
+ * 一级菜单分组（2026-11-16 改版，2026-11-21 按方案 17 §7.5 收敛到 5 组）：
+ * 基础数据维护 / 人员配置 / 测评任务发起 / 测评报告 / 管理员设置。
  * 分组只影响展示层级，路由与权限判定不变。
  */
 const menuGroups: MenuGroup[] = [
@@ -203,12 +213,17 @@ const menuGroups: MenuGroup[] = [
     title: '基础数据维护',
     icon: '📚',
     children: [
-      { path: '/ability-categories', title: '能力类别管理', icon: '📋' },
-      { path: '/ability-elements', title: '能力要素管理', icon: '🎯' },
-      { path: '/assess-config', title: '能力测评管理', icon: '🧮' },
-      // { path: '/org-ability-reqs', title: '组织能力要求', icon: '🏢' },
-      { path: '/position-ability-reqs', title: '岗位能力要求', icon: '💼' },
-      { path: '/user-ability-reqs', title: '人员能力要求', icon: '👤' },
+      { path: '/pa-posts', title: '岗位管理', icon: '💼' },
+      { path: '/pa-models', title: '岗位能力模型', icon: '🧩' },
+      // 年度设置 2026-11-23 从「管理员设置」搬到这里：年度挂在维度上（表里带 dimension_id），
+      // 不是全站开关，维护权按维度给（该维度的管理员 + 系统管理员）。放在管理员设置里，
+      // 维度管理员会被 adminOnly 挡在门外，只能由系统管理员代劳。
+      { path: '/assess-periods', title: '年度设置', icon: '📅' },
+      // 能力结构导入 2026-11-23 从「管理员设置」搬到这里：它是基础数据（能力结构）的维护入口，
+      // 和岗位管理、模型配置是一类事。adminOnly 保留，非管理员仍然不显示。
+      { path: '/ability-structure-import', title: '能力结构导入', icon: '🧬', adminOnly: true },
+      // 旧模型存量菜单（能力类别 / 能力要素 / 能力测评管理 / 岗位能力要求 / 人员能力要求）
+      // 已于 2026-11-21 随方案 17 P3 整体删除：页面、路由、后端接口、旧表一并下线。
     ],
   },
   {
@@ -217,36 +232,25 @@ const menuGroups: MenuGroup[] = [
     icon: '📌',
     children: [
       // 「发起测评」不占菜单位（2026-11-14）：它是一次性动作，入口在「测评任务发起」页右上角。
-      // 路由仍然保留，直接访问 /assess-tasks 可用，只是侧边栏不出现、也不高亮任何项。
+      // 路由仍然保留，直接访问 /pa/assess-tasks 可用，只是侧边栏不出现、也不高亮任何项。
       // 「我的评价」不占菜单位（2026-11-17）：评价人从消息通知链接进入，路由 /my-assess-tasks 保留。
       // 该组只剩与组同名的这一项，于是组标题本身就是入口，不再展开子项。
-      { path: '/assess-task-manage', title: '测评任务发起', icon: '📌' },
+      { path: '/pa/assess-task-manage', title: '测评任务发起', icon: '📌' },
     ],
   },
   {
     key: 'summary',
-    title: '测评数据汇总',
+    title: '测评报告',
     icon: '📊',
-    children: [{ path: '/assess-sheets', title: '测评数据汇总', icon: '📊' }],
-  },
-  {
-    key: 'import',
-    title: '外部数据导入',
-    icon: '📥',
-    children: [
-      { path: '/external-scores', title: '外部评分导入', icon: '📥' },
-      { path: '/external-agent', title: '智能导入', icon: '🤖' },
-    ],
+    children: [{ path: '/assess-sheets', title: '测评报告', icon: '📊' }],
   },
   {
     key: 'admin',
     title: '管理员设置',
     icon: '⚙️',
     children: [
-      { path: '/assess-periods', title: '年度设置', icon: '📅' },
       { path: '/assess-dimensions', title: '维度设置', icon: '🏛', adminOnly: true },
       { path: '/assess-admins', title: '管理员配置', icon: '🛡️', superOnly: true },
-      { path: '/ability-structure-import', title: '能力结构导入', icon: '🧬', adminOnly: true },
     ],
   },
 ]
@@ -278,7 +282,12 @@ const isCollapsed = (key: string) => collapsedGroups.value.has(key)
 const headOf = (group: MenuGroup) => (group.children[0]?.title === group.title ? group.children[0] : undefined)
 const restOf = (group: MenuGroup) => (headOf(group) ? group.children.slice(1) : group.children)
 
-const currentPath = computed(() => route.path)
+/**
+ * 当前高亮的菜单路径。
+ * 子页面（如岗位能力模型详情 /pa-models/13）用路由 meta.activeMenu 指回列表页，
+ * 否则精确比较会让侧边栏一项都不亮、面包屑也退成「首页」。
+ */
+const currentPath = computed(() => (route.meta.activeMenu as string | undefined) || route.path)
 
 /**
  * 面包屑标题：先按菜单项查，查不到退回路由 meta.title。
@@ -287,13 +296,13 @@ const currentPath = computed(() => route.path)
  * 否则这类页面会顶着"首页"的标题，看起来像迷路了。
  */
 const currentPageTitle = computed(() => {
-  const item = menuGroups.flatMap(g => g.children).find(m => m.path === route.path)
+  const item = menuGroups.flatMap(g => g.children).find(m => m.path === currentPath.value)
   return item?.title || (route.meta.title as string | undefined) || '首页'
 })
 
 /** 当前路由所属的一级分组（面包屑用）；单页分组与页名同名时不重复显示 */
 const currentGroupTitle = computed(() => {
-  const group = menuGroups.find(g => g.children.some(m => m.path === route.path))
+  const group = menuGroups.find(g => g.children.some(m => m.path === currentPath.value))
   if (!group) return ''
   return group.title === currentPageTitle.value ? '' : group.title
 })

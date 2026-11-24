@@ -4,6 +4,7 @@
       v-model="searchKeyword"
       :placeholder="placeholder"
       @focus="handleFocus"
+      @click="handleFocus"
       @blur="handleBlur"
       @input="handleInput"
       @keydown="handleKeydown"
@@ -75,12 +76,15 @@ interface Props {
   modelValue?: number
   placeholder?: string
   maxRecent?: number
+  /** 选中后清空输入框，便于连续添加下一个人（默认保留人名，筛选框用） */
+  resetOnSelect?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: undefined,
   placeholder: '请选择或搜索人员',
-  maxRecent: 5
+  maxRecent: 5,
+  resetOnSelect: false
 })
 
 const emit = defineEmits<{
@@ -162,10 +166,16 @@ const searchResources = async (keyword: string) => {
   }
 }
 
-// 获取焦点
-const handleFocus = () => {
+// 展开下拉。选中人员后组件自己关闭了下拉，但输入框始终持有焦点，
+// 浏览器不会再补发 focus 事件；只监听 focus 会导致「选完一个人后再点输入框没反应」。
+const openDropdown = () => {
   dropdownVisible.value = true
   activeIndex.value = -1
+}
+
+// 获取焦点 / 点击输入框
+const handleFocus = () => {
+  openDropdown()
   const keyword = searchKeyword.value.trim()
   if (keyword) {
     searchResources(keyword)
@@ -183,9 +193,13 @@ const handleInput = () => {
 
   if (!keyword) {
     searchResults.value = []
+    // 清空关键字时保留下拉：最近记录还要能点选
+    openDropdown()
     return
   }
 
+  // 抖动期间先把下拉打开，否则结果回来了也看不见
+  openDropdown()
   searchTimer = setTimeout(() => {
     searchResources(keyword)
   }, 300)
@@ -251,11 +265,19 @@ const handleSelect = async (resource: Resource) => {
   saveToRecent(selectedResource)
   emit('update:modelValue', selectedResource.id)
   emit('change', selectedResource.id, selectedResource)
+
+  // 连续添加场景：选完立刻腾空输入框，光标还在框里，直接打下一个名字即可。
+  // 必须放在 emit 之后——父组件可能把 modelValue 复位成 undefined，watch 会再清一次，无害。
+  if (props.resetOnSelect) {
+    searchKeyword.value = ''
+  }
 }
 
 // 清空搜索框：通知父组件取消选择
 const handleClear = () => {
+  searchResults.value = []
   emit('update:modelValue', undefined)
+  openDropdown()
 }
 
 // 监听 modelValue 变化，更新显示

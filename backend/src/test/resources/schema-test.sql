@@ -156,9 +156,38 @@ CREATE TABLE IF NOT EXISTS uf_push_msg (
     pc_url VARCHAR(500),
     mobile_url VARCHAR(500),
     status TINYINT NOT NULL DEFAULT 0,
+    channel VARCHAR(32) NOT NULL DEFAULT 'weaver',
     last_error NVARCHAR(500),
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     sent_time TIMESTAMP
+);
+
+-- 维度集成配置（与 sql/66 对齐）：每个维度接哪套登录、消息往哪推
+CREATE TABLE IF NOT EXISTS uf_assess_dimension_integration (
+    dimension_id BIGINT PRIMARY KEY,
+    sso_enabled BIT NOT NULL DEFAULT 1,
+    sso_provider_type VARCHAR(32) NOT NULL,
+    sso_client_id VARCHAR(128) NOT NULL,
+    sso_client_secret VARCHAR(512) NOT NULL,
+    sso_base_url VARCHAR(500),
+    sso_authorize_url VARCHAR(500),
+    sso_token_url VARCHAR(500),
+    sso_profile_url VARCHAR(500),
+    sso_userinfo_field VARCHAR(64),
+    -- 第三方提供的参数（sql/70）：NULL = 没配过，取协议默认
+    sso_callback_param VARCHAR(32),
+    sso_token_method VARCHAR(8),
+    sso_profile_method VARCHAR(8),
+    sso_access_token_field VARCHAR(64),
+    sso_match_field VARCHAR(32) NOT NULL,
+    sso_redirect_path VARCHAR(200),
+    push_enabled BIT NOT NULL DEFAULT 1,
+    push_channel VARCHAR(32) NOT NULL,
+    push_agent_id VARCHAR(64),
+    push_secret VARCHAR(512),
+    push_extra_json VARCHAR(4000),
+    update_by BIGINT,
+    update_time TIMESTAMP
 );
 
 

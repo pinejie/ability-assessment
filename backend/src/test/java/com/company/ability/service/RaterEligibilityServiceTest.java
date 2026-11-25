@@ -42,8 +42,17 @@ class RaterEligibilityServiceTest {
     @Mock
     private JdbcTemplate jdbc;
 
+    @Mock
+    private DimensionIntegrationService integrationService;
+
     private RaterEligibilityService service() {
-        return new RaterEligibilityService(jdbc);
+        return service("loginid");
+    }
+
+    /** 指定本维度用哪个字段认人（loginid = 泛微口径，workcode = 其它系统口径） */
+    private RaterEligibilityService service(String matchField) {
+        when(integrationService.matchFieldOf(any())).thenReturn(matchField);
+        return new RaterEligibilityService(jdbc, new PersonStatusPolicy(integrationService));
     }
 
     // ==================== 判据 ====================
@@ -106,6 +115,34 @@ class RaterEligibilityServiceTest {
         assertThat(service().check(List.of(1L, 2L), null))
                 .extracting(Verdict::reason)
                 .containsExactly(Reason.NO_LOGINID, Reason.NO_LOGINID);
+    }
+
+    @Test
+    @DisplayName("维度按工号认人时，没有登录名但有工号的人可以参与（第一步不启用，第二步才放开的人群）")
+    void workcodeMatchedPersonWithoutLoginidIsEligible() {
+        stub(hrWithWorkcode(8106L, "周无账号", 1, null, "2024001"));
+
+        List<Verdict> v = service("workcode").check(List.of(8106L), null);
+
+        assertThat(v).singleElement().satisfies(x -> {
+            assertThat(x.eligible()).isTrue();
+            assertThat(x.reason()).isEqualTo(Reason.OK);
+        });
+    }
+
+    @Test
+    @DisplayName("维度按工号认人时，工号为空同样拒绝，且提示语说的是工号不是登录名")
+    void workcodeMatchedPersonWithoutWorkcodeIsRejected() {
+        stub(hrWithWorkcode(1L, "甲", 1, "haslogin", "   "));
+
+        List<Verdict> v = service("workcode").check(List.of(1L), null);
+
+        assertThat(v).singleElement().satisfies(x -> {
+            assertThat(x.eligible()).isFalse();
+            assertThat(x.reason()).isEqualTo(Reason.NO_LOGINID);
+            // 提示语必须说清缺的是哪一列，否则 HR 会去补错东西
+            assertThat(x.message()).contains("工号").doesNotContain("OA 登录名");
+        });
     }
 
     @Test
@@ -228,6 +265,14 @@ class RaterEligibilityServiceTest {
         m.put("lastname", name);
         m.put("status", status);
         m.put("loginid", loginid);
+        return m;
+    }
+
+    /** 带上工号的行：用于验证「维度改成按工号认人后，没登录名的人也能参与」 */
+    private static Map<String, Object> hrWithWorkcode(long id, String name, int status,
+                                                      String loginid, String workcode) {
+        Map<String, Object> m = hr(id, name, status, loginid);
+        m.put("workcode", workcode);
         return m;
     }
 }

@@ -83,9 +83,18 @@
             </template>
           </el-table-column>
           <el-table-column prop="sort" label="排序" width="80" />
-          <el-table-column label="操作" width="230" fixed="right">
+          <el-table-column label="操作" :width="userStore.isSuperAdmin ? 300 : 230" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="handleConfigAuth(row)">授权配置</el-button>
+              <!-- 集成配置里存着各系统的 client_secret，只有超管能看能改 -->
+              <el-button
+                v-if="userStore.isSuperAdmin"
+                link
+                type="primary"
+                @click="handleConfigIntegration(row)"
+              >
+                集成配置
+              </el-button>
               <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
               <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
             </template>
@@ -240,6 +249,14 @@
         <el-button type="primary" :loading="authSaving" @click="handleSaveAuths">保存授权</el-button>
       </template>
     </el-dialog>
+
+    <!-- 集成配置（单点登录 / 消息推送），仅超管可见 -->
+    <DimensionIntegrationDialog
+      v-if="userStore.isSuperAdmin && integrationTarget"
+      v-model="integrationDialogVisible"
+      :dimension-id="integrationTarget.id"
+      :dimension-name="integrationTarget.dimensionName"
+    />
   </div>
 </template>
 
@@ -248,6 +265,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import ResourceAutocomplete from '@/components/ResourceAutocomplete.vue'
+import DimensionIntegrationDialog from '@/components/DimensionIntegrationDialog.vue'
 import { listSubCompanyTree, type SubCompanyTreeNode } from '@/api/ecology'
 import {
   listAllDimensions,
@@ -265,6 +283,7 @@ import {
   type AssessDimensionAuthVO,
 } from '@/types/assessDimension'
 import { useDimensionStore } from '@/stores/dimension'
+import { useUserStore } from '@/stores/user'
 
 const dimensionList = ref<AssessDimensionVO[]>([])
 /**
@@ -281,6 +300,7 @@ const subCompanyTree = ref<SubCompanyTreeNode[]>([])
  */
 const treeProps = { label: 'name', children: 'children', disabled: 'disabled' }
 const dimensionStore = useDimensionStore()
+const userStore = useUserStore()
 
 const loadData = async () => {
   try {
@@ -508,6 +528,23 @@ watch(authSubcompanyIds, () => {
     authExcludedSubcompanyIds.value = next
   }
 }, { flush: 'sync' })
+
+// ==================== 集成配置 ====================
+
+const integrationDialogVisible = ref(false)
+/** 集成配置弹窗的目标维度；v-if 需要它非空才能渲染 */
+const integrationTarget = ref<AssessDimensionVO | null>(null)
+
+/**
+ * 打开集成配置弹窗。
+ *
+ * 弹窗自己负责拉数据，这里只记住目标维度 —— 列表行里没有集成信息，
+ * 也不该为了这个按钮给列表接口加联表查询。
+ */
+const handleConfigIntegration = (row: AssessDimensionVO) => {
+  integrationTarget.value = row
+  integrationDialogVisible.value = true
+}
 
 const handleConfigAuth = async (row: AssessDimensionVO) => {
   currentDimension.value = row

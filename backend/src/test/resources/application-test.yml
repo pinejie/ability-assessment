@@ -12,10 +12,16 @@ spring:
 
 assess:
   auth:
-    # 测试环境不配置 oa.sso.*，关闭强校验让 SsoConfigValidator 跳过（业务用例不依赖登录）
+    # 业务用例不依赖登录，关掉强校验让 SsoConfigValidator 跳过
+    # （它现在校验 jwt.secret / integration.master-key / fill-base-url / 至少一个可用维度）
     enforced: false
   # 测试用配置超管（AdminServiceTest / DimensionContextFilter 相关用例依赖）
   bootstrap-admins: boot-admin1,boot-admin2
+
+integration:
+  # 测试环境不给主密钥：维度配置里的密钥用明文（服务兼容手工填库的明文路径）
+  master-key:
+  provider-types-in-use: weaver
 
 mybatis-plus:
   configuration:

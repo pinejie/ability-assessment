@@ -7,6 +7,7 @@ import com.company.ability.dto.PaItemCreateDTO;
 import com.company.ability.dto.PaItemLevelDTO;
 import com.company.ability.dto.PaPostCreateDTO;
 import com.company.ability.security.LoginUser;
+import com.company.ability.service.DimensionIntegrationService;
 import com.company.ability.service.PaModelService;
 import com.company.ability.service.PaPostService;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -46,8 +47,16 @@ public final class PaTestData {
 
     private final JdbcTemplate jdbc;
 
+    /** 用于在种完配置后清缓存：集成配置是整表缓存的，测试改库不会自动生效 */
+    private final DimensionIntegrationService integrationService;
+
     public PaTestData(JdbcTemplate jdbc) {
+        this(jdbc, null);
+    }
+
+    public PaTestData(JdbcTemplate jdbc, DimensionIntegrationService integrationService) {
         this.jdbc = jdbc;
+        this.integrationService = integrationService;
     }
 
     /** 清空所有 uf_pa_* / 任务表 / 人员表，让每条用例从同一片干净土地开始 */
@@ -59,9 +68,37 @@ public final class PaTestData {
         }
         jdbc.update("DELETE FROM uf_assess_period");
         jdbc.update("DELETE FROM uf_assess_dimension_auth");
+        jdbc.update("DELETE FROM uf_assess_dimension_integration");
+        jdbc.update("DELETE FROM uf_assess_dimension");
         jdbc.update("DELETE FROM HrmDepartment");
         jdbc.update("DELETE FROM HrmResource");
         jdbc.update("DELETE FROM uf_push_msg");
+        seedIntegration();
+    }
+
+    /**
+     * 维度集成配置：推送渠道 = 泛微。
+     *
+     * <p>2026-11-24 起入队侧按维度配置的 {@code push_channel} 决定往哪推、维度没配就不入队
+     * （见 AssessPushService#resolveChannel）。测试库若没有这行配置，所有消息都会被跳过，
+     * 「应发 N 条」的断言全部变成 0 —— 所以它属于基础夹具，和人员数据一起准备。</p>
+     *
+     * <p>维度主表那行也要建：读配置的 SQL 与 {@code uf_assess_dimension} 内连，
+     * 只看集成表的话，缺维度行会让配置整行被过滤掉（表现为「配置写了却不生效」）。</p>
+     */
+    private void seedIntegration() {
+        jdbc.update("INSERT INTO uf_assess_dimension (id, dimension_name, dimension_code, status, sort, deleted)"
+                + " VALUES (?, '默认维度', 'DEFAULT', 1, 0, 0)", DIM);
+        // 密钥用明文：测试环境没配 integration.master-key，写 enc:v1: 前缀会解密失败。
+        // 服务本身兼容明文（手工填库调试路径），这里正好走那条分支。
+        jdbc.update("INSERT INTO uf_assess_dimension_integration (dimension_id, sso_enabled, sso_provider_type,"
+                        + " sso_client_id, sso_client_secret, sso_base_url, sso_userinfo_field, sso_match_field,"
+                        + " push_enabled, push_channel) VALUES (?, 1, 'weaver', ?, ?, ?, 'id', 'loginid', 1, 'weaver')",
+                DIM, "test-client", "test-secret", "http://oa.example.com");
+        // 配置是整表缓存的：上一条用例读过的快照会盖住这里刚插的行，必须清掉
+        if (integrationService != null) {
+            integrationService.invalidate();
+        }
     }
 
     /** 建部门 + 年度 + 人员。返回 periodId */

@@ -84,6 +84,9 @@ class PaImportApplierTest {
     private PaSheetItemMapper sheetItemMapper;
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private DimensionIntegrationService integrationService;
     @Autowired
     private PaPostService postService;
     @Autowired
@@ -392,7 +395,7 @@ class PaImportApplierTest {
     @Test
     @DisplayName("撤回进行中任务并重发后，旧任务记下 replaced_by_task_id")
     void relaunchBackfillsReplacementLink() {
-        PaTestData data = new PaTestData(jdbc);
+        PaTestData data = new PaTestData(jdbc, integrationService);
         data.reset();
         long periodId = data.seedPeriod(postService, 0);
         data.seedPeople();

@@ -132,7 +132,7 @@ public class AdminServiceImpl implements AdminService {
         }
         adminMapper.insert(admin);
         log.info("新增管理员: loginid={} 操作人={}", loginid,
-                operator == null ? "匿名" : operator.loginid());
+                operator == null ? "匿名" : operator.sessionId());
         return admin.getId();
     }
 
@@ -151,7 +151,7 @@ public class AdminServiceImpl implements AdminService {
         }
         adminMapper.deleteById(id);
         log.info("移除管理员: loginid={} 操作人={}", admin.getLoginid(),
-                operator == null ? "匿名" : operator.loginid());
+                operator == null ? "匿名" : operator.sessionId());
     }
 
     // ==================== 内部方法 ====================

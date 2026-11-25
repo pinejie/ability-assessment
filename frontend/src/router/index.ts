@@ -12,12 +12,15 @@ const routes: RouteRecordRaw[] = [
     redirect: '/pa-posts',
   },
   {
-    path: '/sso/callback',
+    path: '/sso/callback/:dimensionId(\\d+)?',
     name: 'SsoCallback',
     component: () => import('@/views/SsoCallback.vue'),
     // bare：SSO 过渡页必须整页自绘。不标的话它会被 App.vue 套进 MainLayout，
     // 移动端在换取 ticket 的两三秒里会看到完整的 PC 侧边栏 + 顶栏，
     // 直到 window.location.replace 二次引导完成才切走（2026-11-16 用户反馈）。
+    //
+    // 维度号可选：/sso/callback（旧链接，后端用默认维度）与 /sso/callback/3
+    // （新链接，指定维度）都要能落地。不带可选标记的话旧菜单地址会 404。
     meta: { public: true, bare: true },
   },
   {

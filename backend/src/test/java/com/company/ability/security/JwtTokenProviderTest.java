@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -28,6 +29,28 @@ class JwtTokenProviderTest {
         assertEquals(user.name(), parsed.name());
         assertEquals(user.departmentId(), parsed.departmentId());
         assertEquals(user.subcompanyId(), parsed.subcompanyId());
+    }
+
+    @Test
+    @DisplayName("按工号登录、没有登录名的人：subject 用工号，loginid 保持 null")
+    void workcodeLoginWithoutLoginid() {
+        LoginUser user = new LoginUser(null, "2024001", 8106L, "周无账号", 801L, 1L);
+
+        LoginUser parsed = provider.parse(provider.generate(user));
+
+        assertNull(parsed.loginid(), "没有泛微登录名时 loginid 必须为空，不能拿工号冒充");
+        assertEquals("2024001", parsed.sessionId());
+        assertEquals(8106L, parsed.resourceId());
+        assertEquals("周无账号", parsed.name());
+    }
+
+    @Test
+    @DisplayName("有登录名的人：subject 与 loginid 一致（保持改造前行为）")
+    void loginidLoginKeepsSubjectSame() {
+        LoginUser parsed = provider.parse(provider.generate(new LoginUser("yhm01", 3L, "用户", 2L, 5L)));
+
+        assertEquals("yhm01", parsed.sessionId());
+        assertEquals("yhm01", parsed.loginid());
     }
 
     @Test

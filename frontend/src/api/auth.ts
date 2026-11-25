@@ -2,7 +2,19 @@ import request from '@/utils/request'
 import type { CurrentUser, SsoCallbackPayload, SsoLoginResult } from '@/types/auth'
 
 /**
- * SSO 回调换登录态：提交泛微回传的 ticket/state，返回本系统 JWT 与用户信息
+ * 取该维度回调 URL 里票据的参数名（留空即为默认维度）。
+ *
+ * 泛微用 ticket，标准 OAuth2 用 code。接口取不到时返回空对象，调用方按
+ * 「依次试 ticket / code」兜底 —— 不能因为这一项挂了就让人登不进来。
+ */
+export const fetchSsoCallbackParam = (dimensionId?: number): Promise<{ param?: string }> => {
+  return request.get('/auth/sso/callback-param', {
+    params: dimensionId == null ? {} : { p: dimensionId },
+  })
+}
+
+/**
+ * SSO 回调换登录态：提交认证中心回传的票据与 state，返回本系统 JWT
  */
 export const ssoLoginCallback = (data: SsoCallbackPayload): Promise<SsoLoginResult> => {
   return request.post('/auth/sso/callback', data)

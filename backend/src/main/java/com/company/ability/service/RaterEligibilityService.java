@@ -22,20 +22,22 @@ import java.util.Set;
  * 这条链接从发出的那一刻就是死链 —— 消息照发、用户点开只看到 SSO 登录页，
  * 任务永远凑不齐人、永远算不出分，且没有任何地方报错。
  *
- * 判据必须与 {@code SsoLoginServiceImpl.loadActiveResource} 逐字对齐：
+ * 判据必须与 {@code SsoLoginServiceImpl.loadActiveResource} 对齐：
  * <pre>
- *   SELECT ... FROM HrmResource WHERE loginid = ? AND status IN (0,1,2,3)
+ *   SELECT ... FROM HrmResource WHERE &lt;match_field&gt; = ? AND status IN (0,1,2,3)
  * </pre>
- * 也就是说，一个「可评价的人」= <b>在岗（status 0/1/2/3）且 loginid 非空</b>。
+ * 也就是说，一个「可评价的人」= <b>在岗（status 0/1/2/3）且该维度的匹配字段非空</b>。
  *
- * 两处历史口径都错过：
+ * <p><b>2026-11-24 起匹配字段取自维度配置</b>（{@link PersonStatusPolicy}）：
+ * 泛微维度是 {@code loginid}，其它系统是 {@code workcode}。种子数据当前全配
+ * {@code loginid}，所以行为与改造前一致；某维度改成工号后，那个人群自动放开。</p>
+ *
+ * <p>两处历史口径都错过：</p>
  * <ul>
  *   <li>更早的 {@code status IN (0,1,2,3)} 只看状态不看 loginid，放过 1343 个
  *       「status=1 但没登录名」的人；</li>
  *   <li>2026-11-13 之前收紧成 {@code status = 1}，又把试用期/临时/试用延期共 238 人
- *       一并挡掉，与业务口径「只要在职就可以」不符。现已按业务口径放开状态，
- *       但 loginid 非空这条必须保留 —— 没有登录名的人泛微本身也鉴权不了，
- *       放宽它只会放进一批注定是死链的人。</li>
+ *       一并挡掉，与业务口径「只要在职就可以」不符。现已按业务口径放开状态。</li>
  * </ul>
  *
  * 统计口径见 {@code project/能力测评/16-发起侧人员校验.md}。
@@ -45,10 +47,11 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class RaterEligibilityService {
 
-    /** 与 {@code SsoLoginServiceImpl.ACTIVE_STATUSES} 保持一致：0=试用期 1=正式 2=临时 3=试用延期 */
-    private static final Set<Integer> ACTIVE_STATUSES = Set.of(0, 1, 2, 3);
+    /** 与 {@link PersonStatusPolicy#ACTIVE_STATUSES} 同源：0=试用期 1=正式 2=临时 3=试用延期 */
+    private static final Set<Integer> ACTIVE_STATUSES = PersonStatusPolicy.ACTIVE_STATUSES;
 
     private final JdbcTemplate jdbc;
+    private final PersonStatusPolicy personStatusPolicy;
 
     /**
      * 批量校验。一次 SQL 查完，避免 N 次往返；返回顺序与入参一致。
@@ -68,9 +71,13 @@ public class RaterEligibilityService {
         }
 
         String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        // 判据来自当前维度的集成配置：泛微维度比 loginid，其它系统比 workcode。
+        // 两列都查回来，判定时按配置挑一列看，省得为不同维度写两套 SQL。
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, lastname, status, loginid FROM HrmResource WHERE id IN (" + placeholders + ")",
+                "SELECT id, lastname, status, loginid, workcode FROM HrmResource WHERE id IN ("
+                        + placeholders + ")",
                 ids.toArray());
+        String matchField = personStatusPolicy.matchField();
 
         Map<Long, Map<String, Object>> byId = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
@@ -81,7 +88,7 @@ public class RaterEligibilityService {
         for (Long id : ids) {
             Map<String, Object> row = byId.get(id);
             String role = roleLabels == null ? null : roleLabels.get(id);
-            result.add(judge(id, row, role));
+            result.add(judge(id, row, role, matchField));
         }
         return result;
     }
@@ -99,22 +106,25 @@ public class RaterEligibilityService {
     }
 
     /**
-     * 单人判定。判据只有一条：status 属于在岗四态之一 且 loginid 非空。
+     * 单人判定。判据只有一条：status 属于在岗四态之一 且 该维度的匹配字段非空。
      * 其余分支都是为了给出**可操作的**原因，而不是笼统的「不可用」。
+     *
+     * @param matchField 本维度用哪个字段认人（{@code loginid} 或 {@code workcode}）
      */
-    private Verdict judge(long id, Map<String, Object> row, String role) {
+    private Verdict judge(long id, Map<String, Object> row, String role, String matchField) {
         if (row == null) {
             return new Verdict(id, null, role, false, Reason.NOT_FOUND,
                     "人员不存在（HrmResource 无此 ID）");
         }
         String name = row.get("lastname") == null ? null : String.valueOf(row.get("lastname")).trim();
         int status = (int) num(row.get("status"));
-        String loginid = row.get("loginid") == null ? "" : String.valueOf(row.get("loginid")).trim();
 
         if (ACTIVE_STATUSES.contains(status)) {
-            if (loginid.isEmpty()) {
+            if (!personStatusPolicy.hasIdentity(row, matchField)) {
+                // 提示语要说清缺的是哪一列：泛微维度缺登录名、工号维度缺工号，处理方式不同
                 return new Verdict(id, name, role, false, Reason.NO_LOGINID,
-                        "在岗但没有 OA 登录名，无法登录系统，请先在泛微中补齐登录名");
+                        "在岗但没有" + PersonStatusPolicy.fieldLabel(matchField)
+                                + "，无法登录系统，请先在泛微中补齐");
             }
             return new Verdict(id, name, role, true, Reason.OK, null);
         }

@@ -393,11 +393,13 @@ public class PaReportServiceImpl implements PaReportService {
             throw new BusinessException(ERR_SEAL_STATE, "封存失败：报告内容无法序列化，" + e.getMessage());
         }
 
+        // 封存人用 sessionId 而不是 loginid：这是操作留痕，按工号登录的人没有登录名，
+        // 留空等于丢失「谁封存的」这条信息。该列不参与权限判定，写工号不会造成越权。
         jdbc.update("UPDATE uf_pa_sheet SET seal_status = ?, seal_time = SYSDATETIME()," +
                         " seal_by_loginid = ?, seal_by_name = ?, sealed_json = ?, update_time = SYSDATETIME()" +
                         " WHERE id = ?",
-                SEALED, user.loginid(), user.name(), json, sheetId);
-        log.info("报告封存 sheetId={}, 操作人={}, 总得分={}", sheetId, user.loginid(), content.getTotalScore());
+                SEALED, user.sessionId(), user.name(), json, sheetId);
+        log.info("报告封存 sheetId={}, 操作人={}, 总得分={}", sheetId, user.sessionId(), content.getTotalScore());
         return content;
     }
 
@@ -424,7 +426,7 @@ public class PaReportServiceImpl implements PaReportService {
                         " seal_by_name = NULL, sealed_json = NULL, update_time = SYSDATETIME()" +
                         " WHERE id = ?",
                 sheetId);
-        log.info("报告解除封存 sheetId={}, 操作人={}", sheetId, user.loginid());
+        log.info("报告解除封存 sheetId={}, 操作人={}", sheetId, user.sessionId());
     }
 
     /** 封存权限：系统管理员，或本维度的维度管理员（与「能看测评人姓名」同一口径） */

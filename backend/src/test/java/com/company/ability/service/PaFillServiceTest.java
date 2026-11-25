@@ -54,6 +54,9 @@ class PaFillServiceTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private DimensionIntegrationService integrationService;
+
     private PaTestData data;
     private long periodId;
     private long postId;
@@ -67,7 +70,7 @@ class PaFillServiceTest {
 
     @BeforeEach
     void setUp() {
-        data = new PaTestData(jdbc);
+        data = new PaTestData(jdbc, integrationService);
         data.reset();
         periodId = data.seedPeriod(postService, 0);
         data.seedPeople();

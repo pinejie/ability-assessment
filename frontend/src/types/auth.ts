@@ -22,4 +22,9 @@ export interface SsoLoginResult {
 export interface SsoCallbackPayload {
   ticket: string
   state?: string
+  /**
+   * 维度 ID：从哪套配置发起的登录就用哪套配置兑换票据。
+   * 不传时后端用默认维度（兼容泛微门户里已经挂出去的旧链接）。
+   */
+  dimensionId?: number
 }

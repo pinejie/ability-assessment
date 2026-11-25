@@ -49,6 +49,9 @@ class PaRaterItemAssignTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private DimensionIntegrationService integrationService;
+
     private PaTestData data;
     private long postId;
     private long item360a;
@@ -57,7 +60,7 @@ class PaRaterItemAssignTest {
 
     @BeforeEach
     void setUp() {
-        data = new PaTestData(jdbc);
+        data = new PaTestData(jdbc, integrationService);
         data.reset();
         data.seedPeriod(postService, 0);
         data.seedPeople();

@@ -6,6 +6,9 @@ import type {
   AssessDimensionAuthVO,
   DimensionAuthItemDTO,
   DimensionScopeVO,
+  DimensionIntegrationVO,
+  DimensionIntegrationSaveDTO,
+  IntegrationOptions,
 } from '@/types/assessDimension'
 
 /**
@@ -63,4 +66,44 @@ export const saveDimensionAuths = (id: number, data: DimensionAuthItemDTO[]): Pr
  */
 export const getCurrentDimensionScope = (): Promise<DimensionScopeVO> => {
   return request.get('/assess-dimensions/current-scope')
+}
+
+// ==================== 集成配置（单点登录 + 消息推送，仅超管） ====================
+
+/**
+ * 读取某维度的集成配置。未配置的维度返回默认值空壳，不会 404。
+ */
+export const getDimensionIntegration = (id: number): Promise<DimensionIntegrationVO> => {
+  return request.get(`/assess-dimensions/${id}/integration`)
+}
+
+/**
+ * 保存某维度的集成配置。
+ * 密钥字段传 SECRET_MASK 表示不修改，传空串表示清空，传新值表示覆盖。
+ */
+export const saveDimensionIntegration = (
+  id: number,
+  data: DimensionIntegrationSaveDTO
+): Promise<void> => {
+  return request.put(`/assess-dimensions/${id}/integration`, data)
+}
+
+/**
+ * 集成配置的可选项（协议类型 / 匹配字段 / 推送渠道）
+ */
+export const getIntegrationOptions = (): Promise<IntegrationOptions> => {
+  return request.get('/assess-dimensions/integration-options')
+}
+
+/**
+ * 按需取一次已保存密钥的明文（仅超管）。
+ *
+ * <p>单独一个接口是为了让「打开配置页」不产生明文流量 —— 只有点了「查看」才取。
+ * 服务端每次调用都会记一条日志（谁、哪个维度、哪个字段，不记值）。</p>
+ */
+export const revealDimensionSecret = (
+  id: number,
+  field: 'sso_client_secret' | 'push_secret'
+): Promise<string> => {
+  return request.post(`/assess-dimensions/${id}/integration/secret`, { field })
 }

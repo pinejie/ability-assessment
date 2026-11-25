@@ -3,7 +3,7 @@
     <div class="callback-card">
       <template v-if="!errorMessage">
         <div class="spinner" />
-        <p class="hint">正在通过泛微统一认证登录，请稍候…</p>
+        <p class="hint">正在登录，请稍候…</p>
       </template>
       <template v-else>
         <h2 class="error-title">单点登录失败</h2>
@@ -19,24 +19,56 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ssoLoginCallback } from '@/api/auth'
+import { fetchSsoCallbackParam, ssoLoginCallback } from '@/api/auth'
 import { useUserStore } from '@/stores/user'
-import { redirectToSsoLogin } from '@/utils/auth'
+import { redirectToSsoLogin, resolveDimensionId } from '@/utils/auth'
+
+/** 票据参数名的兜底候选：泛微用 ticket，标准 OAuth2 用 code */
+const FALLBACK_PARAMS = ['ticket', 'code']
 
 const route = useRoute()
 const userStore = useUserStore()
 const errorMessage = ref('')
 
+/**
+ * 从回调 URL 里取票据。
+ *
+ * <p>参数名由维度配置决定（泛微 ticket / 标准 OAuth2 code），所以先向服务端问一句。
+ * 接口挂了或这个维度还没配，就依次试 {@link FALLBACK_PARAMS} —— 泛微门户里挂出去的
+ * 旧链接不带维度号，这条路径必须还能登进来，不能因为多了一次请求反而变脆。</p>
+ */
+const resolveTicket = async (dimensionId?: number): Promise<{ ticket: string; paramName: string }> => {
+  const picked: string[] = []
+  try {
+    const { param } = await fetchSsoCallbackParam(dimensionId)
+    if (param) picked.push(param)
+  } catch {
+    // 接口不通就只走兜底候选，不阻断登录
+  }
+  for (const name of FALLBACK_PARAMS) {
+    if (!picked.includes(name)) picked.push(name)
+  }
+  for (const name of picked) {
+    const value = route.query[name]
+    if (value) return { ticket: String(value), paramName: name }
+  }
+  return { ticket: '', paramName: picked.join(' / ') }
+}
+
 onMounted(async () => {
-  // 泛微 authorize 成功回调时以 ticket 参数携带临时授权码（60 秒一次有效，须立即换取）
-  const ticket = String(route.query.ticket ?? '')
   const state = route.query.state ? String(route.query.state) : undefined
+  // 维度号：从回调地址读，读不到就不传（后端按默认维度处理）。
+  // state 里其实已经带了服务端记下的维度号，但那是给「用户从哪个入口发起」用的；
+  // 这里再传一次是为了让直链 authorize（无 state）的场景也能落到正确配置。
+  const dimensionId = resolveDimensionId(route.path, window.location.search)
+
+  const { ticket, paramName } = await resolveTicket(dimensionId)
   if (!ticket) {
-    errorMessage.value = '回调地址缺少 ticket 参数，无法完成登录'
+    errorMessage.value = `回调地址缺少票据参数（${paramName}），无法完成登录`
     return
   }
   try {
-    const result = await ssoLoginCallback({ ticket, state })
+    const result = await ssoLoginCallback({ ticket, state, dimensionId })
     userStore.login(result.token, result.user)
     // 整页跳转（而非 router.replace）：让布局按新登录态完整初始化
     const redirect = result.redirect && result.redirect.startsWith('/') ? result.redirect : '/'

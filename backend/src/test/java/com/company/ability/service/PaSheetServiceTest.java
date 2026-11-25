@@ -46,13 +46,16 @@ class PaSheetServiceTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private DimensionIntegrationService integrationService;
+
     private PaTestData data;
     private long periodId;
     private long postId;
 
     @BeforeEach
     void setUp() {
-        data = new PaTestData(jdbc);
+        data = new PaTestData(jdbc, integrationService);
         data.reset();
         periodId = data.seedPeriod(postService, 0);
         data.seedPeople();
@@ -126,9 +129,13 @@ class PaSheetServiceTest {
         long item = data.item(modelService, postId, cat, "沟通能力", "100", 1, 1);
 
         PaSheet first = sheetService.prepare(PaTestData.YEAR, PaTestData.TARGET, postId);
-        // 造一个「上一轮已算完」的状态：重发必须把它清干净，否则新一轮会是旧分 + 新评级的混合体
+        // 造一个「上一轮已算完」的状态：重发必须把它清干净，否则新一轮会是旧分 + 新评级的混合体。
+        // 封存字段一并写上（seal_status 仍是 0，即 sql/64 之前遗留的异常组合）：
+        // 重发要把它们全清空，其中 seal_time 是 datetime2，空值不能走参数绑定
+        // （SQL Server 驱动会按 varbinary 下发直接报错，见 PaSheetServiceImpl 的 setSql）。
         jdbc.update("UPDATE uf_pa_sheet SET status = 2, total_score = 4.5, band_name = '优秀'," +
-                " comment_text = '上一轮评语' WHERE id = ?", first.getId());
+                " comment_text = '上一轮评语', seal_time = CURRENT_TIMESTAMP," +
+                " seal_by_loginid = 'old', seal_by_name = '旧封存人' WHERE id = ?", first.getId());
 
         PaSheet second = sheetService.prepare(PaTestData.YEAR, PaTestData.TARGET, postId);
 
@@ -138,6 +145,13 @@ class PaSheetServiceTest {
         assertNull(second.getTotalScore());
         assertNull(second.getBandName());
         assertNull(second.getCommentText());
+        Map<String, Object> seal = jdbc.queryForMap(
+                "SELECT seal_status, seal_time, seal_by_loginid, seal_by_name FROM uf_pa_sheet WHERE id = ?",
+                first.getId());
+        assertEquals(0, ((Number) seal.get("seal_status")).intValue());
+        assertNull(seal.get("seal_time"), "上一轮的封存时间要清空");
+        assertNull(seal.get("seal_by_loginid"));
+        assertNull(seal.get("seal_by_name"));
         assertEquals(1, count("SELECT COUNT(*) FROM uf_pa_sheet_item WHERE sheet_id = " + first.getId()),
                 "行要重建而不是累加");
     }

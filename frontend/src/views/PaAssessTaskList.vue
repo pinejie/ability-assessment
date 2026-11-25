@@ -16,6 +16,25 @@
     </div>
 
     <el-card class="form-card">
+      <!--
+        重新发起（2026-11-25）：从「测评任务发起」列表的已撤回行点进来时，
+        把原任务的年度/被测人/岗位/360 名单带出来。这里给一条横幅说明此刻在做什么，
+        否则用户看到一份填好的表单，会分不清「这是新发起」还是「在重发那条撤回的」。
+      -->
+      <el-alert
+        v-if="relaunchTaskId"
+        class="relaunch-alert"
+        type="info"
+        :closable="false"
+        show-icon
+        :title="`正在按任务 #${relaunchTaskId} 重新发起`"
+        :description="relaunchDescription"
+      >
+        <ul v-if="relaunchWarnings.length" class="relaunch-warnings">
+          <li v-for="(w, i) in relaunchWarnings" :key="i">{{ w }}</li>
+        </ul>
+      </el-alert>
+
       <el-form :model="form" label-width="120px" :disabled="creating">
         <el-form-item label="年度" required>
           <el-select v-model="form.year" placeholder="选择年度" style="width: 220px" @change="onYearChange">
@@ -206,6 +225,10 @@
           <el-button type="primary" :loading="creating" :disabled="!canSubmit" @click="submit">
             发起测评
           </el-button>
+          <!-- 重新发起时按钮文案要说清楚这次发的是新的一条，不是把旧任务复活 -->
+          <span v-if="relaunchTaskId" class="form-hint">
+            将新建一条任务，原任务 #{{ relaunchTaskId }} 保持「已撤回」
+          </span>
           <span v-if="leader && !leader.leaderResourceId" class="form-hint form-hint-warn">
             没有直接上级无法发起
           </span>
@@ -282,14 +305,28 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { createPaTask, getPaLeader, getPaPost, precheckPaTask } from '@/api/paTask'
+import {
+  createPaTask,
+  getPaLeader,
+  getPaPost,
+  getPaRelaunchDraft,
+  precheckPaTask,
+  relaunchPaTask,
+} from '@/api/paTask'
 import { listPeriods } from '@/api/assessPeriod'
 import { listPaPosts } from '@/api/paPost'
 import { getCurrentDimensionScope } from '@/api/assessDimension'
 import request from '@/utils/request'
-import type { PaLeaderInfo, PaPostInfo, PaPrecheckResult, PaTaskCreateResult } from '@/types/paTask'
+import type {
+  PaLeaderInfo,
+  PaPostInfo,
+  PaPrecheckResult,
+  PaRelaunchDraft,
+  PaRelaunchPerson,
+  PaTaskCreateResult,
+} from '@/types/paTask'
 import type { PaPostVO } from '@/types/paPost'
 import type { PeriodItem } from '@/types/common'
 
@@ -305,6 +342,27 @@ interface ResourceOption {
 const RATER_TYPE_NAMES: Record<string, string> = { SELF: '自评', LEADER: '直接上级', RATER360: '360 测评人' }
 
 const router = useRouter()
+const route = useRoute()
+
+/**
+ * 重新发起：从列表页带过来的原任务号（`?fromTask=123`）。
+ *
+ * <p>有它时页面在加载完之后去读预填数据，把原任务的年度/被测人/岗位/360 名单摆出来；
+ * 没有它就是普通的「发起测评」，行为与从前完全一致。
+ * 真正提交时走 `POST /{id}/relaunch`，让后端回填「旧任务被谁替代」。</p>
+ */
+const relaunchTaskId = ref<number | null>(null)
+/** 原配置里带不出来的部分，后端用中文说明，原样展示 */
+const relaunchWarnings = ref<string[]>([])
+/** 原任务已被重新发起过时的新任务号 */
+const relaunchReplacedBy = ref<number | null>(null)
+
+const relaunchDescription = computed(() => {
+  const base = '下面已按原任务填好，可直接发起；要改哪一项都可以改。'
+  return relaunchReplacedBy.value
+    ? `${base}注意：这条任务此前已经被重新发起过一次（新任务 #${relaunchReplacedBy.value}）。`
+    : base
+})
 
 const periods = ref<PeriodItem[]>([])
 
@@ -801,19 +859,34 @@ const submit = async () => {
       return
     }
 
-    result.value = await createPaTask({
+    const payload = {
       year: form.year,
       resourceId: form.resourceId,
       postId: form.postId,
       rater360Items: items,
       // 不传 remark：发起页已撤掉输入框（2026-11-24），后端收到 null 就不写。
       // 自动重发那条备注由后端自己写，与这里无关。
-    })
+    }
+    // 重新发起走 /{id}/relaunch：它复用同一套 create 校验，另外回填「旧任务被谁替代」，
+    // 列表上才看得出前后两条是一回事（否则旧行状态 4、新行状态 0，像两条无关的任务）。
+    const taskId = relaunchTaskId.value
+    result.value = taskId
+      ? await relaunchPaTask(taskId, payload)
+      : await createPaTask(payload)
     ElMessage.success(
       allRaterIds.length
         ? `任务已发起，${allRaterIds.length} 位 360 测评人分别收到自己的链接`
         : '任务已发起'
     )
+    // 发出去之后这条横幅就没意义了：再说「按任务 #N 重新发起」会让人以为又要发一次
+    relaunchTaskId.value = null
+    relaunchWarnings.value = []
+    relaunchReplacedBy.value = null
+    // 地址上的 fromTask 也要抹掉：留着它，刷新一下又会按原任务重新预填一遍，
+    // 而那条任务此刻已经重新发起过了，看起来就像「没发成功」
+    if (route.query.fromTask) {
+      void router.replace({ path: '/pa/assess-tasks' })
+    }
   } finally {
     creating.value = false
   }
@@ -853,8 +926,111 @@ const loadScope = async () => {
   }
 }
 
+/**
+ * 重新发起：把原任务当初的配置回填到表单（2026-11-25）。
+ *
+ * <p><b>回填顺序不能乱</b>：先年度 → 再被测人（会带出上级、定下部门）→ 再岗位
+ * （岗位候选正是按部门收窄的）→ 最后逐项 360。反过来做，中途每一个 on*Change
+ * 都会把刚填好的值清掉（这是那几处「换人清岗位」的保护逻辑在起作用，
+ * 不该为了回填去改它）。</p>
+ *
+ * <p><b>带不出来的不猜</b>：年度已关闭 / 岗位已停用时后端不回这两个值，
+ * 这里就留空让人重选 —— 猜一个值填上去，用户会以为原样重发成功。</p>
+ */
+const loadRelaunchDraft = async (taskId: number) => {
+  let draft: PaRelaunchDraft
+  try {
+    draft = await getPaRelaunchDraft(taskId)
+  } catch {
+    // 接口层已弹过提示（跨维度 / 非已撤回 / 不存在），这里把参数抹掉，
+    // 免得用户刷新后还挂着一个读不出来的 fromTask
+    void router.replace({ path: '/pa/assess-tasks' })
+    return
+  }
+  relaunchTaskId.value = taskId
+  relaunchWarnings.value = draft.warnings ?? []
+  relaunchReplacedBy.value = draft.replacedByTaskId ?? null
+
+  // 人名缓存：remote 下拉只渲染当次搜索结果，预填进来的人不在结果里，
+  // 不塞进 knownPeople 的话标签会显示成裸数字
+  const rememberDraftPeople = (people: PaRelaunchPerson[] | null | undefined) => {
+    (people ?? []).forEach(p => {
+      if (!p.name) {
+        return
+      }
+      knownPeople.value.set(p.resourceId, {
+        id: p.resourceId,
+        lastname: p.name,
+        departmentId: p.departmentId ?? undefined,
+        departmentName: p.departmentName ?? undefined,
+        companyName: p.companyName ?? undefined,
+      })
+    })
+  }
+  rememberDraftPeople([draft.target].filter((p): p is PaRelaunchPerson => p != null))
+  rememberDraftPeople(draft.rater360People)
+
+  // ① 年度：后端只在不关闭时给值
+  if (draft.year != null) {
+    form.year = draft.year
+  }
+
+  // ② 被测人：先把候选塞进去，再赋值并走一遍 onTargetChange（带出上级、定下部门）
+  if (draft.target) {
+    const target: ResourceOption = {
+      id: draft.target.resourceId,
+      lastname: draft.target.name ?? draft.targetName ?? String(draft.resourceId),
+      departmentId: draft.target.departmentId ?? undefined,
+      departmentName: draft.target.departmentName ?? undefined,
+      companyName: draft.target.companyName ?? undefined,
+    }
+    resourceOptions.value = [target]
+    form.resourceId = target.id
+    await onTargetChange(target.id)
+  }
+
+  // ③ 岗位：停用/删除的岗位后端不给值，这里就不选
+  if (draft.postId != null) {
+    // 用 postChoices（页面真正列出来的候选）判断，而不是 postOptions：
+    // 岗位还在、但被测人所属部门已经变了时，它不会出现在这个部门的候选里，
+    // 直接赋上去下拉只会显示一个裸 ID，提交也会被后端以「岗位与部门不一致」拒绝。
+    if (!postChoices.value.some(p => p.id === draft.postId)) {
+      relaunchWarnings.value = [
+        ...relaunchWarnings.value,
+        `原任务的岗位「${draft.postName ?? draft.postId}」已不在可选范围（岗位已停用，或被测人现在所属部门与该岗位的部门不一致），请重新选择`,
+      ]
+    } else {
+      form.postId = draft.postId
+      // onPostChange 会按岗位重铺 360 行（并清空名单），所以必须等它跑完再填人
+      await onPostChange(draft.postId)
+    }
+  }
+
+  // ④ 逐项 360：按项 ID 把人填回对应的行；项已经不在页面上的不再处理（后端已说明）
+  const byItem = new Map((draft.rater360Items ?? []).map(i => [i.itemId, i]))
+  rater360Rows.value = rater360Rows.value.map(row => {
+    const hit = byItem.get(row.itemId)
+    return hit ? { ...row, resourceIds: hit.people.map(p => p.resourceId) } : row
+  })
+  if (draft.legacyAllItems && draft.rater360People.length > 0) {
+    // 老口径（这批人评全部 360 项）：每一项都勾上同一批人，与当时的行为一致
+    const everyone = draft.rater360People.map(p => p.resourceId)
+    rater360Rows.value = rater360Rows.value.map(row => ({ ...row, resourceIds: [...everyone] }))
+  }
+  if (draft.rater360Items?.length) {
+    // 预填之后把搜索词清掉：留着上一轮的词会让下拉显示「没有匹配的人员」
+    raterKeyword.value = ''
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadPeriods(), loadPosts(), loadScope()])
+  // 预填要等年度/岗位/授权范围都就绪：岗位候选按部门过滤、人员候选按授权收窄，
+  // 提前塞进去的值会被随后的加载覆盖掉。
+  const fromTask = Number(route.query.fromTask)
+  if (Number.isFinite(fromTask) && fromTask > 0) {
+    await loadRelaunchDraft(fromTask)
+  }
 })
 </script>
 
@@ -967,5 +1143,17 @@ onMounted(async () => {
 .rater360-empty-hint {
   font-size: 13px;
   color: #86909c;
+}
+
+/* 重新发起横幅（2026-11-25）：横幅本身说明「此刻在做什么」，带不出来的项列在下面 */
+.relaunch-alert {
+  margin-bottom: 18px;
+}
+
+.relaunch-warnings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
 }
 </style>

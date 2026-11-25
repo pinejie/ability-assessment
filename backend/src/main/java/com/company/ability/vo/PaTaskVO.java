@@ -269,6 +269,77 @@ public class PaTaskVO {
         private String message;
     }
 
+    /**
+     * 重新发起的预填数据（2026-11-25）：把已撤回任务当初选的东西读回来，供发起页回填。
+     *
+     * <p><b>为什么要有这个接口，而不是让页面读任务详情再自己拼</b>：详情里有年度、被测人、
+     * 岗位名，但<b>没有 360 名单</b>（任务表只存了人数快照），更没有「谁评哪几项」
+     * （在 uf_assess_task_rater_item 里）。让页面自己拼就得再加两个接口，
+     * 或者让页面拿人名去反查 —— 而人一旦离职/改名就查不回来了。</p>
+     *
+     * <p><b>这里只回「原任务当初是什么」，不判断「现在还能不能用」</b>：哪些项已经不可用、
+     * 年度是否已关闭、岗位是否已停用，都由 {@link #warnings} 用中文说出来，
+     * 由人决定改哪一项。后端不替人做决定，也不悄悄丢掉带不出来的部分 ——
+     * 丢了不说，用户会以为「按原样重新发起了」，发出去却是缺人的。</p>
+     */
+    @Data
+    public static class RelaunchDraft {
+        /** 原任务 id（提示语里要显示「按任务 #N 重新发起」） */
+        private Long taskId;
+        private Long sheetId;
+        /** 原任务的年度；年度不存在的极端情况为 null（页面由人重选） */
+        private Integer year;
+        private Long resourceId;
+        private String targetName;
+        /**
+         * 被测人（姓名 + 组织信息）。页面要把它塞进人员下拉的候选项里：
+         * remote 下拉只渲染当次搜索结果，预填进来的 ID 没有对应 option，
+         * 标签就会退化成裸数字。
+         */
+        private RelaunchPerson target;
+        /** 被测人当前所在部门（页面用它来收窄岗位候选；与旧任务快照可能不同） */
+        private Long departmentId;
+        private Long postId;
+        private String postName;
+        /** 原任务的「按项指派」；老任务（本表无行）回退成「这些人评全部 360 项」 */
+        private List<RelaunchRaterItem> rater360Items;
+        /** 360 名单（去重后的人，按项指派为空时页面仍能显示要带出谁） */
+        private List<RelaunchPerson> rater360People;
+        /**
+         * 原任务当初用的 360 名单是否来自「旧口径」（这批人评全部 360 项）。
+         *
+         * <p>页面据此把同一个人在每一项上都勾上 —— 而不是只勾在某几项里，
+         * 那会把「当时这批人评了全部项」改写成另一件事。</p>
+         */
+        private Boolean legacyAllItems;
+        /** 提示：原配置里哪些东西已经不能原样带出，或带出来需要人确认 */
+        private List<String> warnings;
+        /** 原任务是否已经被重新发起过；是的话页面提示一句，避免重复发起 */
+        private Long replacedByTaskId;
+    }
+
+    /** 重新发起预填：一条「谁评这一项」 */
+    @Data
+    public static class RelaunchRaterItem {
+        private Long itemId;
+        private String itemName;
+        private String categoryName;
+        private String raterText;
+        /** 这一项现在是否仍可指派 360（项还在、仍是启用、仍配了 360 主体） */
+        private Boolean usable;
+        private List<RelaunchPerson> people;
+    }
+
+    /** 重新发起预填：一个人（页面显示「姓名（公司·部门）」，不能显示裸 ID） */
+    @Data
+    public static class RelaunchPerson {
+        private Long resourceId;
+        private String name;
+        private Long departmentId;
+        private String departmentName;
+        private String companyName;
+    }
+
     /** 重算结果 */
     @Data
     public static class RetryResult {

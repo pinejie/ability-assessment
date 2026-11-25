@@ -119,6 +119,61 @@ export interface PaRater360Item {
 /** 预检只关心「人能不能登录」，与岗位无关，所以不带 postId */
 export type PaTaskPrecheckRequest = Omit<PaTaskCreateRequest, 'remark' | 'postId'>
 
+// ==================== 重新发起（2026-11-25） ====================
+
+/**
+ * 重新发起的预填数据：已撤回任务当初选了什么，原样带回来。
+ *
+ * <p>带不出来的部分（年度已关闭、岗位已停用、能力项被删、人已不在人员表）
+ * 不会静默丢掉，后端会在 `warnings` 里用中文说明，页面必须原样列给人看 ——
+ * 否则用户会以为「按原样发起了」，发出去却是缺人的。
+ */
+export interface PaRelaunchDraft {
+  taskId: number
+  sheetId: number | null
+  /** 原任务的年度；年度已关闭时为 null（页面由人重选） */
+  year: number | null
+  resourceId: number
+  targetName: string | null
+  /** 被测人的姓名与组织，页面要塞进人员下拉候选里（否则标签显示成裸 ID） */
+  target: PaRelaunchPerson | null
+  /** 被测人当前所在部门；岗位候选据此收窄 */
+  departmentId: number | null
+  /** 原任务岗位；已停用/已删除时为 null */
+  postId: number | null
+  postName: string | null
+  /** 按项指派的 360 名单（只含当前仍可指派 360 的项） */
+  rater360Items: PaRelaunchRaterItem[]
+  /** 原任务的 360 名单（人名 + 组织），用于下拉里把名字显示出来 */
+  rater360People: PaRelaunchPerson[]
+  /**
+   * 原任务当初的口径是否是「这批人评全部 360 项」。
+   * 老任务（uf_assess_task_rater_item 无行）为 true，页面把同一个人勾在每一项上。
+   */
+  legacyAllItems: boolean
+  /** 原配置里哪些东西带不出来 / 需要人确认，中文，直接展示 */
+  warnings: string[]
+  /** 原任务已被重新发起过时，新任务号；页面提示一句避免重复发起 */
+  replacedByTaskId: number | null
+}
+
+export interface PaRelaunchRaterItem {
+  itemId: number
+  itemName: string
+  categoryName: string | null
+  raterText: string | null
+  usable: boolean
+  people: PaRelaunchPerson[]
+}
+
+export interface PaRelaunchPerson {
+  resourceId: number
+  name: string | null
+  departmentId: number | null
+  departmentName: string | null
+  companyName: string | null
+}
+
 // ==================== 填写 ====================
 
 export interface PaItemLevelVO {

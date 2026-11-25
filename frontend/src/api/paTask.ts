@@ -8,6 +8,7 @@ import type {
   PaMyTaskItem,
   PaPostInfo,
   PaPrecheckResult,
+  PaRelaunchDraft,
   PaTaskCreateRequest,
   PaTaskCreateResult,
   PaTaskDeleteResult,
@@ -106,6 +107,20 @@ export const retryPaTask = (id: number): Promise<PaTaskRetryResult> =>
 /** 删除任务（仅已撤回可用）；测评页保留 */
 export const deletePaTask = (id: number): Promise<PaTaskDeleteResult> =>
   request.delete(`/pa/assess-tasks/${id}`)
+
+/**
+ * 重新发起的预填数据（仅已撤回任务）：年度/被测人/岗位/360 按项名单。
+ * 带不出来的部分在 warnings 里，页面必须原样展示。
+ */
+export const getPaRelaunchDraft = (id: number): Promise<PaRelaunchDraft> =>
+  request.get(`/pa/assess-tasks/${id}/relaunch-draft`)
+
+/**
+ * 按原任务重新发起：请求体就是发起页那一份（可能被改过），
+ * 后端复用 create 的全部校验，成功后回填旧任务的「被谁替代」。
+ */
+export const relaunchPaTask = (id: number, data: PaTaskCreateRequest): Promise<PaTaskCreateResult> =>
+  request.post(`/pa/assess-tasks/${id}/relaunch`, data)
 
 /** 「我的评价」列表（只按登录身份过滤，无需传 resourceId）；year 为空表示不限年度 */
 export const listMyPaTasks = (year?: number | null): Promise<PaMyTaskItem[]> =>

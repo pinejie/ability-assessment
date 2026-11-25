@@ -1,14 +1,21 @@
 package com.company.ability.service.impl;
 
 import com.company.ability.context.DimensionContext;
+import com.company.ability.dto.PaTaskDTO;
 import com.company.ability.dto.PaTaskOpDTO;
+import com.company.ability.entity.PaItem;
+import com.company.ability.entity.PaPost;
 import com.company.ability.exception.BusinessException;
+import com.company.ability.mapper.PaItemMapper;
+import com.company.ability.mapper.PaPostMapper;
 import com.company.ability.security.LoginUser;
 import com.company.ability.security.UserContext;
 import com.company.ability.service.AssessPushService;
 import com.company.ability.service.PaScoreService;
 import com.company.ability.service.PaTaskOpService;
+import com.company.ability.service.PaTaskService;
 import com.company.ability.vo.PaTaskVO;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,8 +27,10 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 测评任务运营实现（方案 17 §7.2）。
@@ -68,6 +77,11 @@ public class PaTaskOpServiceImpl implements PaTaskOpService {
     private final AssessPushService pushService;
     private final PaScoreService scoreService;
     private final ObjectMapper objectMapper;
+    /** 重新发起要复用发起侧的全部校验（重复发起 / 人员可登录性 / 部门一致性），不另写一份 */
+    private final PaTaskService taskService;
+    /** 岗位是否还可用（重新发起预填时要判断原岗位有没有被停用） */
+    private final PaPostMapper postMapper;
+    private final PaItemMapper itemMapper;
 
     // ================================================================ 撤回
 
@@ -328,6 +342,303 @@ public class PaTaskOpServiceImpl implements PaTaskOpService {
         result.setSheetId(head.sheetId);
         result.setSheetKept(true);
         return result;
+    }
+
+    // ================================================================ 重新发起
+
+    /**
+     * 重新发起的预填数据（2026-11-25）。
+     *
+     * <p><b>为什么不复用 {@link #detail}</b>：详情是给「看进度」用的，它回的是评价人进度，
+     * 没有「谁评哪几项」（在 uf_assess_task_rater_item 里），而且详情对已撤回任务返回的
+     * 评价人全是「已作废」——直接拿它回填，页面会把作废名单当成有效名单。</p>
+     *
+     * <p><b>带不出来的一律进 warnings，不静默改</b>：岗位停用、年度关闭、能力项被删、
+     * 人已经不在人员表 —— 这些都不该让「重新发起」变成一个悄悄丢数据的动作。
+     * 页面把 warnings 原样列出来，缺的那一项留空由人补。</p>
+     */
+    @Override
+    public PaTaskVO.RelaunchDraft relaunchDraft(Long taskId) {
+        TaskHead head = loadTask(taskId);
+        requireSameDimension(head);
+        requireVoided(head);
+
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT t.resource_id, t.replaced_by_task_id, p.year, p.status AS period_status," +
+                "       s.post_id, s.post_name," +
+                "       h.lastname AS target_name, h.departmentid AS current_dept_id" +
+                " FROM uf_assess_task t" +
+                " JOIN uf_assess_period p ON p.id = t.period_id" +
+                " LEFT JOIN uf_pa_sheet s ON s.id = t.sheet_id" +
+                " LEFT JOIN HrmResource h ON h.id = t.resource_id" +
+                " WHERE t.id = ?", taskId);
+        List<String> warnings = new ArrayList<>();
+
+        PaTaskVO.RelaunchDraft draft = new PaTaskVO.RelaunchDraft();
+        draft.setTaskId(taskId);
+        draft.setSheetId(head.sheetId);
+        draft.setResourceId(num(row.get("resource_id")));
+        draft.setTargetName(str(row.get("target_name")));
+        draft.setDepartmentId(row.get("current_dept_id") == null ? null : num(row.get("current_dept_id")));
+        draft.setPostName(str(row.get("post_name")));
+        draft.setReplacedByTaskId(row.get("replaced_by_task_id") == null
+                ? null : num(row.get("replaced_by_task_id")));
+
+        // 年度：关闭了的年度不能再往里发新任务（create 也会拒），所以不预选、只说明
+        int year = intOf(row.get("year"));
+        int periodStatus = intOf(row.get("period_status"));
+        if (periodStatus == 0) {
+            draft.setYear(year);
+        } else {
+            warnings.add("原任务的 " + year + " 年度已关闭，请重新选择年度");
+        }
+
+        // 岗位：停用/删除的岗位不能用于新任务，预填它只会让人以为能直接发起
+        Long postId = row.get("post_id") == null ? null : num(row.get("post_id"));
+        if (postId == null) {
+            warnings.add("原任务没有关联岗位，请重新选择岗位");
+        } else {
+            PaPost post = postMapper.selectById(postId);
+            if (post == null) {
+                warnings.add("原任务的岗位「" + nullToDash(draft.getPostName()) + "」已被删除，请重新选择岗位");
+                postId = null;
+            } else if (post.getStatus() == null || post.getStatus() != 1) {
+                warnings.add("原任务的岗位「" + post.getPostName() + "」已停用，请重新选择岗位");
+                postId = null;
+            } else {
+                draft.setPostName(post.getPostName());
+            }
+        }
+        draft.setPostId(postId);
+
+        // 360 名单：一人一条 rater 行，撤回只改状态不删行，所以全量读得到
+        List<Map<String, Object>> raterRows = jdbc.queryForList(
+                "SELECT id, rater_resource_id FROM uf_assess_task_rater" +
+                " WHERE task_id = ? AND rater_type = 'RATER360' ORDER BY id", taskId);
+        Map<Long, Long> raterIdOf = new LinkedHashMap<>();  // resourceId -> raterId
+        for (Map<String, Object> r : raterRows) {
+            if (r.get("rater_resource_id") != null) {
+                raterIdOf.put(num(r.get("rater_resource_id")), num(r.get("id")));
+            }
+        }
+        Map<Long, List<Long>> peopleOfItem = new LinkedHashMap<>();
+        Map<Long, Long> resourceOfRater = new HashMap<>();
+        raterIdOf.forEach((resId, rid) -> resourceOfRater.put(rid, resId));
+        for (Map<String, Object> r : jdbc.queryForList(
+                "SELECT rater_id, item_id FROM uf_assess_task_rater_item WHERE task_id = ? ORDER BY id", taskId)) {
+            Long resId = resourceOfRater.get(num(r.get("rater_id")));
+            if (resId != null) {
+                peopleOfItem.computeIfAbsent(num(r.get("item_id")), k -> new ArrayList<>()).add(resId);
+            }
+        }
+        // 完全没有指派行 = 这张表上线（sql/60）之前发的任务：当时的口径是「这批人评全部 360 项」。
+        // 注意不能拿「入参是旧的 rater360ResourceIds」来判断 —— 那条路径现在也会写指派行
+        //（写的就是全部 360 项），从库里看与逐项选人完全一样，没有区分的必要。
+        boolean legacy = peopleOfItem.isEmpty() && !raterIdOf.isEmpty();
+        draft.setLegacyAllItems(legacy);
+
+        // 人：姓名与组织信息按当前数据取（原任务只存了 ID，人改名/调岗后显示应该跟着变）
+        Map<Long, PaTaskVO.RelaunchPerson> people = loadPeople(raterIdOf.keySet(), warnings);
+        draft.setRater360People(new ArrayList<>(people.values()));
+        // 被测人自己的姓名/部门也要带：页面要把它塞进人员下拉的候选里，否则标签显示成 ID
+        draft.setTarget(loadPeople(List.of(draft.getResourceId()), new ArrayList<>())
+                .get(draft.getResourceId()));
+        if (draft.getDepartmentId() == null && draft.getTarget() != null) {
+            draft.setDepartmentId(draft.getTarget().getDepartmentId());
+        }
+
+        // 按项：项的身份、名字、是否仍可指派都以当前岗位能力模型为准
+        List<PaTaskVO.RelaunchRaterItem> items = new ArrayList<>();
+        if (postId != null) {
+            List<PaItem> postItems = itemMapper.selectList(new LambdaQueryWrapper<PaItem>()
+                    .eq(PaItem::getPostId, postId)
+                    .eq(PaItem::getStatus, 1)
+                    .orderByAsc(PaItem::getCategoryId).orderByAsc(PaItem::getSort).orderByAsc(PaItem::getId));
+            Map<Long, String> categoryNames = categoryNameOf(postItems);
+            List<String> lostItems = new ArrayList<>();
+            for (PaItem item : postItems) {
+                if (!Objects.equals(item.getRater360(), 1)) {
+                    // 这一项现在不给 360 评了：原任务指派过就说明，不指派就不用提
+                    if (peopleOfItem.containsKey(item.getId())) {
+                        lostItems.add(item.getItemName() + "（已改为只由上级评）");
+                    }
+                    continue;
+                }
+                PaTaskVO.RelaunchRaterItem ri = new PaTaskVO.RelaunchRaterItem();
+                ri.setItemId(item.getId());
+                ri.setItemName(item.getItemName());
+                ri.setCategoryName(categoryNames.get(item.getCategoryId()));
+                ri.setRaterText(item.getRaterText());
+                ri.setUsable(true);
+                // 旧口径：所有人评全部 360 项
+                List<Long> assigned = legacy
+                        ? new ArrayList<>(raterIdOf.keySet())
+                        : peopleOfItem.getOrDefault(item.getId(), List.of());
+                ri.setPeople(assigned.stream().map(people::get).filter(Objects::nonNull).toList());
+                items.add(ri);
+            }
+            // 原任务指派过、但现在的岗位里已经没有这一项（项被删，或已停用不再进这个列表）
+            if (!legacy) {
+                List<Long> goneIds = peopleOfItem.keySet().stream()
+                        .filter(id -> items.stream().noneMatch(i -> i.getItemId().equals(id)))
+                        .toList();
+                if (!goneIds.isEmpty()) {
+                    // 名字从项表直接取：能力项停用后 selectList 查不到它，
+                    // 但警告里说「能力项 #37」没法让人对照，必须给原名
+                    Map<Long, String> goneNames = itemNamesOf(goneIds);
+                    for (Long id : goneIds) {
+                        lostItems.add(goneNames.getOrDefault(id, "能力项 #" + id));
+                    }
+                }
+            }
+            if (!lostItems.isEmpty()) {
+                warnings.add("以下项已经不在岗位「" + nullToDash(draft.getPostName())
+                        + "」的 360 评价范围里，未带出：" + String.join("、", lostItems));
+            }
+        }
+
+        List<Long> assignedPeople = new ArrayList<>();
+        for (PaTaskVO.RelaunchRaterItem ri : items) {
+            ri.getPeople().forEach(p -> {
+                if (!assignedPeople.contains(p.getResourceId())) {
+                    assignedPeople.add(p.getResourceId());
+                }
+            });
+        }
+        // 已经不在人员表的人，上面 loadPeople 已经单独说过一次，这里不重复算
+        List<Long> droppedButAlive = raterIdOf.keySet().stream()
+                .filter(people::containsKey)
+                .filter(id -> !assignedPeople.contains(id))
+                .toList();
+        if (!droppedButAlive.isEmpty()) {
+            warnings.add("原任务有 " + droppedButAlive.size()
+                    + " 位 360 测评人带不出来（他们只被指派到已删除或已取消 360 的项），请重新确认名单");
+        }
+        if (!raterIdOf.isEmpty() && assignedPeople.isEmpty()) {
+            warnings.add("原任务的 360 测评人一个都没带出来，请重新选择");
+        }
+
+        draft.setRater360Items(items);
+        draft.setWarnings(warnings);
+        log.debug("重新发起预填 taskId={}：年度={}, 被测人={}, 岗位={}, 360 {} 位, 项 {} 个{}",
+                taskId, draft.getYear(), draft.getResourceId(), draft.getPostId(),
+                assignedPeople.size(), items.size(), warnings.isEmpty() ? "" : "，提示 " + warnings.size() + " 条");
+        return draft;
+    }
+
+    /**
+     * 按原任务重新发起（2026-11-25）。
+     *
+     * <p><b>为什么不在这里直接拿旧参数调一次 create</b>：本接口收的是「页面确认后的参数」。
+     * 页面会把预填值摆出来给人看、可能改过（换年度、换岗位、补人），
+     * 真正要发的是人确认过的那一份，而不是库里旧的那一份。
+     * 复用 {@code create} 意味着「重复发起保护 / 人员可登录性 / 部门一致性」一条不少地重跑一遍。</p>
+     *
+     * <p>成功之后回填旧任务的 {@code replaced_by_task_id}：撤回 + 重发之后列表上是两行，
+     * 没有这条线索就查不出前后关系（旧行状态 4、新行状态 0，除了备注看不出是一回事）。
+     * 这一步失败不影响重发本身 —— 任务已经发出去了，关系丢了可以事后补。</p>
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PaTaskVO.CreateResult relaunch(Long taskId, PaTaskDTO.CreateRequest req) {
+        TaskHead head = loadTask(taskId);
+        requireOperable(head);
+        requireVoided(head);
+
+        PaTaskVO.CreateResult created = taskService.create(req);
+        try {
+            jdbc.update("UPDATE uf_assess_task SET replaced_by_task_id = ?, update_time = SYSDATETIME()" +
+                    " WHERE id = ?", created.getTaskId(), taskId);
+        } catch (Exception e) {
+            log.warn("回填 replaced_by_task_id 失败 taskId={}: {}", taskId, e.getMessage());
+        }
+        log.info("按原任务重新发起 taskId={} → 新 taskId={}", taskId, created.getTaskId());
+        return created;
+    }
+
+    /** 只允许对「已撤回」任务重新发起：进行中的再发一次会撞重复发起保护，已完成的不该重来 */
+    private void requireVoided(TaskHead head) {
+        if (head.status == TASK_VOIDED) {
+            return;
+        }
+        throw new BusinessException(ERR_STATE_INVALID,
+                "只有已撤回的任务可以重新发起，当前状态：" + STATUS_NAMES.getOrDefault(head.status, "未知"));
+    }
+
+    /** 一批人 → 姓名与组织信息；查不到的人写一条 warning，不静默消失 */
+    private Map<Long, PaTaskVO.RelaunchPerson> loadPeople(java.util.Collection<Long> resourceIds,
+                                                         List<String> warnings) {
+        Map<Long, PaTaskVO.RelaunchPerson> out = new LinkedHashMap<>();
+        if (resourceIds.isEmpty()) {
+            return out;
+        }
+        String in = String.join(",", java.util.Collections.nCopies(resourceIds.size(), "?"));
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT r.id, r.lastname, r.departmentid, d.departmentmark AS dept_name," +
+                "       s.subcompanyname AS company_name" +
+                " FROM HrmResource r" +
+                " LEFT JOIN HrmDepartment d ON d.id = r.departmentid" +
+                " LEFT JOIN HrmSubCompany s ON s.id = d.subcompanyid1" +
+                " WHERE r.id IN (" + in + ")", resourceIds.toArray());
+        List<String> missing = new ArrayList<>();
+        for (Long id : resourceIds) {
+            Map<String, Object> hit = rows.stream()
+                    .filter(r -> num(r.get("id")) == id).findFirst().orElse(null);
+            if (hit == null) {
+                missing.add("人员 #" + id);
+                continue;
+            }
+            PaTaskVO.RelaunchPerson p = new PaTaskVO.RelaunchPerson();
+            p.setResourceId(id);
+            p.setName(str(hit.get("lastname")));
+            p.setDepartmentId(hit.get("departmentid") == null ? null : num(hit.get("departmentid")));
+            p.setDepartmentName(str(hit.get("dept_name")));
+            p.setCompanyName(str(hit.get("company_name")));
+            out.put(id, p);
+        }
+        if (!missing.isEmpty()) {
+            warnings.add("以下 360 测评人已不在人员表：" + String.join("、", missing));
+        }
+        return out;
+    }
+
+    /** 类别 id → 类别名（发起页那张表要按类别分组显示） */
+    private Map<Long, String> categoryNameOf(List<PaItem> items) {
+        List<Long> ids = items.stream().map(PaItem::getCategoryId).filter(Objects::nonNull).distinct().toList();
+        Map<Long, String> out = new HashMap<>();
+        if (ids.isEmpty()) {
+            return out;
+        }
+        String in = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        for (Map<String, Object> r : jdbc.queryForList(
+                "SELECT id, category_name FROM uf_pa_category WHERE id IN (" + in + ")", ids.toArray())) {
+            out.put(num(r.get("id")), str(r.get("category_name")));
+        }
+        return out;
+    }
+
+    /**
+     * 能力项 id → 名字，<b>不看启用状态</b>。
+     *
+     * <p>专供「原任务指派过、但现在已经不可用」的警告文案：那些项正是被停用/删掉的，
+     * 按正常查询（status=1）根本查不到，警告里就只能写 ID —— 而 HR 手上没有项 ID，
+     * 说了等于没说。</p>
+     */
+    private Map<Long, String> itemNamesOf(List<Long> itemIds) {
+        Map<Long, String> out = new HashMap<>();
+        if (itemIds.isEmpty()) {
+            return out;
+        }
+        String in = String.join(",", java.util.Collections.nCopies(itemIds.size(), "?"));
+        for (Map<String, Object> r : jdbc.queryForList(
+                "SELECT id, item_name FROM uf_pa_item WHERE id IN (" + in + ")", itemIds.toArray())) {
+            out.put(num(r.get("id")), str(r.get("item_name")));
+        }
+        return out;
+    }
+
+    private static String nullToDash(String s) {
+        return s == null || s.isBlank() ? "—" : s;
     }
 
     // ================================================================ 列表 / 详情

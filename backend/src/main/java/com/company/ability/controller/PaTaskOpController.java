@@ -1,5 +1,6 @@
 package com.company.ability.controller;
 
+import com.company.ability.dto.PaTaskDTO;
 import com.company.ability.dto.PaTaskOpDTO;
 import com.company.ability.dto.Result;
 import com.company.ability.service.PaTaskOpService;
@@ -67,6 +68,27 @@ public class PaTaskOpController {
     @PostMapping("/{id}/void-notice")
     public Result<PaTaskVO.VoidResult> resendVoidNotice(@PathVariable Long id) {
         return Result.success("补发完成", opService.resendVoidNotice(id));
+    }
+
+    /**
+     * 重新发起的预填数据（2026-11-25）：把已撤回任务当初的年度 / 被测人 / 岗位 /
+     * 360 按项名单读回来，供发起页回填。带不出来的部分以 warnings 返回，不静默丢。
+     */
+    @Operation(summary = "重新发起的预填数据（仅已撤回任务）")
+    @GetMapping("/{id}/relaunch-draft")
+    public Result<PaTaskVO.RelaunchDraft> relaunchDraft(@PathVariable Long id) {
+        return Result.success(opService.relaunchDraft(id));
+    }
+
+    /**
+     * 按原任务重新发起：入参就是发起页那一份（页面可能改过），
+     * 复用之下的 create 校验链，成功后回填旧任务的「被谁替代」。
+     */
+    @Operation(summary = "按原任务重新发起（参数以页面提交为准）")
+    @PostMapping("/{id}/relaunch")
+    public Result<PaTaskVO.CreateResult> relaunch(@PathVariable Long id,
+                                                  @Valid @RequestBody PaTaskDTO.CreateRequest req) {
+        return Result.success("测评任务已重新发起", opService.relaunch(id, req));
     }
 
     @Operation(summary = "催办（只推未提交的人）")

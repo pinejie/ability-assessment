@@ -80,7 +80,7 @@
           <template #default="{ row }">{{ row.bandName || '—' }}</template>
         </el-table-column>
         <el-table-column prop="createTime" label="发起时间" width="170" />
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="openDetail(row)">详情</el-button>
             <el-button
@@ -101,6 +101,17 @@
               type="danger"
               @click.stop="openVoid(row)"
             >撤回</el-button>
+            <!--
+              重新发起（2026-11-25）：只对已撤回的任务出现，跳到发起页并把原配置带过去 ——
+              不是在这里一键重发。撤回多半是因为「名单/岗位选错了」，那正是要人再看一眼的场景：
+              原样照发会绕开人员预检，也绕不开人复核。
+            -->
+            <el-button
+              v-if="row.status === 4"
+              link
+              type="primary"
+              @click.stop="doRelaunch(row)"
+            >重新发起</el-button>
             <el-button
               v-if="row.status === 3 || row.status === 4"
               link
@@ -460,6 +471,17 @@ const doDelete = async (row: PaTaskItem) => {
   } catch {
     // 统一提示
   }
+}
+
+/**
+ * 重新发起：跳到发起页并把原任务号带过去，由发起页去读预填数据。
+ *
+ * <p><b>为什么不在这一页弹表单</b>：发起要选年度、搜人、选岗位、逐项配 360 测评人，
+ * 与发起页是同一套东西。在这里再实现一份，两处的必填规则与部门校验迟早不一致 ——
+ * 而这里的错会直接发出一份算不出分的任务。跳过去还顺带让人看见预检结果。</p>
+ */
+const doRelaunch = (row: PaTaskItem) => {
+  router.push({ path: '/pa/assess-tasks', query: { fromTask: String(row.taskId) } })
 }
 
 const openVoid = (row: PaTaskItem) => {

@@ -1,5 +1,6 @@
 package com.company.ability.service;
 
+import com.company.ability.dto.PaTaskDTO;
 import com.company.ability.dto.PaTaskOpDTO;
 import com.company.ability.vo.PaTaskVO;
 
@@ -35,6 +36,24 @@ public interface PaTaskOpService {
 
     /** 删除任务（仅已撤回可用）：物理删任务与评价人，测评页保留 */
     PaTaskVO.DeleteResult delete(Long taskId);
+
+    /**
+     * 重新发起的预填数据（只读，2026-11-25）。
+     *
+     * <p>把已撤回任务当初的年度 / 被测人 / 岗位 / 360 按项名单读回来，供发起页回填。
+     * 不校验「现在还能不能发」——那些以 {@code warnings} 的中文提示返回，由人决定。
+     * 只校验两件事：任务属于当前维度、任务确实是已撤回状态（否则没什么可「重新」发的）。</p>
+     */
+    PaTaskVO.RelaunchDraft relaunchDraft(Long taskId);
+
+    /**
+     * 按原任务重新发起（2026-11-25）：复用 {@code PaTaskService#create} 走完整校验，
+     * 成功后回填旧任务的 {@code replaced_by_task_id}。
+     *
+     * @param taskId 原任务；必须是当前维度的已撤回任务
+     * @param req    页面确认后的参数（可修改过）；年度/被测人/岗位/360 名单都以它为准
+     */
+    PaTaskVO.CreateResult relaunch(Long taskId, PaTaskDTO.CreateRequest req);
 
     /**
      * 「我的评价」列表：只按登录身份过滤，不接受任何 resourceId 参数。

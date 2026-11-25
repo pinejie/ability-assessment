@@ -148,7 +148,14 @@ public class PaSheetServiceImpl implements PaSheetService {
                     // 新一轮评价从「未封存」开始（正常路径上已封存的页面在第 62 行就被挡住了，
                     // 这里兜的是封存字段上线前遗留的异常组合：有快照但状态是 0）
                     .set("seal_status", 0)
-                    .set("seal_time", null)
+                    // seal_time 是 datetime2，这一列的空值必须用 setSql 写成字面 NULL。
+                    // 用 set("seal_time", null) 时 MyBatis 不带 jdbcType，SQL Server 驱动
+                    // 按 varbinary 下发，datetime2 列不做这个隐式转换，直接报
+                    // 「不允许从数据类型 varbinary 到 datetime2 的隐式转换」——
+                    // 表现是「重新发起测评」（复用已有页走 UPDATE）必失败，新建（走 insert
+                    // 跳过 null 列）反而正常。同一块的 decimal / nvarchar 空值实测能隐式转换，
+                    // 不必一起改；只有 datetime2 这一类要绕开类型推断。
+                    .setSql("seal_time = NULL")
                     .set("seal_by_loginid", null)
                     .set("seal_by_name", null)
                     .set("sealed_json", null)

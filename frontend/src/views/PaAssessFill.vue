@@ -59,10 +59,7 @@
               <dt>部门</dt>
               <dd>{{ page.deptName || '—' }}</dd>
             </div>
-            <div class="receipt-meta-item">
-              <dt>岗位</dt>
-              <dd>{{ page.postName || '—' }}</dd>
-            </div>
+            <!-- 岗位不展示（2026-11-24 用户要求）：PC/H5 填写页与回执一律不再出现岗位 -->
             <div class="receipt-meta-item">
               <dt>测评维度</dt>
               <dd>{{ page.dimensionName || '—' }}</dd>
@@ -172,7 +169,6 @@
         <div class="fill-meta">
           <span>被测人：{{ page.targetName || '—' }}</span>
           <span v-if="page.deptName">（{{ page.deptName }}）</span>
-          <span v-if="page.postName" class="fill-post">岗位：{{ page.postName }}</span>
           <span class="fill-role">您的身份：{{ page.raterTypeName }}</span>
         </div>
         <div class="fill-progress">
@@ -191,7 +187,7 @@
           type="warning"
           :closable="false"
           show-icon
-          :title="`本岗位能力项权重合计为 ${weightTotal}%，不等于 100%（按加权平均计算，不影响得分）`"
+          :title="`能力项权重合计为 ${weightTotal}%，不等于 100%（按加权平均计算，不影响得分）`"
         />
       </header>
 
@@ -530,10 +526,6 @@ onUnmounted(dispose)
   margin-top: 8px;
   font-size: 14px;
   color: #4e5969;
-}
-
-.fill-post {
-  margin-left: 16px;
 }
 
 .fill-role {

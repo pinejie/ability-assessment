@@ -53,7 +53,7 @@
           <h2 class="m-receipt-h2">测评信息</h2>
           <div class="m-kv"><span>被测人</span><b>{{ page?.targetName || '—' }}</b></div>
           <div class="m-kv"><span>部门</span><b>{{ page?.deptName || '—' }}</b></div>
-          <div class="m-kv"><span>岗位</span><b>{{ page?.postName || '—' }}</b></div>
+          <!-- 岗位不展示（2026-11-24 用户要求），与 PC 回执一致 -->
           <div class="m-kv"><span>测评维度</span><b>{{ page?.dimensionName || '—' }}</b></div>
           <div class="m-kv"><span>年度</span><b>{{ page?.year }} 年度</b></div>
           <div class="m-kv"><span>我的身份</span><b>{{ page?.raterTypeName || '—' }}</b></div>
@@ -137,7 +137,6 @@
           被测人：<b>{{ page?.targetName || '—' }}</b>
           <span v-if="page?.deptName" class="m-dept">（{{ page.deptName }}）</span>
         </div>
-        <div v-if="page?.postName" class="m-target m-post">岗位：{{ page.postName }}</div>
         <div class="m-progress">
           <div class="m-progress-track">
             <div class="m-progress-fill" :style="{ width: progressPercent + '%' }" />
@@ -161,7 +160,7 @@
         v-if="weightTotal !== null && Math.abs(weightTotal - 100) > 0.001"
         class="m-banner is-warning"
       >
-        本岗位能力项权重合计 {{ weightTotal }}%，不等于 100%（按加权平均计算，不影响得分）
+        能力项权重合计 {{ weightTotal }}%，不等于 100%（按加权平均计算，不影响得分）
       </div>
 
       <main class="m-body">
@@ -1044,9 +1043,6 @@ onUnmounted(dispose)
 
 .m-sheet-state.is-done {
   color: #1a7f37;
-}
-.m-post {
-  margin-top: 2px;
 }
 
 .m-level-head {

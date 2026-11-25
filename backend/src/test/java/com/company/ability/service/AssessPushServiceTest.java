@@ -43,13 +43,19 @@ class AssessPushServiceTest {
     @Mock
     private JdbcTemplate jdbc;
 
+    @Mock
+    private DimensionIntegrationService integrationService;
+
     private AssessPushService service;
 
     @BeforeEach
     void setUp() {
-        service = new AssessPushService(jdbc);
+        service = new AssessPushService(jdbc, integrationService);
         ReflectionTestUtils.setField(service, "fillBaseUrl", BASE);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        // 默认维度配的是泛微渠道；个别用例会覆写成无配置来验证「不配就不推」
+        when(integrationService.pushTarget(any())).thenReturn(
+                new DimensionIntegrationService.PushTarget("weaver", null));
     }
 
     @Test
@@ -128,6 +134,34 @@ class AssessPushServiceTest {
         //   ECOLOGY_MESSAGE_TYPE 有该 typecode，且 ECOLOGY_BIZ_MOBILE_CONFIG 有
         //   MESSAGETYPEID=',596,' 的行。否则站内能收、手机端静默收不到。
         assertThat(capturedInsert()[1]).isEqualTo(596);
+    }
+
+    @Test
+    @DisplayName("渠道取维度配置的 push_channel，不按收件人反查")
+    void channelComesFromDimensionConfig() {
+        when(integrationService.pushTarget(1L)).thenReturn(
+                new DimensionIntegrationService.PushTarget("dingtalk", "{\"appKey\":\"x\"}"));
+
+        service.insert(2505L, "标题", "正文", "tok", AssessPushService.FillPaths.PA);
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Object[]> args = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).update(sql.capture(), args.capture());
+        assertThat(sql.getValue()).contains("channel");
+        // 最后一列是渠道值
+        Object[] values = args.getValue();
+        assertThat(values[values.length - 1]).isEqualTo("dingtalk");
+    }
+
+    @Test
+    @DisplayName("维度没配推送渠道时不入队：插进去也永远没人发，只会让待发数虚高")
+    void noPushTargetMeansNoRow() {
+        when(integrationService.pushTarget(any())).thenReturn(null);
+
+        int written = service.insert(2505L, "标题", "正文", "tok", AssessPushService.FillPaths.PA);
+
+        assertThat(written).isZero();
+        verify(jdbc, times(0)).update(contains("INSERT INTO uf_push_msg"), any(Object[].class));
     }
 
     @Test

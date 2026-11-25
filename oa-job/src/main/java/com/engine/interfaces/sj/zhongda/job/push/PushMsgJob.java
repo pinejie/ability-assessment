@@ -58,6 +58,14 @@ public class PushMsgJob extends BaseCronJob {
 
     private static final String PUSH_TABLE = "uf_push_msg";
 
+    /**
+     * 本任务负责的推送渠道。
+     *
+     * <p>队列表 2026-11-24 起按 {@code channel} 分流（见 sql/67）：本任务只发泛微，
+     * 其它渠道由后端各自的发送器处理。两边各扫各的行，任一侧停机不影响另一侧。</p>
+     */
+    private static final String CHANNEL_WEAVER = "weaver";
+
     /** 单次最多处理条数，避免有积压时一次捞全表 */
     private static final int BATCH_SIZE = 200;
 
@@ -148,13 +156,17 @@ public class PushMsgJob extends BaseCronJob {
      *
      * <p>只读不改状态：发完立刻回写。若在发送前先把 status 置 1 再回查（认领方案），
      * 进程被杀会留下卡在「发送中」的行，需要额外的超时回收逻辑。这里选择简单且不丢消息的做法。</p>
+     *
+     * <p><b>只取 {@code channel='weaver'} 的行</b>：队列表已改成多渠道共用一张，
+     * 别的渠道（企微 / 钉钉等）由后端各自的发送器取走。本任务只负责泛微这一条，
+     * 不加这个条件会把别人的消息发到泛微去。</p>
      */
     private List<PushRow> fetchPending() {
         RecordSet rs = new RecordSet();
         rs.executeQuery("SELECT TOP (" + BATCH_SIZE + ") id, receiver_id, msg_type,"
                 + " title, content, pc_url, mobile_url"
                 + " FROM " + PUSH_TABLE
-                + " WHERE status = 0 ORDER BY id");
+                + " WHERE status = 0 AND channel = " + q(CHANNEL_WEAVER) + " ORDER BY id");
 
         List<PushRow> rows = new ArrayList<PushRow>();
         while (rs.next()) {
@@ -173,7 +185,8 @@ public class PushMsgJob extends BaseCronJob {
 
     private int countPending() {
         RecordSet rs = new RecordSet();
-        rs.executeQuery("SELECT COUNT(*) AS cnt FROM " + PUSH_TABLE + " WHERE status = 0");
+        rs.executeQuery("SELECT COUNT(*) AS cnt FROM " + PUSH_TABLE
+                + " WHERE status = 0 AND channel = " + q(CHANNEL_WEAVER));
         if (rs.next()) {
             return rs.getInt("cnt");
         }

@@ -1,5 +1,6 @@
 package com.company.ability.service;
 
+import com.company.ability.context.DimensionContext;
 import com.company.ability.vo.PaTaskVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -89,6 +90,7 @@ public class AssessPushService {
     }
 
     private final JdbcTemplate jdbc;
+    private final DimensionIntegrationService integrationService;
 
     @Value("${assess.fill-base-url:}")
     private String fillBaseUrl;
@@ -161,6 +163,13 @@ public class AssessPushService {
     /**
      * 单条插入。
      *
+     * <p><b>渠道按维度配置定</b>：消息发到哪，由这次操作所属维度的集成配置决定
+     * （{@code uf_assess_dimension_integration.push_channel}）。没配或停用则记为空渠道 ——
+     * 那样的行不会被任何发送器取走，等于不发，符合「维度没配就别推」的语义。</p>
+     *
+     * <p>为什么不按收件人反查维度：一条消息属于哪次操作已经明确（维度上下文就在手边），
+     * 再按人去反查一遍既多一次查询，又会在「人属于多个维度」时给出歧义答案。</p>
+     *
      * REQUIRES_NEW：调用方（撤回）已提交，这里再开短事务，只持有一条 INSERT 的锁 ——
      * 跨系统的锁持有时间被压缩到最小（§8.6.4 方案 A）。
      */
@@ -168,10 +177,27 @@ public class AssessPushService {
     public int insert(long receiverId, String title, String content, String token, FillPaths paths) {
         String pcLink = link(token, paths.pc());
         String mobileLink = link(token, paths.mobile());
+        String channel = resolveChannel();
+        if (channel == null) {
+            // 维度没配推送渠道：不入队。插进去也永远没人发，只会让「待发」数字虚高
+            log.debug("维度 {} 未启用推送，跳过入队 receiverId={}", DimensionContext.getOrDefault(), receiverId);
+            return 0;
+        }
         return jdbc.update(
                 "INSERT INTO uf_push_msg (receiver_id, msg_type, title, content, " +
-                "pc_url, mobile_url, status) VALUES (?, ?, ?, ?, ?, ?, 0)",
-                receiverId, MSG_TYPE_ASSESS, title, truncate(content), pcLink, mobileLink);
+                "pc_url, mobile_url, status, channel) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                receiverId, MSG_TYPE_ASSESS, title, truncate(content), pcLink, mobileLink, channel);
+    }
+
+    /**
+     * 本次操作所属维度配置的推送渠道。
+     *
+     * @return 渠道标识；维度未配置或已停用时返回 null
+     */
+    private String resolveChannel() {
+        DimensionIntegrationService.PushTarget target =
+                integrationService.pushTarget(DimensionContext.getOrDefault());
+        return target == null ? null : target.channel();
     }
 
     // ==================== 文案 ====================
